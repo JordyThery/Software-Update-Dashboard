@@ -113,7 +113,7 @@ struct StatusHistoryTests {
         let history = history()
         let group = UUID()
         try history.save(HistorySnapshot(date: Sample.now, target: nil, devices: []), for: group)
-        let broken = history.folder.appending(path: group.uuidString).appending(path: "20261101-000000.json")
+        let broken = history.folder.appending(path: group.uuidString).appending(path: "20261101-000000-000.json")
         try Data("not json".utf8).write(to: broken)
         #expect(history.snapshots(for: group).count == 1)
         #expect(FileManager.default.fileExists(atPath: broken.path))
@@ -131,8 +131,8 @@ struct StatusHistoryTests {
 
     @Test("File names sort by time and read back as dates")
     func names() {
-        #expect(StatusHistory.fileName(for: Sample.date("2026-11-05T13:04:09")) == "20261105-130409.json")
-        #expect(StatusHistory.date(fromFileName: "20261105-130409.json") == Sample.date("2026-11-05T13:04:09"))
+        #expect(StatusHistory.fileName(for: Sample.date("2026-11-05T13:04:09")) == "20261105-130409-000.json")
+        #expect(StatusHistory.date(fromFileName: "20261105-130409-000.json") == Sample.date("2026-11-05T13:04:09"))
         #expect(StatusHistory.date(fromFileName: "notes.txt") == nil)
     }
 }

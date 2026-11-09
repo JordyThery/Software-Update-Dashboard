@@ -91,9 +91,10 @@ nonisolated struct StatusHistory: Sendable {
             .filter { snapshot in since.map { snapshot.date >= $0 } ?? true }
     }
 
-    /// The newest refresh, or the one before `date`.
+    /// The newest refresh, or the one before `date` (saved dates keep
+    /// milliseconds, so the refresh at `date` itself never counts).
     func latest(for groupID: UUID, before date: Date? = nil) -> HistorySnapshot? {
-        snapshots(for: groupID).last { snapshot in date.map { snapshot.date < $0 } ?? true }
+        snapshots(for: groupID).last { snapshot in date.map { snapshot.date < $0.addingTimeInterval(-0.001) } ?? true }
     }
 
     /// Removes a group’s whole history, when the group is no longer tracked.
@@ -113,7 +114,7 @@ nonisolated struct StatusHistory: Sendable {
 
     // MARK: Files
 
-    /// `20261109-143205.json`, in UTC, so names sort by time.
+    /// `20261109-143205-120.json` (to the millisecond), in UTC, so names sort by time.
     static func fileName(for date: Date) -> String { stampFormatter.string(from: date) + ".json" }
 
     static func date(fromFileName name: String) -> Date? {
@@ -125,20 +126,29 @@ nonisolated struct StatusHistory: Sendable {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "UTC")
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
         return formatter
     }()
 
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        // to the millisecond, so a refresh is never mistaken for the one before it
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(Date.ISO8601FormatStyle(includingFractionalSeconds: true).format(date))
+        }
         encoder.outputFormatting = [.sortedKeys]
         return encoder
     }()
 
     private static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let text = try decoder.singleValueContainer().decode(String.self)
+            if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text) { return date }
+            if let date = try? Date.ISO8601FormatStyle().parse(text) { return date }
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "“\(text)” isn’t a date."))
+        }
         return decoder
     }()
 }

@@ -33,7 +33,7 @@ final class ConnectionsModel {
         didSet { defaults.set(activeID?.uuidString, forKey: Self.activeKey) }
     }
 
-    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored let defaults: UserDefaults
     @ObservationIgnored private let session: URLSession
 
     init(saved: ConnectionStore<AppConnection>, defaults: UserDefaults, activityLog: ActivityLog, demo: DemoMode,
