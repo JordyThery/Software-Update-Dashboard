@@ -98,10 +98,14 @@ struct EndToEndTests {
         let brussels = try #require(zones["Europe/Brussels"]?.deadline)
         let tokyo = try #require(zones["Asia/Tokyo"]?.deadline)
         #expect(brussels.timeIntervalSince(tokyo) == 8 * 3_600)
-        // Macs have no zone in Jamf Pro: their deadline is their own local time
+        // Macs have no zone in Jamf Pro: a Mac with a pending update reports
+        // its deadline with an offset, the others keep their own local time
         let (_, macs) = try await refreshed(Self.macs)
-        #expect(!macs.zones.isEmpty)
-        #expect(macs.zones.allSatisfy { $0.zone == nil && $0.unusual?.hasPrefix("Jamf Pro has no time zone for Macs") == true })
+        #expect(macs.zones.allSatisfy { $0.zone == nil })
+        let reported = macs.zones.filter { $0.offset != nil }
+        #expect(!reported.isEmpty && reported.allSatisfy { $0.label.hasPrefix("UTC+00:00") && $0.deadline != nil })
+        let local = macs.zones.filter { $0.offset == nil }
+        #expect(!local.isEmpty && local.allSatisfy { $0.unusual?.hasPrefix("Jamf Pro has no time zone for Macs") == true && $0.target != nil })
     }
 
     @Test("Unsupported hardware is listed with the last version it can run")

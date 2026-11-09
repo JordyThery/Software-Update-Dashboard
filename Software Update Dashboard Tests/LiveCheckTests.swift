@@ -84,6 +84,11 @@ struct LiveReadTests {
     /// mobile group's members and their status reports, a Blueprint with a
     /// software update, the app's own refresh, and one device's declaration
     /// report. Also the Classic route for a static computer group.
+    /// Every ID and name of these devices, for `neverReport`.
+    static func identifiers(_ members: [JamfPro.GroupMember]) -> [String] {
+        members.flatMap { [$0.id, $0.serialNumber, $0.managementID, $0.udid, $0.name].compactMap { $0 } }
+    }
+
     @Test func mobileGroupEndToEnd() async throws {
         let run = try LiveCheckRun.current()
         defer { checkUnderTest(run, when: "after the reads") }
@@ -100,6 +105,8 @@ struct LiveReadTests {
         let groups: [JamfPro.DeviceGroup]
         do {
             groups = try await client.jamfProGroups()
+            // never in the report, whatever a step or note says
+            run.neverReport(groups.flatMap { [$0.groupID, $0.name] })
             record(run, step("Jamf Pro groups (device-groups:read)"), passed: true,
                        note: "\(groups.filter { $0.kind == .mobileDevice }.count) mobile, \(groups.filter { $0.kind == .computer }.count) computer")
         } catch {
@@ -121,6 +128,7 @@ struct LiveReadTests {
             record(run, step("mobile group members (device-groups:read, devices:read)"), passed: false, note: failure(membershipError))
             throw membershipError
         }
+        if let chosen { run.neverReport(Self.identifiers(chosen.members)) }
         guard let chosen else {
             record(run, step("mobile group members"), passed: true, note: "no mobile group with members among the first 15: nothing to read")
             return
@@ -178,6 +186,7 @@ struct LiveReadTests {
         var tracked: TrackedBlueprint?
         do {
             let blueprints = try await JamfPlatform.Blueprints(client: client).list()
+            run.neverReport(blueprints.flatMap { [$0.id, $0.name] })
             for overview in blueprints.prefix(25) {
                 let update = try await JamfPlatform.Blueprints(client: client).softwareUpdate(blueprintID: overview.id)
                 if !update.blocks.isEmpty {
@@ -185,6 +194,7 @@ struct LiveReadTests {
                     // the sheet's scope section: the Blueprint's Platform groups as Jamf Pro groups (kind and number)
                     do {
                         let platformGroups = try await client.platformGroups()
+                        run.neverReport(platformGroups.flatMap { [$0.id, $0.name] })
                         let scope = GroupChoice.scope(platformGroupIDs: update.blueprint.scopeDeviceGroups, platformGroups: platformGroups)
                         let known = Set(groups.map(\.id))
                         record(run, step("the Blueprint's scope as Jamf Pro groups (device-groups:read)"),
@@ -216,6 +226,7 @@ struct LiveReadTests {
         if let tracked {
             do {
                 let result = try await RefreshWorkflow(client: client, catalog: AppleReleases.Catalog(), serverTimeZone: .gmt).run(tracked)
+                run.neverReport(Self.identifiers(result.members) + result.scope.flatMap { [$0.group.groupID, $0.name] })
                 let counts = StatusCategory.allCases.filter { result.counts[$0] > 0 }.map { "\($0.rawValue) \(result.counts[$0])" }
                 let unreadable = result.devices.filter { $0.statusProblem != nil }.count
                 let targets = Set(result.devices.compactMap(\.targetVersion)).count
@@ -232,6 +243,7 @@ struct LiveReadTests {
         if let member = chosen.members.first(where: { $0.serialNumber != nil }), let serial = member.serialNumber {
             do {
                 if let device = try await client.device(serial: serial) {
+                    run.neverReport([device.id])
                     let same = device.id.lowercased() == member.managementID?.lowercased()
                     record(run, step("Platform device ID (devices:read)"), passed: true,
                                note: same ? "equals the Jamf Pro management ID" : "differs from the Jamf Pro management ID")

@@ -32,6 +32,8 @@ nonisolated struct InspectInput: Sendable {
 /// What Inspect knows besides the device’s own data.
 nonisolated struct InspectContext: Sendable {
     var blueprintID: String
+    /// The tracked Blueprint’s name, for readable declaration names.
+    var blueprintName = "The Blueprint"
     var target: OSVersion?
     /// When the update started; errors before it don’t count.
     var since: Date?
@@ -120,50 +122,43 @@ nonisolated enum InspectFindings {
             add("Offline", "Last contact \(day(contact))")
         }
 
-        // The update Blueprint’s declarations on the device.
+        // The update Blueprint’s declarations on the device, as pairs of a
+        // configuration and its own activation. A minor-updates Blueprint
+        // sends one pair per version range; those for other ranges report
+        // Info.Predicate (and their configuration Error.ActivationFailed):
+        // not for this device, so not a failure.
         let reports = input.reports
         let mine = (reports ?? []).filter { $0.blueprintID == ctx.blueprintID.lowercased() }
-        let configurations = mine.filter { $0.type == "CONFIGURATION" }
-        let activations = mine.filter { $0.type == "ACTIVATION" }
-        let steps = Set(activations.compactMap(\.blueprintStepIndex)).sorted()
-        let activeSteps = Set(activations.filter { $0.active == true }.compactMap(\.blueprintStepIndex)).sorted()
-        let pending = mine.filter { $0.status == .pending }
+        let pairs = DeclarationPair.pairs(mine)
+        let applicable = pairs.filter { !$0.isNotForThisDevice }
+        let active = pairs.filter(\.isActive)
+        func label(_ pair: DeclarationPair) -> String {
+            pair.label(blueprint: ctx.blueprintName, osName: osName, deviceMajor: version?.major)
+        }
         if input.platformDeviceID == nil && reports == nil {
             add("Not in the Platform device list", "Serial \(member.serialNumber ?? "?") not found, so the declaration report can’t be read")
         } else if reports == nil {
             add("Declaration report not available", "\(input.reportsProblem ?? "No answer") (the API client needs declarations:read)")
         } else if mine.isEmpty {
             add("Update Blueprint not on the device", "None of its declarations are reported (scope, or the device hasn’t synced)")
-        } else if steps.isEmpty {
-            // Declarations without block numbers: judge them all.
-            if !pending.isEmpty { add("Update declarations not applied yet", "\(pending.count) still pending on the device") }
-            for report in mine where report.validity == .invalid { add("Update declaration invalid", why(report)) }
-            if !configurations.isEmpty && !configurations.contains(where: { $0.active == true }) {
-                add("No update block active", "No activation condition matches \(osName) \(os)")
-            }
-            for report in configurations where report.active == true && !report.reasons.isEmpty {
-                add("Update declaration reports a problem", why(report))
-            }
-        } else if activeSteps.isEmpty {
-            // One activation per block; the blocks that don’t apply report
-            // “predicate evaluated to false”, which is expected.
-            if !pending.isEmpty { add("Update declarations not applied yet", "\(pending.count) still pending on the device") }
-            let codes = Set(activations.flatMap { $0.reasons.compactMap(\.code) }).sorted().joined(separator: ", ")
-            add("No update block active", "None of the \(steps.count) blocks applies to \(osName) \(os) (activation results: \(codes.isEmpty ? "none" : codes))")
-        } else if activeSteps.count > 1 {
-            add("Several update blocks active", "Blocks \(activeSteps.map { String($0 + 1) }.joined(separator: ", ")) all apply to \(osName) \(os)")
         } else {
-            let step = activeSteps[0]
-            let block = mine.filter { $0.blueprintStepIndex == step }
-            let blockPending = block.filter { $0.status == .pending }
-            if !blockPending.isEmpty {
-                add("Update declarations not applied yet", "\(blockPending.count) of block \(step + 1) still pending on the device")
+            let pending = applicable.flatMap(\.reports).filter { $0.status == .pending }
+            if !pending.isEmpty { add("Update declarations not applied yet", "\(pending.count) still pending on the device") }
+            if active.isEmpty {
+                let others = pairs.count - applicable.count
+                add("No update declaration applies",
+                    "None of \(ctx.blueprintName)’s \(pairs.count) update declarations applies to \(osName) \(os)"
+                        + (others > 0 ? " (\(others) \(others == 1 ? "is" : "are") for other versions or models)" : ""))
+            } else if active.count > 1 {
+                add("Several update declarations active", active.map(label).joined(separator: "; ") + " all apply to \(osName) \(os)")
             }
-            for report in block {
-                if report.validity == .invalid { add("Update declaration invalid", "Block \(step + 1): \(why(report))") }
-                else if report.status == .unsuccessful { add("Update declaration failed", "Block \(step + 1): \(why(report))") }
-                else if report.type == "CONFIGURATION" && !report.reasons.isEmpty {
-                    add("Update declaration reports a problem", "Block \(step + 1): \(why(report))")
+            for pair in applicable {
+                for report in pair.reports {
+                    if report.validity == .invalid {
+                        add("Update declaration invalid", "\(label(pair)): \(why(report, names: [ctx.blueprintID.lowercased(): ctx.blueprintName]))")
+                    } else if report.reasons.contains(where: { ($0.code ?? "").hasPrefix("Error.") }) {
+                        add("Update declaration failed", "\(label(pair)): \(why(report, names: [ctx.blueprintID.lowercased(): ctx.blueprintName]))")
+                    }
                 }
             }
         }
@@ -213,10 +208,28 @@ nonisolated enum InspectFindings {
         if let updated, let contact = member.lastSeen, contact.timeIntervalSince(updated) > 2 * 86_400 {
             add("Update status not reported", "Last software update report \(day(updated)), last contact \(day(contact))")
         }
-        let others = (reports ?? []).filter { $0.blueprintID != ctx.blueprintID.lowercased() }
-            .filter { $0.validity == .invalid || $0.status == .unsuccessful || !$0.reasons.isEmpty }
+        // other declarations with a problem; those not for this device aren’t
+        let otherPairs = DeclarationPair.pairs((reports ?? []).filter { $0.blueprintID != ctx.blueprintID.lowercased() })
+            .filter { !$0.isNotForThisDevice }
+        let others = otherPairs.flatMap(\.reports)
+            .filter { $0.validity == .invalid || $0.reasons.contains(where: { ($0.code ?? "").hasPrefix("Error.") }) }
         for other in others.prefix(3) {
-            add("Other declaration with a problem", "\(other.declarationIdentifier): \(why(other))\(other.validity == .invalid ? " (invalid)" : "")")
+            add("Other declaration with a problem", "\(readableName(other.declarationIdentifier, names: [:])): \(why(other, names: [:]))"
+                + (other.validity == .invalid ? " (invalid)" : ""))
+        }
+
+        // a Mac’s bootstrap token: the likely cause when the last error names it
+        if member.kind == .computer {
+            let token = DeviceDetailText.bootstrap(member.bootstrapTokenEscrowedStatus ?? row?.bootstrapToken)
+            let error = [status?.failure?.reason, row?.error].compactMap { $0 }.joined(separator: " ")
+            if error.localizedCaseInsensitiveContains("bootstrap") {
+                findings.insert(Finding(cause: "Bootstrap token",
+                                        detail: "The last error names the bootstrap token; Jamf Pro reports it as \(token.lowercased()). "
+                                            + "Without an escrowed bootstrap token the Mac can’t install an enforced update on its own"),
+                                at: 0)
+            } else if (member.bootstrapTokenEscrowedStatus ?? row?.bootstrapToken)?.uppercased() == "NOT_ESCROWED" {
+                add("Bootstrap token not escrowed", "Jamf Pro reports the bootstrap token as not escrowed; enforced updates may wait for a user")
+            }
         }
 
         return InspectResult(id: RefreshWorkflow.key(member), name: row?.name ?? member.name ?? "", serial: member.serialNumber ?? "",
@@ -226,16 +239,38 @@ nonisolated enum InspectFindings {
 
     // MARK: Helpers
 
-    /// The reasons of a declaration, as text.
-    static func why(_ report: JamfPlatform.DeclarationReport) -> String {
+    /// The reasons of a declaration, as text, without IDs or hashes: a
+    /// Blueprint declaration is named by its Blueprint (`names`, by
+    /// lowercased Blueprint ID) and number; identifiers, server tokens and
+    /// predicates in the details are left out.
+    static func why(_ report: JamfPlatform.DeclarationReport, names: [String: String] = [:]) -> String {
+        let skipped: Set<String> = ["identifier", "servertoken", "predicate"]
         let parts = report.reasons.map { reason -> String in
             var text = reason.code ?? ""
-            let descriptions = reason.details.compactMap(\.description).filter { !$0.isEmpty }
-            if !descriptions.isEmpty { text += ": " + descriptions.joined(separator: "; ") }
-            if reason.details.isEmpty, let description = reason.description, !description.isEmpty { text += " (\(description))" }
+            let descriptions = reason.details.filter { !skipped.contains(($0.key ?? "").lowercased()) }
+                .compactMap(\.description).filter { !$0.isEmpty }
+            if !descriptions.isEmpty { text += ": " + descriptions.map { readableName($0, names: names) }.joined(separator: "; ") }
+            if let description = reason.description, !description.isEmpty, descriptions.isEmpty {
+                text += " (\(readableName(description, names: names)))"
+            }
             return text
         }
         return parts.isEmpty ? "no reason given" : parts.joined(separator: "; ")
+    }
+
+    /// Text with every Blueprint declaration identifier
+    /// (`Blueprint_<id>_s1_c1_sys_act12:<hash>`) replaced by “‹Blueprint›,
+    /// update declaration 12” and other hashes removed.
+    static func readableName(_ text: String, names: [String: String]) -> String {
+        let pattern = #/Blueprint_([0-9A-Fa-f-]{36})_s([0-9]+)_c[0-9]+_[A-Za-z]+_(cfg|act)?([0-9]*)(:[0-9A-Fa-f]+)?/#
+        var out = text.replacing(pattern) { match in
+            let name = names[String(match.output.1).lowercased()] ?? "another Blueprint"
+            let number = String(match.output.4)
+            return number.isEmpty ? "\(name), step \(match.output.2)" : "\(name), update declaration \(number)"
+        }
+        out = out.replacing(#/:[0-9A-Fa-f]{16,}/#, with: "")
+        out = out.replacing(#/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/#, with: "‹ID›")
+        return out
     }
 
     static func ago(_ date: Date, now: Date) -> String {
@@ -252,5 +287,86 @@ nonisolated enum InspectFindings {
 
     static func day(_ date: Date) -> String {
         date.formatted(.iso8601.year().month().day())
+    }
+}
+
+/// A Blueprint declaration’s configuration with its own activation
+/// (`…_sys_cfg12` with `…_sys_act12`), as the device reports them.
+nonisolated struct DeclarationPair: Sendable, Hashable {
+    var key: String
+    var number: String?
+    var reports: [JamfPlatform.DeclarationReport]
+
+    var activation: JamfPlatform.DeclarationReport? { reports.first { $0.type == "ACTIVATION" } }
+
+    /// Its activation’s predicate is false for this device (Info.Predicate):
+    /// meant for other versions or models, by design.
+    var isNotForThisDevice: Bool {
+        activation?.reasons.contains { ($0.code ?? "").hasPrefix("Info.Predicate") } == true
+    }
+
+    var isActive: Bool { reports.contains { $0.active == true } }
+
+    /// The predicate’s text, from the activation’s Info.Predicate reason.
+    var predicate: String? {
+        activation?.reasons.flatMap(\.details).first { $0.key?.lowercased() == "predicate" }?.description
+            ?? activation?.reasons.compactMap(\.description).first { $0.contains("predicate") }
+    }
+
+    /// “‹Blueprint›, macOS 27.0–27.1”: the versions it is for from its
+    /// predicate; for the active one the device’s own major.
+    func label(blueprint: String, osName: String, deviceMajor: Int?) -> String {
+        if let range = predicate.flatMap(Self.versionRange) { return "\(blueprint), \(osName) \(range)" }
+        if isActive, let deviceMajor { return "\(blueprint), \(osName) \(deviceMajor) (applies to this device)" }
+        return number.map { "\(blueprint), update declaration \($0)" } ?? blueprint
+    }
+
+    /// The versions in a predicate’s `MATCHES "^(27[.][0-1]([.][0-9]+)*)$"`:
+    /// `27.0–27.1`; `18.0–18.7` for `18[.][0-6]…|18[.]7…`; `27` for a whole major.
+    static func versionRange(_ predicate: String) -> String? {
+        guard let regex = predicate.firstMatch(of: #/MATCHES\s*"([^"]+)"/#)?.output.1 else { return nil }
+        let text = String(regex)
+        var major: Int?
+        var minors: [Int] = []
+        for match in text.matches(of: #/([0-9]+)\[\.\](?:\[([0-9])-([0-9])\]|([0-9]+))?/#) {
+            guard let found = Int(match.output.1) else { continue }
+            if major == nil { major = found } else if major != found { continue }
+            if let low = match.output.2.flatMap({ Int($0) }), let high = match.output.3.flatMap({ Int($0) }) { minors += [low, high] }
+            if let exact = match.output.4.flatMap({ Int($0) }) { minors.append(exact) }
+        }
+        guard let major else { return nil }
+        guard let low = minors.min(), let high = minors.max() else { return "\(major)" }
+        return low == high ? "\(major).\(low)" : "\(major).\(low)–\(major).\(high)"
+    }
+
+    /// The reports grouped into pairs, in number order; a declaration whose
+    /// identifier has no number is a pair of its own.
+    static func pairs(_ reports: [JamfPlatform.DeclarationReport]) -> [DeclarationPair] {
+        var order: [String] = []
+        var byKey: [String: DeclarationPair] = [:]
+        for report in reports {
+            let match = report.declarationIdentifier.firstMatch(of: #/^(.*_s[0-9]+_c[0-9]+_[A-Za-z]+_)(?:cfg|act)([0-9]+)$/#)
+            let key = match.map { "\($0.output.1)\($0.output.2)" } ?? report.declarationIdentifier
+            if byKey[key] == nil {
+                order.append(key)
+                byKey[key] = DeclarationPair(key: key, number: match.map { String($0.output.2) }, reports: [])
+            }
+            byKey[key]?.reports.append(report)
+        }
+        return order.compactMap { byKey[$0] }.sorted { (Int($0.number ?? "") ?? 0) < (Int($1.number ?? "") ?? 0) }
+    }
+}
+
+/// Texts the device detail and Inspect share.
+nonisolated enum DeviceDetailText {
+    /// A Mac’s bootstrap token as Jamf Pro reports it.
+    static func bootstrap(_ status: String?) -> String {
+        switch status?.uppercased() {
+        case "ESCROWED": "Escrowed"
+        case "NOT_ESCROWED": "Not escrowed"
+        case "NOT_SUPPORTED": "Not supported"
+        case nil: "Not reported"
+        default: status ?? "Not reported"
+        }
     }
 }

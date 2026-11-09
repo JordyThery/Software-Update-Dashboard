@@ -129,8 +129,10 @@ nonisolated struct RefreshWorkflow: Sendable {
             scope: scope, unmatchedScope: unmatched, scopeChange: ScopeChange(from: previousScope, to: scope),
             members: members, devices: devices, majors: MajorRow.rows(devices),
             zones: DeadlineZones.zones(devices: devices),
-            replacements: Replacement.list(devices) { model, isComputer in
-                catalog.lastSupportedVersion(model: model, boardID: model, isComputer ? .macOS : .iOS)?.description
+            replacements: Replacement.list(devices) { device in
+                // the same rule as the targets: the newest release the device can run
+                TargetRules.newestRelease(catalog, device.isComputer ? .macOS : .iOS, model: device.modelIdentifier,
+                                          boardID: device.boardID, knownOnly: true)?.version.description
             },
             coverage: coverage, problems: problems)
     }
@@ -142,11 +144,15 @@ nonisolated struct RefreshWorkflow: Sendable {
         let platform: AppleReleases.Platform = member.kind == .computer ? .macOS : .iOS
         let model = member.modelIdentifier ?? input.status?.modelIdentifier
         let osName = Classifier.osName(isComputer: member.kind == .computer, modelIdentifier: model ?? "")
-        let target = TargetRules.target(
-            os: input.status?.osVersion ?? member.osVersion, model: model, boardID: input.status?.deviceID, osName: osName,
+        let os = input.status?.osVersion ?? member.osVersion
+        let rule = TargetRules.target(
+            os: os, model: model, boardID: input.status?.deviceID, osName: osName,
             context: TargetRules.Context(block: Self.block(for: osName, in: blocks), catalog: catalog, platform: platform,
                                          blueprintChanged: blueprint.overview.updatedDate, updateStarted: tracked.updateStarted,
                                          now: now))
+        // what Jamf actually sent the device comes first, when it reports it
+        let target = TargetRules.fromDevice(rule, status: input.status, os: os, osName: osName, catalog: catalog,
+                                            platform: platform, serverTimeZone: serverTimeZone)
         let base = ClassificationContext(target: nil, since: nil, serverTimeZone: serverTimeZone, now: now, staleDays: staleDays,
                                          catalog: catalog, platform: platform)
         return Classifier.classify(input, target: target, context: base)

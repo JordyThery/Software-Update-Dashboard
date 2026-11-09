@@ -107,6 +107,19 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var pastDeadline: Bool?
     /// Measured against the newest release its model can run: a newer major exists it can’t.
     var limitedByHardware: Bool?
+    /// The target is the version the device reports pending from a declaration.
+    var targetFromDevice: Bool?
+    /// Then: what the Blueprint’s rule gives, and whether it differs.
+    var ruleTarget: String?
+    var ruleReason: String?
+    var targetDiffersFromRule: Bool?
+    /// The deadline as a moment and its offset from UTC, when the device reported one.
+    var deadlineDate: Date?
+    var deadlineOffset: Int?
+    /// `softwareupdate.device-id` from the status report.
+    var boardID: String?
+    /// A Mac’s bootstrap token in Jamf Pro: `ESCROWED`, `NOT_ESCROWED`, `NOT_SUPPORTED`.
+    var bootstrapToken: String?
 
     /// The device by kind and number: a Mac and an iPad can share a number.
     var id: String { "\(isComputer ? "computer" : "mobileDevice")/\(jamfID)" }
@@ -141,6 +154,14 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case deadlineLocal
         case pastDeadline
         case limitedByHardware
+        case targetFromDevice
+        case ruleTarget
+        case ruleReason
+        case targetDiffersFromRule
+        case deadlineDate
+        case deadlineOffset
+        case boardID
+        case bootstrapToken
     }
 
     /// The version the device reports, else the one in its inventory.
@@ -263,7 +284,8 @@ nonisolated enum Classifier {
             failureCount: status?.failure?.count, error: error, errorTime: failTime,
             errorSinceUpdate: failTime == nil ? nil : failedSince, passcodePresent: status?.passcodePresent ?? member.passcodePresent,
             lastContact: member.lastSeen, statusUpdated: updated, timeZone: member.timeZone, managementID: member.managementID,
-            category: category, diagnosis: diagnosis, statusProblem: input.statusProblem)
+            category: category, diagnosis: diagnosis, statusProblem: input.statusProblem, boardID: status?.deviceID,
+            bootstrapToken: member.bootstrapTokenEscrowedStatus)
     }
 
     /// One device measured against its own target (`TargetRules`): its
@@ -279,6 +301,12 @@ nonisolated enum Classifier {
         status.targetVersion = target.version
         status.targetReason = target.reason
         status.targetReleased = target.released
+        if target.fromDevice {
+            status.targetFromDevice = true
+            status.ruleTarget = target.ruleVersion
+            status.ruleReason = target.ruleReason
+            status.targetDiffersFromRule = target.differsFromRule
+        }
         if target.unknown != nil {
             // never measured against nothing: shown with its reason, left out of every count
             status.category = .targetUnknown
@@ -289,8 +317,11 @@ nonisolated enum Classifier {
         }
         status.activityFrom = target.activityFrom
         status.deadlineLocal = target.deadlineLocal
+        status.deadlineDate = target.deadlineDate
+        status.deadlineOffset = target.deadlineOffset
         status.pastDeadline = status.category == .onTarget ? false
-            : TargetRules.isPastDeadline(target.deadlineLocal, timeZone: input.member.timeZone, now: base.now)
+            : target.deadlineDate.map { $0 <= base.now }
+                ?? TargetRules.isPastDeadline(target.deadlineLocal, timeZone: input.member.timeZone, now: base.now)
         status.limitedByHardware = target.limitedByHardware
         return status
     }

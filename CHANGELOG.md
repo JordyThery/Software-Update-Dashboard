@@ -11,5 +11,9 @@
 - When Apple’s release data can’t be read, a refresh stops with that reason and the previous refresh stays on screen.
 - Exported CSV files show cells that look like spreadsheet formulas as text.
 - Stop Tracking asks for confirmation, as it deletes the Blueprint’s history.
+- A device’s target is the version Jamf sent it, as the device reports it pending, when there is one; the device detail shows the Blueprint’s rule beside it and points out when they differ.
+- Intel Macs are matched to Apple’s release lists correctly and get their major’s newest release.
+- Inspect no longer reports update declarations meant for other versions as failures, names declarations by Blueprint and versions, and shows a Mac’s bootstrap token status.
+- Deadline per Time Zone places Macs with a pending update by the offset they report.
 - Connections to the Jamf Platform API with read permissions only. The app never changes anything in Jamf.
 - Demo Mode with sample iPads and Macs in the middle of an update.

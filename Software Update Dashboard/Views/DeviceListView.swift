@@ -117,6 +117,9 @@ struct DeviceDetailView: View {
                 LabeledContent("\(device.osName) reported", value: device.reportedOS ?? "–")
                 LabeledContent("In inventory", value: device.inventoryOS ?? "–")
                 LabeledContent("Time zone", value: device.timeZone ?? (device.isComputer ? "Not in Jamf Pro for Macs" : "Not reported"))
+                if device.isComputer {
+                    LabeledContent("Bootstrap token", value: DeviceDetailText.bootstrap(device.bootstrapToken))
+                }
                 LabeledContent("Last contact") {
                     if let date = device.lastContact { Text(date, format: .relative(presentation: .named)) } else { Text("Never") }
                 }
@@ -124,15 +127,25 @@ struct DeviceDetailView: View {
             Section("Target") {
                 LabeledContent("Target", value: device.targetVersion ?? (device.category == .targetUnknown ? "Unknown" : "None"))
                 if let reason = device.targetReason { Text(reason).foregroundStyle(.secondary) }
+                if device.targetFromDevice == true {
+                    LabeledContent("Blueprint’s rule gives", value: device.ruleTarget ?? "No version")
+                    if let rule = device.ruleReason { Text(rule).foregroundStyle(.secondary) }
+                    if device.targetDiffersFromRule == true {
+                        WarningLabel("Another declaration may be enforcing this: the device’s pending version differs from the Blueprint’s rule")
+                    }
+                }
                 if let released = device.targetReleased {
                     LabeledContent("Released by Apple", value: Self.releaseDay(released))
                 }
                 if let deadline = device.deadlineLocal {
-                    LabeledContent("Deadline", value: "\(TargetRules.readable(deadline)), \(device.timeZone ?? "device local time")")
+                    LabeledContent("Deadline", value: "\(TargetRules.readable(deadline)), "
+                                   + (device.timeZone ?? device.deadlineOffset.map(DeadlineZone.offsetText) ?? "device local time"))
                     if device.pastDeadline == true { WarningLabel("Past the deadline") }
                 }
                 if let from = device.activityFrom {
-                    LabeledContent("Reports count from", value: from.formatted(date: .abbreviated, time: .shortened))
+                    // a day: the update start set by hand in this Mac’s time, else a release day (UTC)
+                    LabeledContent("Reports count from", value: result.tracked.updateStarted != nil
+                                   ? from.formatted(date: .abbreviated, time: .omitted) : Self.releaseDay(from))
                 }
             }
             Section("Software Update") {

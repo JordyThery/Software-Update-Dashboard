@@ -50,29 +50,29 @@ struct InspectFindingsTests {
         #expect(result.detail == "Already on the target version")
     }
 
-    @Test("The one active block is judged; blocks that don’t apply are expected")
+    @Test("The active declaration is judged; an Error.* code is a failure, named by Blueprint and versions")
     func activeBlock() {
         let problem = JamfPlatform.DeclarationReport.Reason(code: "Error.ConfigurationAlreadyPresent", description: "another is present")
         let result = evaluate(reports: [report(1, "ACTIVATION", active: true), report(1, "CONFIGURATION", active: true, reasons: [problem]),
                                         report(2, "ACTIVATION", active: false, status: "UNSUCCESSFUL"),
                                         report(2, "CONFIGURATION", active: false)])
-        #expect(result.cause == "Update declaration reports a problem")
-        #expect(result.detail == "Block 1: Error.ConfigurationAlreadyPresent (another is present)")
+        #expect(result.cause == "Update declaration failed")
+        #expect(result.detail == "The Blueprint, iPadOS 26 (applies to this device): Error.ConfigurationAlreadyPresent (another is present)")
     }
 
-    @Test("Several active blocks, or none, are findings of their own")
+    @Test("Several active declarations, or none, are findings of their own")
     func blocks() {
         let several = evaluate(reports: [report(1, "ACTIVATION", active: true), report(2, "ACTIVATION", active: true)])
-        #expect(several.cause == "Several update blocks active")
-        #expect(several.detail == "Blocks 1, 2 all apply to iPadOS 26.7.1")
+        #expect(several.cause == "Several update declarations active")
+        #expect(several.detail.hasSuffix("all apply to iPadOS 26.7.1"))
         let none = evaluate(reports: [report(1, "ACTIVATION", active: false), report(2, "ACTIVATION", active: false)])
-        #expect(none.cause == "No update block active")
+        #expect(none.cause == "No update declaration applies")
     }
 
-    @Test("Declarations without activations: pending ones and no active block")
+    @Test("Declarations without activations: pending ones and none active")
     func withoutActivations() {
         let result = evaluate(reports: [report(1, "CONFIGURATION", active: false, status: "PENDING")])
-        #expect(result.findings.map(\.cause).prefix(2) == ["Update declarations not applied yet", "No update block active"])
+        #expect(result.findings.map(\.cause).prefix(2) == ["Update declarations not applied yet", "No update declaration applies"])
     }
 
     @Test("Where the declaration report couldn’t be had")
@@ -113,9 +113,19 @@ struct InspectFindingsTests {
 
     @Test("Other declarations with a problem, at most three")
     func others() {
-        let bad = (1...5).map { JamfPlatform.DeclarationReport(declarationIdentifier: "other-\($0)", status: .unsuccessful) }
+        let failed = JamfPlatform.DeclarationReport.Reason(code: "Error.ConfigurationCannotBeApplied")
+        let bad = (1...5).map { JamfPlatform.DeclarationReport(declarationIdentifier: "other-\($0)", status: .unsuccessful, reasons: [failed]) }
         let result = evaluate(reports: [report(1, "CONFIGURATION", active: true)] + bad)
         #expect(result.findings.filter { $0.cause == "Other declaration with a problem" }.count == 3)
+        // a declaration of another Blueprint that isn’t for this device isn’t a problem
+        let predicate = JamfPlatform.DeclarationReport.Reason(code: "Info.Predicate")
+        let elsewhere = [JamfPlatform.DeclarationReport(declarationIdentifier: "Blueprint_7b1e0000-2222-4000-8000-00000000beef_s1_c1_sys_act4",
+                                                        type: "ACTIVATION", status: .unsuccessful, reasons: [predicate]),
+                         JamfPlatform.DeclarationReport(declarationIdentifier: "Blueprint_7b1e0000-2222-4000-8000-00000000beef_s1_c1_sys_cfg4",
+                                                        type: "CONFIGURATION", status: .unsuccessful,
+                                                        reasons: [.init(code: "Error.ActivationFailed")])]
+        #expect(!evaluate(reports: [report(1, "CONFIGURATION", active: true)] + elsewhere).findings
+            .contains { $0.cause == "Other declaration with a problem" })
     }
 
     @Test("Inspect’s default selection: by serial, by diagnosis, else who needs attention")

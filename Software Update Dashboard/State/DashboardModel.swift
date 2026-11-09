@@ -222,7 +222,8 @@ final class DashboardModel {
         do {
             guard let client = try connections.client() else { throw RefreshError("No connection in use.") }
             let catalog = await appleReleases()
-            let context = InspectContext(blueprintID: result.tracked.blueprintID, target: nil, since: result.blueprintChanged,
+            let context = InspectContext(blueprintID: result.tracked.blueprintID, blueprintName: result.blueprintName,
+                                         target: nil, since: result.blueprintChanged,
                                          now: Date(), serverTimeZone: connections.serverTimeZone, catalog: catalog)
             let members = result.members.filter { ids.contains(RefreshWorkflow.key($0)) }
             for inspection in try await InspectWorkflow(client: client).run(members, rows: result.devices, context: context) {

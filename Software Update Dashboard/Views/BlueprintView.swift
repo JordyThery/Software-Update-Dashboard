@@ -402,7 +402,7 @@ struct DeadlineZonesSection: View {
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 6) {
                     ForEach(result.zones) { zone in
                         GridRow {
-                            Text(zone.zone ?? "No time zone")
+                            Text(zone.target.map { "\(zone.label), target \($0)" } ?? zone.label)
                             Text("\(zone.deviceCount)").monospacedDigit().foregroundStyle(.secondary)
                                 .gridColumnAlignment(.trailing)
                             if let deadline = zone.deadline {

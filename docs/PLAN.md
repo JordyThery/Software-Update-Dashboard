@@ -16,6 +16,12 @@ The unit of work is a **tracked Blueprint**: a Blueprint with a software update 
 - shows the deadline per time zone (the deadline is the device’s local time) and points out unusual zones;
 - has an overview of all tracked Blueprints, a dashboard per Blueprint (with a table per platform and major release), a device list and a device detail with Inspect, and CSV and summary exports.
 
+### Inspect (decided by Jordy on 2026-11-09)
+
+- A minor-updates Blueprint sends one configuration and activation pair per version range, each with a predicate (OS family, version range, board IDs or models). Each configuration is judged with its own activation (`…_cfg12` with `…_act12`). A pair whose activation reports `Info.Predicate` is “not for this device”, so its configuration’s `Error.ActivationFailed` isn’t a failure. Every other `Error.*` is a failure, as is an invalid declaration.
+- Declarations are named by their Blueprint and the versions they are for (“‹Blueprint›, macOS 27.0–27.1”, from the predicate), never by IDs, server tokens or hashes.
+- **Bootstrap token:** a Mac’s bootstrap token status comes from the inventory’s `SECURITY` section (`bootstrapTokenEscrowedStatus`, `bootstrapTokenAllowed`), shown in the device detail. When the last error names the bootstrap token, it is the likely cause; a token that isn’t escrowed is listed otherwise.
+
 ### Targets per device (decided by Jordy on 2026-11-09)
 
 Jamf’s reference (Platform API, Blueprint schema) has three software update settings, plus Apple’s own declaration:
@@ -27,6 +33,9 @@ Jamf’s reference (Platform API, Blueprint schema) has three software update se
 | Minor updates (`AUTOMATIC` `SEMANTIC` `minor`, 0–30 days) | the newest release of its own major at least that old | Apple’s release date of the target | release date + days, at the Blueprint’s time, device local time |
 | Apple’s declaration (custom declarations) | as a specific version, with its build | as a specific version | as a specific version |
 
+- **What Jamf sent comes first** (decided by Jordy on 2026-11-09). When a device reports a pending version (`softwareupdate.pending-version`) with an install reason that includes `declaration`, newer than what it runs and reported after the update started, that version is its target, with the deadline it reports (a moment with an offset; the offset places the device in Deadline per Time Zone). When the rule above gives another version, the detail shows both and flags that another declaration may be enforcing this. For a specific version a lower pending version is an intermediate step, and the Blueprint’s version stands. Pending versions that are stale (equal to or older than the installed one) or come from another reason (`notification`, none) are ignored. Otherwise the rule above, from Apple’s data, applies.
+- **Matching Apple’s release lists:** by the device’s own `softwareupdate.device-id` first, then its model, and only when Apple lists that ID for the release’s major. A device the lists don’t recognize (Intel Macs report `X86LEGACYAP`) is unknown, never unsupported: it is judged by the major and gets that major’s newest release, never an older one only because that one has no device list. The target and the replacement list use the same rule.
+- A device that already runs a release Apple shipped to it, old enough for the rule and newer than the rule’s target, is “Target unknown” (the rule doesn’t fit it), never measured against a lower target.
 - A device is unsupported only when no release applies to its hardware at all.
 - An “Update started” date per tracked Blueprint, set by hand, overrides where reports count from; it is shown wherever it applies and can be removed.
 - Macs have no time zone in Jamf Pro: their deadline is “device local time”.
@@ -51,7 +60,7 @@ Jamf Pro through the Jamf Platform API only, for iOS, iPadOS and macOS.
 | Computer groups | `pro/v1/computer-groups` | `device-groups:read` |
 | Smart computer group members | `pro/v3/computer-groups/smart-group-membership/{id}` | `device-groups:read` |
 | Static computer group members | `proclassic/computergroups/id/{id}` | `device-groups:read` (confirmed live) |
-| Computer inventory | `pro/v4/computers-inventory` | `devices:read` |
+| Computer inventory (with `SECURITY` for the bootstrap token) | `pro/v4/computers-inventory` | `devices:read` |
 | DDM status items | `pro/v1/ddm/{clientManagementId}/status-items` | `devices:read` |
 | Declaration reports | `ddm/report/v1/devices/{deviceId}/declarations`, `…/declarations/{id}/devices` | `declarations:read` |
 | Platform devices (serial to device ID) | `devices/v1/devices` | `devices:read` |
