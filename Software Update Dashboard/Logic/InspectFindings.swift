@@ -220,6 +220,13 @@ nonisolated enum InspectFindings {
            status?.pendingVersion == nil, status?.failure == nil {
             add("Idle: no update pending, no error", "The device reports nothing pending and no error")
         }
+        // the device's own update error ranks above the hints from its inventory below
+        if let failTime = status?.failure?.timestamp, let failAt = JamfPro.serverDate(failTime, timeZone: ctx.serverTimeZone),
+           since.map({ failAt >= $0 }) ?? true {
+            let reason = Classifier.shortError(status?.failure?.reason)
+            let count = status?.failure?.count.map { "\($0) \($0 == 1 ? "failure" : "failures"), " } ?? ""
+            add("Update error", "\(reason.isEmpty ? "No reason given" : reason) (\(count)last \(moment(failAt)))")
+        }
         if let beta = status?.betaEnrollment, beta.range(of: "^(none|null|false)$", options: [.regularExpression, .caseInsensitive]) == nil {
             add("Enrolled in a beta program", "\(beta) (build \(status?.osBuild ?? member.osBuild ?? "?")): the device follows the beta channel, so the release update may not be offered. Unenroll it (Software Update settings: beta program not allowed) and update")
         }
@@ -231,17 +238,13 @@ nonisolated enum InspectFindings {
             add("Passcode", "Passcode present: \(present); the update installs once the passcode is entered on the device, or after it’s cleared")
         }
         if member.batteryHealth == "SERVICE_RECOMMENDED" { add("Battery needs service", "Battery health: service recommended") }
-        if let level = member.batteryLevel, level < 50 {
+        // the battery matters only for an install: downloaded or installing, not a download
+        let installing = status?.installState == .prepared || status?.installState == .installing
+        if installing, let level = member.batteryLevel, level < 50 {
             add("Low battery", "\(level)% at the last inventory; installs need 50% or a charger")
         }
         if member.roaming == true {
             add("Roaming on mobile data", "Updates are normally downloaded over Wi-Fi: check that the device has a Wi-Fi network")
-        }
-        if let failTime = status?.failure?.timestamp, let failAt = JamfPro.serverDate(failTime, timeZone: ctx.serverTimeZone),
-           since.map({ failAt >= $0 }) ?? true {
-            let reason = Classifier.shortError(status?.failure?.reason)
-            let count = status?.failure?.count.map { "\($0) \($0 == 1 ? "failure" : "failures"), " } ?? ""
-            add("Update error", "\(reason.isEmpty ? "No reason given" : reason) (\(count)last \(moment(failAt)))")
         }
         if let updated, let contact = member.lastSeen, contact.timeIntervalSince(updated) > 2 * 86_400 {
             add("Update status not reported", "Last software update report \(day(updated)), last contact \(day(contact))")

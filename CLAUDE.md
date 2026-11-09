@@ -31,7 +31,7 @@ A read-only Mac app that answers, for the devices a Blueprint is scoped to, whet
 ## Rules
 
 - **Read only.** The app never changes anything in Jamf: its clients allow GET and HEAD only (`ConnectionsModel.permits`), plus the sign-in. It asks only for read permissions: `blueprints:read`, `devices:read`, `device-groups:read`, `declarations:read`.
-- **No customer data.** This app's logic was adapted from Jordy's own earlier app. Nothing of that app's customer may appear here: not its name, that app's name, its device classes or concepts, device counts, serials or sample data, in code, comments, tests, docs or commit messages. Before every commit, run `../_release-gate/sud-scan.sh` (the terms are in `../_release-gate/sud-terms.txt`, outside every repo) and report the result. Never write the terms into the repo.
+- **Term search.** Before every commit, run `../_release-gate/sud-scan.sh` (its terms are in `../_release-gate/sud-terms.txt`, outside every repo) and report the result. Never write the terms into the repo: not in code, comments, tests, docs or commit messages.
 - **No real identifiers.** Never write a hostname, tenant name, serial or environment ID into the repo. Tests and scripts use role names and made-up values.
 - No code copied from other projects. JAMFGetDDMInfo is GPL and may only inform.
 - `os.Logger` messages that can hold server answers use `privacy: .private`.

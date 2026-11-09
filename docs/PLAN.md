@@ -79,7 +79,7 @@ Jamf Pro through the Jamf Platform API only, for iOS, iPadOS and macOS.
 ### Where the code comes from
 
 - Every request goes through JTKit 1.5.0 (see JTKit’s ROADMAP, "1.5.0 (Software Update Dashboard)"). SUD only interprets.
-- The categories, classifier and diagnoses, summary, history and Inspect are copied from Jordy’s own earlier app and adapted, with typed models. Nothing of that app’s customer appears here: not its name, the app’s name, device classes, its concepts, device counts, serials or sample data, in code, comments, tests, docs or commit messages. Before every commit the repo and its commit messages are searched for those terms (the list is kept outside the repo).
+- The categories, classifier and diagnoses, summary, history and Inspect are SUD’s own, with typed models, built on what JTKit reads.
 - No code is copied from any other project.
 
 ### Order
@@ -88,9 +88,14 @@ On branch `milestone-1` (SUD) and `1.5.0` (JTKit):
 
 1. The JTKit readers, with Swift Testing tests and no real network.
 2. SUD’s app shell to JTKit’s standards: About, Settings with Connections and Updates, the Connection menu, the activity log, Demo Mode, the build-number script, LICENSE (MIT), README, CLAUDE.md (runs `check-versions.sh`).
-3. The copied logic with its tests.
+3. SUD’s logic (categories, classifier and diagnoses, summary, history, Inspect) with its tests.
 4. A mobile group end to end, in Demo Mode and on the allow-list’s read-only production role.
 5. Every app in `Apps.xcworkspace` builds; then Jordy’s check by hand. JTKit isn’t tagged before Jordy approves.
+
+### Next (0.1.1)
+
+- With a delay of 0, call a downloaded update stuck only some time after the deadline, not the moment it passes.
+- Compare a Blueprint’s rule by its values, not its text, so a change of the Mac’s region or clock format adds no history mark.
 
 ### Later
 

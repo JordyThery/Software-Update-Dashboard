@@ -36,11 +36,36 @@ struct InspectFindingsTests {
         member.supervised = false
         member.availableSpaceMB = 2_100
         member.batteryLevel = 35
-        let result = evaluate(member)
+        // downloaded, waiting to install: the battery matters
+        let result = evaluate(member, status: Sample.status([("device.operating-system.version", "26.7.1"),
+                                                             ("softwareupdate.install-state", "prepared")]))
         #expect(result.cause == "Not supervised")
         let all = result.findings.map { "\($0.cause): \($0.detail)" }
         #expect(all.contains("Low storage: 2.1 GB free of 62.5 GB"))
         #expect(all.contains("Low battery: 35% at the last inventory; installs need 50% or a charger"))
+    }
+
+    @Test("A failed download: the device's own error is the likely cause, and low battery isn't listed for a download")
+    func downloadErrorFirst() {
+        var member = Sample.iPad()
+        member.batteryLevel = 18
+        member.availableSpaceMB = 2_100
+        let status = Sample.status([("device.operating-system.version", "26.7.1"), ("softwareupdate.install-state", "failed"),
+                                    ("softwareupdate.failure-reason.reason", "DownloadFailed: The network connection was lost."),
+                                    ("softwareupdate.failure-reason.count", "3"),
+                                    ("softwareupdate.failure-reason.timestamp", "2026-11-05T09:30:00")])
+        // the Blueprint's declaration is on the device and active: nothing about it to find
+        let declared = [report(1, "CONFIGURATION", active: true)]
+        let result = evaluate(member, status: status, row: row(.failed, "Download problem (device retries)"), reports: declared)
+        #expect(result.cause == "Update error")
+        #expect(result.detail.hasPrefix("DownloadFailed: The network connection was lost."))
+        #expect(!result.findings.contains { $0.cause == "Low battery" })
+        // the hints from the inventory still follow it
+        #expect(result.findings.contains { $0.cause == "Low storage" })
+        // the same device installing: then the battery counts
+        let installing = Sample.status([("device.operating-system.version", "26.7.1"), ("softwareupdate.install-state", "installing")])
+        #expect(evaluate(member, status: installing, row: row(.inProgress, "Installing now"), reports: declared)
+            .findings.contains { $0.cause == "Low battery" })
     }
 
     @Test("A device on target needs no cause")
