@@ -1,0 +1,24 @@
+{
+  "originHash" : "625e8b345b6810b8ebdb10059cad49ff654e2c1a8d5d314465b1664bfeb55731",
+  "pins" : [
+    {
+      "identity" : "jtkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/JordyThery/JTKit.git",
+      "state" : {
+        "revision" : "0d44d3dd3c423388fa402d33d098e410ecdba5dd",
+        "version" : "1.4.0"
+      }
+    },
+    {
+      "identity" : "microsoft-authentication-library-for-objc",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/AzureAD/microsoft-authentication-library-for-objc",
+      "state" : {
+        "revision" : "8dfe5bf41fe10e6d2afed62a72c4232adbef20f4",
+        "version" : "2.16.0"
+      }
+    }
+  ],
+  "version" : 3
+}
