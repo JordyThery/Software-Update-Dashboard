@@ -21,7 +21,6 @@
   ],
   "files": [
     { "kind": "folder", "path": "Software Update Dashboard", "target-membership": [ "Software Update Dashboard" ] },
-    { "kind": "folder", "path": "Software Update DashboardUITests", "target-membership": [ "Software Update DashboardUITests" ] },
     { "kind": "folder", "path": "Software Update Dashboard Tests", "target-membership": [ "Software Update Dashboard Tests" ] },
     { "kind": "folder", "path": "Software Update Dashboard UITests", "target-membership": [ "Software Update Dashboard UITests" ] },
     { "kind": "group", "name": "Frameworks" },
@@ -30,7 +29,6 @@
       "name": "Products",
       "children": [
         { "path": "<PRODUCTS>/Software Update Dashboard.app", "id": "000000000000000000000120", "type": "wrapper.application", "index": false },
-        { "path": "<PRODUCTS>/Software Update DashboardUITests.xctest", "id": "08B045B830A1CE9A00A8222B", "type": "wrapper.cfbundle", "index": false },
         { "path": "<PRODUCTS>/Software Update Dashboard Tests.xctest", "id": "08B04A4A30A1D8AD00A8222B", "type": "wrapper.cfbundle", "index": false },
         { "path": "<PRODUCTS>/Software Update Dashboard UITests.xctest", "id": "08387F1530A255A100DCD88F", "type": "wrapper.cfbundle", "index": false },
       ],
@@ -70,8 +68,9 @@
         },
       ],
       "build-settings": {
+        "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
         "CODE_SIGN_STYLE": "Automatic",
-        "CURRENT_PROJECT_VERSION": "1",
+        "CURRENT_PROJECT_VERSION": "2",
         "DEVELOPMENT_TEAM": "K3LQ9NPBMG",
         "ENABLE_APP_SANDBOX": "YES",
         "ENABLE_HARDENED_RUNTIME": "YES",
@@ -108,44 +107,6 @@
         "SWIFT_EMIT_LOC_STRINGS": "YES",
         "SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY": "YES",
         "SWIFT_VERSION": "5.0",
-      },
-    }, {
-      "name": "Software Update DashboardUITests",
-      "id": "08B045B730A1CE9A00A8222B",
-      "product": "Products/Software Update DashboardUITests.xctest",
-      "product-type": "bundle.ui-testing",
-      "test-host-target": "Software Update Dashboard",
-      "dependencies": [
-        "Software Update Dashboard",
-      ],
-      "build-phases": [
-        "compile-sources",
-        "frameworks",
-        "resources",
-      ],
-      "package-product-members": [
-        {
-          "package": "JTKit",
-          "product-name": "JTKitUITestSupport",
-          "build-phase": { "build-phase": "frameworks" },
-        },
-      ],
-      "build-settings": {
-        "CODE_SIGN_STYLE": "Automatic",
-        "CURRENT_PROJECT_VERSION": "1",
-        "DEVELOPMENT_TEAM": "K3LQ9NPBMG",
-        "GENERATE_INFOPLIST_FILE": "YES",
-        "MACOSX_DEPLOYMENT_TARGET": "15.0",
-        "MARKETING_VERSION": "1.0",
-        "PRODUCT_BUNDLE_IDENTIFIER": "be.jordythery.softwareupdatedashboard.uitests",
-        "PRODUCT_NAME": "$(TARGET_NAME)",
-        "SDKROOT": "macosx",
-        "STRING_CATALOG_GENERATE_SYMBOLS": "NO",
-        "SWIFT_APPROACHABLE_CONCURRENCY": "YES",
-        "SWIFT_EMIT_LOC_STRINGS": "NO",
-        "SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY": "YES",
-        "SWIFT_VERSION": "5.0",
-        "TEST_TARGET_NAME": "Software Update Dashboard",
       },
     }, {
       "name": "Software Update Dashboard Tests",

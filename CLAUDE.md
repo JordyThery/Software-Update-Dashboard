@@ -48,7 +48,7 @@ See WATCHLIST.md.
 - As the unit-test host, the app uses a throwaway UserDefaults domain and secrets in memory, so tests never touch real saved connections. Under tests every request for a saved connection is refused and written down (`UnderTest`).
 - Live checks use only the allow-list's read-only production role (`jamfpro-production`), reads only. Never write its hostname or tenant name into the repo.
 - New UI test targets are added by Jordy with Xcode's new-target tool. Run a single UI test only when Jordy asks for it by name.
-- UI tests live in `Software Update Dashboard UITests` (JTKitUITestCase): `DemoSmokeUITests` for the release check, `ScreenshotUITests` for the README's and website's screenshots in `docs/` (skipped by the release check). Both run only in Demo Mode. The older `Software Update DashboardUITests` target is Xcode's template and is to be deleted.
+- UI tests live in `Software Update Dashboard UITests` (JTKitUITestCase): `DemoSmokeUITests` for the release check, `ScreenshotUITests` for the README's and website's screenshots in `docs/` (skipped by the release check). Both run only in Demo Mode.
 - The release check: `Scripts/release-check.sh`; a full run reads the production role, so it needs `--include-production` (or the allow-list's `productionReads`).
 
 ## Releasing

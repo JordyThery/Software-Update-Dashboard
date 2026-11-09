@@ -27,7 +27,7 @@ Software Update Dashboard never changes anything in Jamf. It sends only GET requ
 
 ## Network use
 
-- The Jamf Platform API of the connection in use.
+- The Jamf Platform API in your region, for the connection in use.
 - Apple’s release data: SOFA by Mac Admins Open Source (`sofafeed.macadmins.io`) and Apple’s software lookup service (`gdmf.apple.com`).
 - GitHub, to check for updates of the app.
 
@@ -45,6 +45,14 @@ Open `Software Update Dashboard.xcodeproj` in Xcode and run. The app uses [JTKit
 
 Release data from [SOFA](https://sofa.macadmins.io) by Mac Admins Open Source.
 
+## Support
+
+If Software Update Dashboard saves you time, you can [buy me a coffee](https://buymeacoffee.com/jordythery). ☕️
+
+## Disclaimer
+
+This tool is provided as-is, without warranty of any kind. Use it at your own risk. This is a personal project. It is not affiliated with or endorsed by my employer, Jamf or Apple. Issues and pull requests are appreciated. Support is best-effort.
+
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+[MIT](LICENSE)
