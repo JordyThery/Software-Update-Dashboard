@@ -55,7 +55,7 @@ struct DeviceListView: View {
                 Button("Inspect Devices Needing Attention") {
                     inspect(Set(InspectWorkflow.select(result.devices).map(\.id)))
                 }
-                .disabled(InspectWorkflow.select(result.devices).isEmpty || !model.inspecting.isEmpty)
+                .disabled(InspectWorkflow.select(result.devices).isEmpty || model.isInspecting(in: result.group.id))
                 .help("Look for the likely cause on every device whose diagnosis needs attention")
             }
             .padding(.horizontal, 12)
@@ -127,9 +127,9 @@ struct DeviceDetailView: View {
                 if let problem = device.statusProblem { WarningLabel(problem) }
             }
             Section("Inspect") {
-                if model.inspecting.contains(device.id) {
+                if model.isInspecting(device, in: result.group.id) {
                     ProgressView("Inspecting…").controlSize(.small)
-                } else if let inspection = model.inspections[device.id] {
+                } else if let inspection = model.inspection(of: device, in: result.group.id) {
                     LabeledContent("Likely cause", value: inspection.cause)
                     Text(inspection.detail).foregroundStyle(.secondary)
                     ForEach(Array(inspection.findings.dropFirst().enumerated()), id: \.offset) { _, finding in
@@ -140,10 +140,10 @@ struct DeviceDetailView: View {
                     }
                 }
                 if let error = model.inspectError { WarningLabel(error) }
-                Button(model.inspections[device.id] == nil ? "Inspect" : "Inspect Again") {
+                Button(model.inspection(of: device, in: result.group.id) == nil ? "Inspect" : "Inspect Again") {
                     Task { await model.inspect([device], in: result.group.id) }
                 }
-                .disabled(model.inspecting.contains(device.id))
+                .disabled(model.isInspecting(device, in: result.group.id))
                 .help("Reads the device’s status and declaration reports to find the likely cause")
             }
         }

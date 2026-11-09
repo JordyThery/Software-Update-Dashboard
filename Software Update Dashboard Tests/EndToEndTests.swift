@@ -102,11 +102,11 @@ struct EndToEndTests {
         let idle = try #require(result.devices.first { $0.name == "Field iPad 11" })
         await model.inspect([idle], in: result.group.id)
         #expect(model.inspectError == nil)
-        let inspection = try #require(model.inspections[idle.id])
+        let inspection = try #require(model.inspection(of: idle, in: result.group.id))
         #expect(inspection.cause == "Update declarations not applied yet")
         let onTarget = try #require(result.devices.first { $0.name == "Field iPad 01" })
         await model.inspect([onTarget], in: result.group.id)
-        #expect(model.inspections[onTarget.id]?.cause == "On target")
+        #expect(model.inspection(of: onTarget, in: result.group.id)?.cause == "On target")
     }
 
     @Test("A computer group: smart members, Macs by board ID, no time zones")

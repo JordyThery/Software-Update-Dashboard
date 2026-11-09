@@ -19,8 +19,15 @@ final class DashboardModel {
     /// “12 of 40 devices”, while a group refreshes.
     private(set) var progress: [UUID: String] = [:]
     private(set) var errors: [UUID: String] = [:]
-    private(set) var inspections: [String: InspectResult] = [:]
-    private(set) var inspecting: Set<String> = []
+    /// A device of one tracked group: device numbers repeat across kinds
+    /// (a Mac and an iPad can both be 7), so never the number alone.
+    struct DeviceKey: Hashable {
+        var group: UUID
+        var device: String
+    }
+
+    private(set) var inspections: [DeviceKey: InspectResult] = [:]
+    private(set) var inspecting: Set<DeviceKey> = []
     private(set) var inspectError: String?
 
     @ObservationIgnored private var savedGroups: [TrackedGroup]
@@ -50,8 +57,13 @@ final class DashboardModel {
 
     func group(_ id: UUID) -> TrackedGroup? { groups.first { $0.id == id } }
 
+    /// Whether this group is already tracked with this Blueprint on the connection.
+    func isTracked(_ key: JamfPro.DeviceGroup.ID, blueprintID: String) -> Bool {
+        groups.contains { $0.groupKey == key && $0.blueprintID == blueprintID }
+    }
+
     func add(_ group: TrackedGroup) {
-        guard !connections.demoChoice.isActive else { return }
+        guard !connections.demoChoice.isActive, !isTracked(group.groupKey, blueprintID: group.blueprintID) else { return }
         savedGroups.append(group)
         TrackedGroupList.save(savedGroups, to: connections.defaults)
         groupsGeneration += 1
@@ -65,6 +77,7 @@ final class DashboardModel {
         TrackedGroupList.save(savedGroups, to: connections.defaults)
         history?.remove(id)
         results[id] = nil
+        inspections = inspections.filter { $0.key.group != id }
         groupsGeneration += 1
         if selection == .group(id) { selection = .overview }
     }
@@ -156,9 +169,10 @@ final class DashboardModel {
     func inspect(_ devices: [DeviceStatus], in id: UUID) async {
         guard let result = results[id] else { return }
         let ids = Set(devices.map(\.id))
-        inspecting.formUnion(ids)
+        let keys = Set(ids.map { DeviceKey(group: id, device: $0) })
+        inspecting.formUnion(keys)
         inspectError = nil
-        defer { inspecting.subtract(ids) }
+        defer { inspecting.subtract(keys) }
         do {
             guard let client = try connections.client() else { throw RefreshError("No connection in use.") }
             let catalog = await appleReleases()
@@ -168,11 +182,23 @@ final class DashboardModel {
                 supports: { model, board, major in catalog?.supports(model: model, boardID: board, major: major, result.group.platform) })
             let members = result.members.filter { ids.contains($0.id) }
             for inspection in try await InspectWorkflow(client: client).run(members, rows: result.devices, context: context) {
-                inspections[inspection.id] = inspection
+                inspections[DeviceKey(group: id, device: inspection.id)] = inspection
             }
         } catch {
             inspectError = error.localizedDescription
         }
+    }
+
+    func inspection(of device: DeviceStatus, in group: UUID) -> InspectResult? {
+        inspections[DeviceKey(group: group, device: device.id)]
+    }
+
+    func isInspecting(_ device: DeviceStatus, in group: UUID) -> Bool {
+        inspecting.contains(DeviceKey(group: group, device: device.id))
+    }
+
+    func isInspecting(in group: UUID) -> Bool {
+        inspecting.contains { $0.group == group }
     }
 
     // MARK: Exports

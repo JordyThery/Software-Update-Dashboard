@@ -7,6 +7,8 @@ nonisolated struct TrackedGroup: Sendable, Hashable, Codable, Identifiable {
     var id: UUID
     /// The connection it belongs to.
     var connectionID: UUID
+    /// Jamf Pro’s number of the group, unique only within its kind: always
+    /// read it with `isComputerGroup` (`groupKey`).
     var groupID: String
     var groupName: String
     var isSmart: Bool
@@ -17,7 +19,7 @@ nonisolated struct TrackedGroup: Sendable, Hashable, Codable, Identifiable {
     init(id: UUID = UUID(), connectionID: UUID, group: JamfPro.DeviceGroup, blueprintID: String, blueprintName: String) {
         self.id = id
         self.connectionID = connectionID
-        groupID = group.id
+        groupID = group.groupID
         groupName = group.name
         isSmart = group.isSmart
         isComputerGroup = group.kind == .computer
@@ -25,8 +27,13 @@ nonisolated struct TrackedGroup: Sendable, Hashable, Codable, Identifiable {
         self.blueprintName = blueprintName
     }
 
+    /// The group’s kind and number: what identifies it in Jamf Pro.
+    var groupKey: JamfPro.DeviceGroup.ID {
+        JamfPro.DeviceGroup.ID(kind: isComputerGroup ? .computer : .mobileDevice, groupID: groupID)
+    }
+
     var group: JamfPro.DeviceGroup {
-        JamfPro.DeviceGroup(id: groupID, name: groupName, isSmart: isSmart, kind: isComputerGroup ? .computer : .mobileDevice)
+        JamfPro.DeviceGroup(groupID: groupID, name: groupName, isSmart: isSmart, kind: isComputerGroup ? .computer : .mobileDevice)
     }
 
     var platform: AppleReleases.Platform { isComputerGroup ? .macOS : .iOS }
@@ -50,10 +57,10 @@ nonisolated struct TrackedGroupList: Sendable {
     static func demo(connectionID: UUID) -> [TrackedGroup] {
         [
             TrackedGroup(id: UUID(uuidString: "D0D50001-0000-4000-8000-000000000001")!, connectionID: connectionID,
-                         group: JamfPro.DeviceGroup(id: DemoSoftwareUpdate.iPadGroupID, name: "Field iPads", isSmart: true, kind: .mobileDevice),
+                         group: JamfPro.DeviceGroup(groupID: DemoSoftwareUpdate.iPadGroupID, name: "Field iPads", isSmart: true, kind: .mobileDevice),
                          blueprintID: DemoSoftwareUpdate.iPadBlueprintID, blueprintName: "Contoso – iPad Update"),
             TrackedGroup(id: UUID(uuidString: "D0D50001-0000-4000-8000-000000000002")!, connectionID: connectionID,
-                         group: JamfPro.DeviceGroup(id: DemoSoftwareUpdate.macGroupID, name: "Studio Macs", isSmart: true, kind: .computer),
+                         group: JamfPro.DeviceGroup(groupID: DemoSoftwareUpdate.macGroupID, name: "Studio Macs", isSmart: true, kind: .computer),
                          blueprintID: DemoSoftwareUpdate.macBlueprintID, blueprintName: "Contoso – Mac Update"),
         ]
     }

@@ -1,60 +1,96 @@
 import JTKit
 import SwiftUI
 
-/// Track a group: a Jamf Pro group and the Blueprint that enforces its
-/// software update. Only reads.
+/// Track a group: first the Blueprint that enforces the software update,
+/// then a Jamf Pro group, with the Blueprint’s own groups at the top. Only reads.
 struct AddGroupSheet: View {
     let model: DashboardModel
     @Environment(\.dismiss) private var dismiss
-    @State private var groups: [JamfPro.DeviceGroup] = []
     @State private var blueprints: [JamfPlatform.BlueprintOverview] = []
-    @State private var groupID: String?
+    @State private var platformGroups: [JamfPlatform.PlatformGroup] = []
+    @State private var choice = GroupChoice(groups: [])
     @State private var blueprintID: String?
+    /// Kind and number together: a mobile device group and a computer group
+    /// can share a number.
+    @State private var groupID: JamfPro.DeviceGroup.ID?
     @State private var blocks: [JamfPlatform.SoftwareUpdateBlock]?
     @State private var isLoading = true
+    @State private var isLoadingBlueprint = false
     @State private var problem: String?
 
-    private var group: JamfPro.DeviceGroup? { groups.first { $0.id == groupID } }
+    private var group: JamfPro.DeviceGroup? { choice.group(groupID) }
     private var blueprint: JamfPlatform.BlueprintOverview? { blueprints.first { $0.id == blueprintID } }
+    private var alreadyTracked: Bool {
+        guard let groupID, let blueprintID else { return false }
+        return model.isTracked(groupID, blueprintID: blueprintID)
+    }
 
     var body: some View {
-        SheetFrame(title: "Track a Group", systemImage: "plus.square.on.square", isBusy: isLoading) {
-            Form {
-                Picker("Jamf Pro group", selection: $groupID) {
-                    Text("Choose a Group").tag(String?.none)
-                    Section("Mobile Device Groups") {
-                        ForEach(groups.filter { $0.kind == .mobileDevice }) { Text($0.name).tag(Optional($0.id)) }
+        SheetFrame(title: "Track a Group", systemImage: "plus.square.on.square", isBusy: isLoading || isLoadingBlueprint) {
+            VStack(alignment: .leading, spacing: 12) {
+                Form {
+                    Picker("Blueprint", selection: $blueprintID) {
+                        Text("Choose a Blueprint").tag(String?.none)
+                        ForEach(blueprints) { Text($0.name).tag(Optional($0.id)) }
                     }
-                    Section("Computer Groups") {
-                        ForEach(groups.filter { $0.kind == .computer }) { Text($0.name).tag(Optional($0.id)) }
-                    }
-                }
-                Picker("Blueprint", selection: $blueprintID) {
-                    Text("Choose a Blueprint").tag(String?.none)
-                    ForEach(blueprints) { Text($0.name).tag(Optional($0.id)) }
-                }
-                if let blocks {
-                    if blocks.isEmpty {
-                        WarningLabel("This Blueprint has no software update.")
-                    } else {
-                        ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                            LabeledContent(block.stepName ?? "Step \(block.stepIndex + 1)", value: Self.describe(block))
+                    if let blocks {
+                        if blocks.isEmpty {
+                            WarningLabel("This Blueprint has no software update.")
+                        } else {
+                            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                                LabeledContent(block.stepName ?? "Step \(block.stepIndex + 1)", value: Self.describe(block))
+                            }
                         }
                     }
                 }
-                if let problem { WarningLabel(problem) }
+                .formStyle(.grouped)
+                .fixedSize(horizontal: false, vertical: true)
+
+                TextField("Search groups", text: $choice.search)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(blueprintID == nil)
+                List(selection: $groupID) {
+                    if !choice.inScope.isEmpty {
+                        Section("In the Blueprint’s Scope") { rows(choice.inScope) }
+                    }
+                    Section("Mobile Device Groups") { rows(choice.mobileDeviceGroups) }
+                    Section("Computer Groups") { rows(choice.computerGroups) }
+                }
+                .frame(height: 300)
+                .disabled(blueprintID == nil)
+                .overlay {
+                    if blueprintID == nil {
+                        Text("Choose a Blueprint first.").foregroundStyle(.secondary)
+                    }
+                }
+
+                if let warning = choice.scopeWarning(for: groupID) { WarningLabel(warning).font(.callout) }
+                if alreadyTracked { WarningLabel("This group is already tracked with this Blueprint.").font(.callout) }
+                if let problem { WarningLabel(problem).font(.callout) }
             }
-            .formStyle(.grouped)
+            .padding(.horizontal, 20)
         } footer: {
             Button("Cancel", role: .cancel) { dismiss() }
                 .keyboardShortcut(.cancelAction)
             Button("Track") { add() }
                 .keyboardShortcut(.defaultAction)
-                .disabled(group == nil || blueprint == nil || (blocks ?? []).isEmpty)
+                .disabled(group == nil || blueprint == nil || (blocks ?? []).isEmpty || alreadyTracked)
         }
-        .frame(width: 520)
+        .frame(width: 560)
         .task { await load() }
-        .task(id: blueprintID) { await loadBlocks() }
+        .task(id: blueprintID) { await loadBlueprint() }
+    }
+
+    private func rows(_ groups: [JamfPro.DeviceGroup]) -> some View {
+        ForEach(groups) { group in
+            HStack {
+                Label(group.name, systemImage: group.kind == .computer ? "laptopcomputer" : "ipad")
+                Spacer()
+                Text(group.isSmart ? "Smart" : "Static").foregroundStyle(.secondary)
+            }
+            .tag(group.id)
+            .accessibilityElement(children: .combine)
+        }
     }
 
     static func describe(_ block: JamfPlatform.SoftwareUpdateBlock) -> String {
@@ -73,17 +109,28 @@ struct AddGroupSheet: View {
             guard let client = try model.connections.client() else { return }
             async let groups = client.jamfProGroups()
             async let blueprints = JamfPlatform.Blueprints(client: client).list()
-            (self.groups, self.blueprints) = try await (groups, blueprints)
+            let (loadedGroups, loadedBlueprints) = try await (groups, blueprints)
+            choice.groups = loadedGroups
+            self.blueprints = loadedBlueprints.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            // which Jamf Pro group each Platform group is; without it, no scope section
+            platformGroups = (try? await client.platformGroups()) ?? []
         } catch {
             problem = error.localizedDescription
         }
     }
 
-    private func loadBlocks() async {
+    private func loadBlueprint() async {
         blocks = nil
+        choice.scope = nil
         guard let blueprintID, let client = try? model.connections.client() else { return }
+        isLoadingBlueprint = true
+        defer { isLoadingBlueprint = false }
         do {
-            blocks = try await JamfPlatform.Blueprints(client: client).softwareUpdate(blueprintID: blueprintID).blocks
+            let update = try await JamfPlatform.Blueprints(client: client).softwareUpdate(blueprintID: blueprintID)
+            blocks = update.blocks
+            if !platformGroups.isEmpty {
+                choice.scope = GroupChoice.scope(platformGroupIDs: update.blueprint.scopeDeviceGroups, platformGroups: platformGroups)
+            }
         } catch {
             problem = error.localizedDescription
         }

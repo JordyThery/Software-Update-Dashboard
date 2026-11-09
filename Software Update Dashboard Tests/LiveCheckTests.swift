@@ -177,6 +177,18 @@ struct LiveReadTests {
                 let update = try await JamfPlatform.Blueprints(client: client).softwareUpdate(blueprintID: overview.id)
                 if !update.blocks.isEmpty {
                     tracked = TrackedGroup(connectionID: UUID(), group: chosen.group, blueprintID: overview.id, blueprintName: overview.name)
+                    // the sheet's scope section: the Blueprint's Platform groups as Jamf Pro groups (kind and number)
+                    do {
+                        let platformGroups = try await client.platformGroups()
+                        let scope = GroupChoice.scope(platformGroupIDs: update.blueprint.scopeDeviceGroups, platformGroups: platformGroups)
+                        let known = Set(groups.map(\.id))
+                        record(run, step("the Blueprint's scope as Jamf Pro groups (device-groups:read)"),
+                               passed: scope.count == update.blueprint.scopeDeviceGroups.count && scope.isSubset(of: known),
+                               note: "\(update.blueprint.scopeDeviceGroups.count) scope groups, \(scope.count) matched: "
+                                   + "\(scope.filter { $0.kind == .mobileDevice }.count) mobile, \(scope.filter { $0.kind == .computer }.count) computer")
+                    } catch {
+                        record(run, step("the Blueprint's scope as Jamf Pro groups (device-groups:read)"), passed: false, note: failure(error))
+                    }
                     record(run, step("a Blueprint with a software update (blueprints:read)"), passed: true,
                                note: "\(update.blocks.count) \(update.blocks.count == 1 ? "block" : "blocks"): "
                                    + update.blocks.map { String(describing: $0.enforcement).components(separatedBy: "(").first ?? "" }.joined(separator: ", "))
