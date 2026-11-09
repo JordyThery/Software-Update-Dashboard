@@ -1,0 +1,62 @@
+# Software Update Dashboard: instructions for Claude
+
+At the start of every conversation, run ../JTKit/Scripts/check-versions.sh (or fetch it from GitHub if ../JTKit isn't there) and mention the result in one line if anything is out of date.
+
+Shared code and the standards for every app: see JTKit's CLAUDE.md and ROADMAP.md (github.com/JordyThery/JTKit, or ../JTKit in the workspace). The plan for this app is docs/PLAN.md.
+
+## What the app does
+
+A read-only Mac app that answers, for the devices a Blueprint is scoped to, whether they are on the OS version its software update asks for, and if not, why not. The unit of work is a tracked Blueprint: a Blueprint with a software update; its devices are those of the Jamf Pro groups it is scoped to. Milestone 1: Jamf Pro through the Jamf Platform API, iOS, iPadOS and macOS.
+
+## How to work on it
+
+- App-only work: open `Software Update Dashboard.xcodeproj`. This folder's notes load and it builds against the published JTKit.
+- Anything that changes JTKit: work in `~/Developer/Apps.xcworkspace`.
+- Never have the app open in both at once.
+- Build releases from the app's own project, so they use the published JTKit version.
+- After merging into main, push main to origin straight away (keep GitHub in sync).
+- Jordy is not a programmer: explain changes in plain language, in small steps.
+
+## Architecture
+
+- `App/`: the app (About, Check for Updates, Settings, Connection menu, activity log, Demo Mode), `UnderTest`.
+- `Connections/`: `AppConnection` (a JTKit connection plus the Jamf Pro server's time zone), `ConnectionsModel` (saved connections, the one in use, demo mode, the read-only clients), the Connections tab.
+- `State/`: tracked Blueprints (with the move from tracked groups), the history, the dashboard model.
+- `Logic/`: the classifier, the target rules per device (`TargetRules`), the summary, Inspect, deadlines per zone.
+- `Views/`: the main window.
+- From JTKit: `ConnectionStore`, `ConnectionsSettingsTab`, `ConnectionPicker`/`ConnectionCommands`, `SettingsWindow`, `AboutWindow`, `UpdateChecker`, `ActivityLogWindow`, `DemoMode` with `DemoSoftwareUpdate`, `JamfPlatform.Client` and the 1.5.0 readers (groups and members, `softwareUpdateStatus`, Declaration Reporting, `softwareUpdateBlocks`), `AppleReleases`.
+- Every request goes through JTKit; the app only interprets. When something is needed that JTKit could share, extend JTKit instead of adding a copy here.
+- Build facts: macOS 15.0, sandboxed (outgoing network, user-selected files read-write), Swift 5 mode with MainActor default isolation, bundle ID `be.jordythery.softwareupdatedashboard`. The "Run Build Number Script" phase stamps the built app's `CFBundleVersion` with a UTC date-time; nothing to commit.
+
+## Rules
+
+- **Read only.** The app never changes anything in Jamf: its clients allow GET and HEAD only (`ConnectionsModel.permits`), plus the sign-in. It asks only for read permissions: `blueprints:read`, `devices:read`, `device-groups:read`, `declarations:read`.
+- **Term search.** Before every commit, run `../_release-gate/sud-scan.sh` (its terms are in `../_release-gate/sud-terms.txt`, outside every repo) and report the result. Never write the terms into the repo: not in code, comments, tests, docs or commit messages.
+- **No real identifiers.** Never write a hostname, tenant name, serial or environment ID into the repo. Tests and scripts use role names and made-up values.
+- No code copied from other projects. JAMFGetDDMInfo is GPL and may only inform.
+- `os.Logger` messages that can hold server answers use `privacy: .private`.
+- Demo mode never reaches a real tenant or the real release-data hosts (JTKit's demo network).
+- Stored data: the connections under `connections` in UserDefaults, the one in use under `activeConnectionID`, the demo switch under `demoMode`, the tracked Blueprints under `trackedBlueprints` (moved once from the first version’s `trackedGroups`, which is read but never removed; a value that can’t be read is copied to `trackedBlueprints.unreadable-<date and time>` and never saved over; the banner can write that copy to `Application Support/Unreadable Copies/<key>.plist` for Finder, and Start a New List saves an empty `trackedBlueprints`, never touching the copy), the history in `History/<tracked Blueprint ID>/`, the secrets in the Keychain under `be.jordythery.softwareupdatedashboard.jamf`. Keep these names.
+
+## Watchlist
+
+See WATCHLIST.md.
+
+## Testing
+
+- Unit tests: Swift Testing in `Software Update Dashboard Tests`, on JTKit's `MockServer` and demo mode; no real network.
+- As the unit-test host, the app uses a throwaway UserDefaults domain and secrets in memory, so tests never touch real saved connections. Under tests every request for a saved connection is refused and written down (`UnderTest`).
+- Live checks use only the allow-list's read-only production role (`jamfpro-production`), reads only. Never write its hostname or tenant name into the repo.
+- New UI test targets are added by Jordy with Xcode's new-target tool. Run a single UI test only when Jordy asks for it by name.
+- UI tests live in `Software Update Dashboard UITests` (JTKitUITestCase): `DemoSmokeUITests` for the release check, `ScreenshotUITests` for the README's and website's screenshots in `docs/` (skipped by the release check). Both run only in Demo Mode.
+- The release check: `Scripts/release-check.sh`; a full run reads the production role, so it needs `--include-production` (or the allow-list's `productionReads`).
+
+## Releasing
+
+Follow the release gate in JTKit/ROADMAP.md.
+
+1. Bump `MARKETING_VERSION` in the project.
+2. Update the README if features changed (its screenshot must show no real identifiers).
+3. Archive from the app's own project, sign with Developer ID, notarize, and zip.
+4. Tag `vX.Y.Z`, create the GitHub release with notes and attach the zip. Release notes (CHANGELOG entries and GitHub release notes) are for the end user: professional and concise, saying what changed for them, and never mentioning the release check, reviews, tests, test targets, AI tools, JTKit step numbers or how a problem was found (decided by Jordy on 2026-11-01).
+5. Website: follow ../jordythery.be/CLAUDE.md, section “When an app is released”.
