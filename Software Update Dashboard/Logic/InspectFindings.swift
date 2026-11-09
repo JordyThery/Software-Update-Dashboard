@@ -104,7 +104,7 @@ nonisolated enum InspectFindings {
         if let expiry = member.mdmProfileExpiration, expiry < ctx.now {
             add("MDM profile expired", "Expired \(day(expiry))")
         }
-        if let contact = member.lastContact, ctx.now.timeIntervalSince(contact) > Double(ctx.staleDays) * 86_400 {
+        if let contact = member.lastSeen, ctx.now.timeIntervalSince(contact) > Double(ctx.staleDays) * 86_400 {
             add("Offline", "Last contact \(day(contact))")
         }
 
@@ -198,7 +198,7 @@ nonisolated enum InspectFindings {
             let last = String(failTime.prefix(16)).replacingOccurrences(of: "T", with: " ")
             add("Update error", "\(reason.isEmpty ? "No reason given" : reason) (\(count)last \(last))")
         }
-        if let updated, let contact = member.lastContact, contact.timeIntervalSince(updated) > 2 * 86_400 {
+        if let updated, let contact = member.lastSeen, contact.timeIntervalSince(updated) > 2 * 86_400 {
             add("Update status not reported", "Last software update report \(day(updated)), last contact \(day(contact))")
         }
         let others = (reports ?? []).filter { $0.blueprintID != ctx.blueprintID.lowercased() }

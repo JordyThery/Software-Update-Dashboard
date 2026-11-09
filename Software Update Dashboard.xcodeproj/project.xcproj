@@ -76,6 +76,7 @@
         "ENABLE_INCOMING_NETWORK_CONNECTIONS": "NO",
         "ENABLE_OUTGOING_NETWORK_CONNECTIONS": "YES",
         "ENABLE_PREVIEWS": "YES",
+        "ENABLE_USER_SCRIPT_SANDBOXING": "NO",
         "ENABLE_USER_SELECTED_FILES": "readwrite",
         "GENERATE_INFOPLIST_FILE": "YES",
         "INFOPLIST_KEY_CFBundleDisplayName": "Software Update Dashboard",

@@ -28,6 +28,17 @@ struct ClassificationTests {
         #expect(refused.statusProblem == "Missing devices:read")
     }
 
+    @Test("A device without a last contact but with a recent inventory update isn’t offline")
+    func inventoryCountsAsContact() {
+        var member = S.iPad(lastContact: nil)
+        member.lastInventoryUpdate = S.date("2026-11-05T08:00:00")
+        let device = S.classify(member, S.status([("device.operating-system.version", "26.7.1")]))
+        #expect(device.category == .notStarted)
+        #expect(device.lastContact == S.date("2026-11-05T08:00:00"))
+        member.lastInventoryUpdate = S.date("2026-09-01T00:00:00")
+        #expect(S.classify(member, S.status([("device.operating-system.version", "26.7.1")])).category == .offline)
+    }
+
     @Test("Hardware that can’t run the target major is unsupported")
     func unsupported() {
         let device = S.classify(S.iPad(model: "iPad7,5"), S.status([("device.operating-system.version", "26.7.1")]))

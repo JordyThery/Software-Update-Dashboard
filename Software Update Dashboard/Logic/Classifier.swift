@@ -150,7 +150,7 @@ nonisolated enum Classifier {
         let busy = state?.isBusy ?? false
         let isFailed = state == .failed
         let itemCount = status?.itemCount ?? 0
-        let stale = member.lastContact.map { ctx.now.timeIntervalSince($0) > Double(ctx.staleDays) * 86_400 } ?? true
+        let stale = member.lastSeen.map { ctx.now.timeIntervalSince($0) > Double(ctx.staleDays) * 86_400 } ?? true
 
         let category: StatusCategory
         if let target, let os, !(os < target) { category = .onTarget }
@@ -206,7 +206,7 @@ nonisolated enum Classifier {
             inventoryOS: member.osVersion, reportedOS: ddmOS, installState: state?.rawValue, pendingVersion: pending,
             failureCount: status?.failure?.count, error: error, errorTime: failTime,
             errorSinceUpdate: failTime == nil ? nil : failedSince, passcodePresent: status?.passcodePresent ?? member.passcodePresent,
-            lastContact: member.lastContact, statusUpdated: updated, timeZone: member.timeZone, managementID: member.managementID,
+            lastContact: member.lastSeen, statusUpdated: updated, timeZone: member.timeZone, managementID: member.managementID,
             category: category, diagnosis: diagnosis, statusProblem: input.statusProblem)
     }
 
@@ -232,6 +232,18 @@ nonisolated enum Classifier {
 
     static func matches(_ text: String, _ pattern: String) -> Bool {
         !text.isEmpty && text.range(of: pattern, options: .regularExpression) != nil
+    }
+}
+
+extension JamfPro.GroupMember {
+    /// When Jamf Pro last heard from the device: its last contact or its
+    /// last inventory update, whichever is newer. Jamf Pro has no last
+    /// contact for some devices that do send inventory.
+    nonisolated var lastSeen: Date? {
+        switch (lastContact, lastInventoryUpdate) {
+        case let (contact?, inventory?): max(contact, inventory)
+        case let (contact, inventory): contact ?? inventory
+        }
     }
 }
 
