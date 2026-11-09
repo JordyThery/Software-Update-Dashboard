@@ -17,6 +17,7 @@ struct OverviewView: View {
                 } actions: {
                     Button("Track a Blueprint…") { sheet = .track }
                         .disabled(model.connections.demoChoice.isActive)
+                        .help(model.connections.demoChoice.isActive ? "Demo Mode has its own sample Blueprints." : "Track a Blueprint with a software update")
                 }
             } else {
                 ScrollView {
@@ -82,7 +83,8 @@ struct BlueprintCard: View {
                             if let result = model.results[tracked.id], result.pastDeadline > 0 {
                                 Text("\(result.pastDeadline) past the deadline").foregroundStyle(.secondary)
                             }
-                            Text(latest.date, format: .relative(presentation: .named))
+                            // “Read now”, “Read 2 hours ago”: when Jamf was last read
+                            Text("Read \(latest.date.formatted(.relative(presentation: .named)))")
                                 .foregroundStyle(.secondary)
                         }
                         .font(.callout)

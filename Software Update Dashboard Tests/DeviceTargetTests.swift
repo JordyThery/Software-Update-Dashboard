@@ -294,14 +294,19 @@ struct InspectDeclarationPairTests {
         #expect(quiet.findings.contains { $0.cause == "Bootstrap token not escrowed" })
     }
 
-    @Test("A token that isn’t escrowed matters only on Apple silicon: an Intel Mac gets no warning")
-    func bootstrapIntel() {
+    @Test("A token that isn’t escrowed matters only on Apple silicon: an Intel Mac gets no warning, whatever board it reports",
+          arguments: ["J152FAP", "X86LEGACYAP"])
+    func bootstrapIntel(board: String) {
         var intel = Sample.mac(os: "26.7.1", model: "MacBookPro16,1")
         intel.bootstrapTokenEscrowedStatus = "NOT_ESCROWED"
         intel.supervised = true
-        let result = evaluate([report("act", 12, active: true), report("cfg", 12, active: true)], member: intel)
+        // with a status report naming the Mac's board, as Intel Macs send it
+        let status = Sample.status([("device.operating-system.version", "26.7.1"), ("softwareupdate.device-id", board)])
+        let result = evaluate([report("act", 12, active: true), report("cfg", 12, active: true)], member: intel, status: status)
         #expect(!result.findings.contains { $0.cause.hasPrefix("Bootstrap token") })
-        #expect(DeviceDetailText.notEscrowedWarning(appleSilicon: DeviceDetailText.isAppleSilicon(model: "MacBookPro16,1", boardID: nil)) == nil)
+        let row = Sample.classify(intel, status)
+        #expect(row.boardID == board)
+        #expect(DeviceDetailText.notEscrowedWarning(appleSilicon: DeviceDetailText.isAppleSilicon(model: row.modelIdentifier, boardID: row.boardID)) == nil)
 
         var silicon = intel
         silicon.modelIdentifier = "MacBookPro18,3"
@@ -314,7 +319,9 @@ struct InspectDeclarationPairTests {
         ("Mac14,2", nil, true), ("MacBookAir10,1", nil, true), ("MacBookPro17,1", nil, true), ("Macmini9,1", nil, true),
         ("iMac21,1", nil, true), ("VirtualMac2,1", nil, true), ("MacBookPro16,1", nil, false), ("MacBookAir9,1", nil, false),
         ("Macmini8,1", nil, false), ("iMac20,1", nil, false), ("MacPro7,1", nil, false), ("iMacPro1,1", nil, false),
-        ("", "J314sAP", true), ("", "Mac-827FAC58A8FDFA22", false), ("", nil, nil), ("iPad14,8", nil, nil),
+        ("MacBookPro16,1", "X86LEGACYAP", false), ("MacBookPro16,1", "J152FAP", false), ("MacBookPro18,3", "J314sAP", true),
+        ("", "X86LEGACYAP", false), ("", "VMM-x86_64", false), ("", "Mac-827FAC58A8FDFA22", false),
+        ("", "J152FAP", nil), ("", "J314sAP", nil), ("", nil, nil), ("iPad14,8", nil, nil),
     ] as [(String, String?, Bool?)])
     func appleSilicon(model: String, boardID: String?, expected: Bool?) {
         #expect(DeviceDetailText.isAppleSilicon(model: model, boardID: boardID) == expected)
@@ -458,7 +465,7 @@ struct PostingDeadlineTests {
         #expect(target.deadlineLocal == "2026-11-19T23:59:00")
         #expect(target.deadlineSource == .postingDate)
         #expect(target.activityFrom == Sample.date("2026-10-26T00:00:00"))
-        #expect(target.reason == "The newest public macOS 27 release: 27.2; installs by 19 Nov")
+        #expect(target.reason == "The newest public macOS 27 release: 27.2; installs by \(TargetRules.day("2026-11-19T23:59:00"))")
         // the live case: on 6 Nov, the day after Apple's public posting, 27.2 is already the target, due 19 Nov
         let dayAfter = Self.rule(os: "27.0.1", now: "2026-11-06T09:00:00")
         #expect(dayAfter.version == "27.2" && dayAfter.deadlineLocal == "2026-11-19T23:59:00")
@@ -478,17 +485,124 @@ struct PostingDeadlineTests {
         #expect(target.deadlineSource?.text == "From the release date, no posting date found")
     }
 
-    static func pending(updated: String, deadline: String = "2026-11-09 22:59:06 +0000") -> JamfPro.SoftwareUpdateStatus {
+    static func pending(updated: String, deadline: String = "2026-11-09 22:59:06 +0000", version: String = "27.2") -> JamfPro.SoftwareUpdateStatus {
         Sample.status([("device.operating-system.version", "27.0.1"), ("softwareupdate.install-state", "prepared"),
-                       ("softwareupdate.pending-version.os-version", "27.2"),
+                       ("softwareupdate.pending-version.os-version", version),
                        ("softwareupdate.pending-version.target-local-date-time", deadline),
                        ("softwareupdate.install-reason.reason", "declaration")], time: updated)
     }
 
-    static func sent(_ status: JamfPro.SoftwareUpdateStatus, changed: Date? = nil) -> DeviceTarget {
-        TargetRules.fromDevice(Self.rule(os: "27.0.1"), status: status, os: "27.0.1", osName: "macOS", catalog: Self.catalog,
-                               platform: .macOS, serverTimeZone: Sample.utc, model: "MacBookPro18,3", boardID: "J314sAP",
+    static func sent(_ status: JamfPro.SoftwareUpdateStatus, changed: Date? = nil, rule: DeviceTarget = rule(os: "27.0.1"),
+                     serverTimeZone: TimeZone = Sample.utc) -> DeviceTarget {
+        TargetRules.fromDevice(rule, status: status, os: "27.0.1", osName: "macOS", catalog: Self.catalog,
+                               platform: .macOS, serverTimeZone: serverTimeZone, model: "MacBookPro18,3", boardID: "J314sAP",
                                blueprintChanged: changed)
+    }
+
+    static let named = rule(os: "27.0.1", .specific(targetOSVersion: "27.2", targetLocalDateTime: "2026-11-20T17:00:00", detailsURL: nil))
+    static let member = Sample.mac(os: "27.0.1", model: "MacBookPro18,3")
+
+    static func inspect(_ status: JamfPro.SoftwareUpdateStatus, _ device: DeviceStatus, now: String) -> InspectResult {
+        InspectFindings.evaluate(
+            InspectInput(member: member, status: status, device: device, platformDeviceID: "P-1", reports: []),
+            context: InspectContext(blueprintID: "6a2f0000-1111-4000-8000-00000000c0de", target: nil, since: nil,
+                                    now: Sample.date(now), serverTimeZone: Sample.utc))
+    }
+
+    @Test("A report from before Apple’s posting says so, not that the Blueprint changed")
+    func staleByPosting() throws {
+        let status = Self.pending(updated: "2026-11-03T07:11:00")
+        let target = Self.sent(status)
+        #expect(target.staleReason == .posted && target.staleReportedDeadline != nil)
+        let device = Sample.classify(Self.member, status, target: target, now: "2026-11-10T08:00:00")
+        let inspected = Self.inspect(status, device, now: "2026-11-10T08:00:00")
+        let finding = try #require(inspected.findings.first { $0.cause == "Deadline reported before Apple posted this version" })
+        #expect(finding.detail.contains("before Apple posted this version publicly") && !finding.detail.contains("Blueprint’s last change"))
+        #expect(!inspected.findings.contains { $0.cause == "Declaration not refreshed since the Blueprint changed" })
+        // the Blueprint changed after the posting: that is the reason
+        #expect(Self.sent(status, changed: Sample.date("2026-11-06T09:00:00")).staleReason == .blueprintChanged)
+    }
+
+    @Test("A specific version: Apple’s posting doesn’t make a report stale; the Blueprint’s change does")
+    func specificIgnoresPosting() {
+        let status = Self.pending(updated: "2026-11-03T07:11:00")
+        let target = Self.sent(status, rule: Self.named)
+        #expect(target.staleReason == nil && target.deadlineSource == .reported)
+        #expect(Self.sent(status, changed: Sample.date("2026-11-04T09:00:00"), rule: Self.named).staleReason == .blueprintChanged)
+    }
+
+    @Test("The rule gives no deadline: a stale reported one stays, said to be possibly out of date")
+    func staleWithoutRuleDeadline() {
+        let noDeadline = Self.rule(os: "27.0.1", .specific(targetOSVersion: "27.2", targetLocalDateTime: nil, detailsURL: nil))
+        let status = Self.pending(updated: "2026-11-03T07:11:00")
+        let target = Self.sent(status, changed: Sample.date("2026-11-06T09:00:00"), rule: noDeadline)
+        #expect(target.deadlineDate == Sample.date("2026-11-09T22:59:06"))
+        #expect(target.deadlineSource == .reportedBeforeChange)
+        #expect(target.deadlineSource?.text.hasSuffix("may be out of date") == true)
+        let device = Sample.classify(Self.member, status, target: target, now: "2026-11-10T08:00:00")
+        #expect(device.pastDeadline == true)
+    }
+
+    @Test("A pending version other than the rule’s keeps its reported deadline: this Blueprint’s change says nothing about it")
+    func otherDeclarationKeepsItsDeadline() {
+        let target = Self.sent(Self.pending(updated: "2026-11-03T07:11:00", version: "27.1"), changed: Sample.date("2026-11-06T09:00:00"))
+        #expect(target.version == "27.1" && target.differsFromRule)
+        #expect(target.staleReason == nil && target.deadlineSource == .reported && target.deadlineDate == Sample.date("2026-11-09T22:59:06"))
+    }
+
+    @Test("A stale deadline on the rule’s own deadline day isn’t pointed out")
+    func staleSameDay() {
+        let status = Self.pending(updated: "2026-11-03T07:11:00", deadline: "2026-11-19 22:00:00 +0000")
+        let target = Self.sent(status, changed: Sample.date("2026-11-06T09:00:00"))
+        #expect(target.deadlineLocal == "2026-11-19T23:59:00" && target.deadlineSource == .postingDate)
+        #expect(target.staleReason == nil && target.staleReportedDeadline == nil)
+    }
+
+    @Test("After the rule’s deadline a stale report is stuck in the row and in Inspect alike")
+    func staleAfterRuleDeadline() {
+        let status = Self.pending(updated: "2026-11-03T07:11:00")
+        let target = Self.sent(status, changed: Sample.date("2026-11-06T09:00:00"))
+        let device = Sample.classify(Self.member, status, target: target, now: "2026-11-21T08:00:00")
+        #expect(device.pastDeadline == true && device.diagnosis.contains("not installed after the deadline"))
+        let inspected = Self.inspect(status, device, now: "2026-11-21T08:00:00")
+        #expect(inspected.findings.contains { $0.cause == "Update stuck" })
+        #expect(!inspected.findings.contains { $0.cause == "Update downloaded" })
+    }
+
+    @Test("A stale deadline without an offset stays the device’s local time")
+    func staleLocalDeadline() throws {
+        let status = Self.pending(updated: "2026-11-03T07:11:00", deadline: "2026-11-09 22:59:06")
+        let target = Self.sent(status, changed: Sample.date("2026-11-06T09:00:00"))
+        #expect(target.staleReportedDeadline == nil && target.staleReportedLocal == "2026-11-09T22:59:06")
+        #expect(DeadlineZones.text(local: target.staleReportedLocal, reported: nil)?.hasSuffix("(device’s local time)") == true)
+        let device = Sample.classify(Self.member, status, target: target, now: "2026-11-10T08:00:00")
+        let finding = try #require(Self.inspect(status, device, now: "2026-11-10T08:00:00").findings
+            .first { $0.cause == "Declaration not refreshed since the Blueprint changed" })
+        #expect(finding.detail.contains(try #require(InspectFindings.localDay("2026-11-09T22:59:06"))))
+    }
+
+    @Test("A report at the change time is stale; without a change and a posting it’s current; the server’s time zone counts")
+    func reportTimes() {
+        let changed = Sample.date("2026-11-06T09:00:00")
+        #expect(Self.sent(Self.pending(updated: "2026-11-06T09:00:00"), changed: changed, rule: Self.named).staleReason == .blueprintChanged)
+        // a specific version without a change time: nothing can make it stale
+        #expect(Self.sent(Self.pending(updated: "2026-11-01T09:00:00"), rule: Self.named).deadlineSource == .reported)
+        // 09:30 on a server an hour ahead of UTC is 08:30 UTC: before a 09:00 UTC change
+        let ahead = TimeZone(identifier: "Europe/Brussels")!
+        #expect(Self.sent(Self.pending(updated: "2026-11-06T09:30:00"), changed: changed, rule: Self.named, serverTimeZone: ahead)
+            .staleReason == .blueprintChanged)
+        #expect(Self.sent(Self.pending(updated: "2026-11-06T09:30:00"), changed: changed, rule: Self.named).staleReason == nil)
+    }
+
+    @Test("Delay 0: the target on the posting day, due that day at the Blueprint’s time, or at midnight without one")
+    func delayZero() {
+        let withTime = Self.rule(os: "27.0.1", now: "2026-11-05T12:00:00", .semantic(minorEnforceAfterDays: 0, deploymentTime: "17:00"))
+        #expect(withTime.version == "27.2" && withTime.deadlineLocal == "2026-11-05T17:00:00")
+        #expect(TargetRules.isPastDeadline(withTime.deadlineLocal, timeZone: "UTC", now: Sample.date("2026-11-05T12:00:00")) == false)
+        let noTime = Self.rule(os: "27.0.1", now: "2026-11-05T12:00:00", .semantic(minorEnforceAfterDays: 0, deploymentTime: nil))
+        #expect(noTime.version == "27.2" && noTime.deadlineLocal == "2026-11-05T00:00:00")
+        #expect(TargetRules.isPastDeadline(noTime.deadlineLocal, timeZone: "UTC", now: Sample.date("2026-11-05T12:00:00")) == true)
+        #expect(DeadlineZones.text(local: noTime.deadlineLocal, reported: nil)?.hasSuffix("(device’s local time)") == true)
     }
 
     @Test("A deadline from a current report wins; a specific version’s is the Blueprint’s")
@@ -528,8 +642,9 @@ struct PostingDeadlineTests {
         let finding = try #require(inspected.findings.first { $0.cause == "Declaration not refreshed since the Blueprint changed" })
         #expect(finding.detail.contains(InspectFindings.day(Sample.date("2026-11-09T22:59:06")))
                 && finding.detail.contains(InspectFindings.day(Sample.date("2026-11-06T09:00:00"))))
+        #expect(target.staleReason == .blueprintChanged)
         // the posting alone makes a report stale too
-        #expect(Self.sent(status).staleReportedDeadline != nil)
+        #expect(Self.sent(status).staleReason == .posted)
     }
 
     @Test("A release becomes a target only once Apple offers it publicly, the basis its deadline counts from")

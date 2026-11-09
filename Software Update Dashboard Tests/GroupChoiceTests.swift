@@ -24,7 +24,7 @@ struct GroupChoiceTests {
 
     @Test("A comparison group keeps its kind when saved")
     func storage() throws {
-        let defaults = UnderTest.emptiedDefaults(domain: "be.jordythery.softwareupdatedashboard.test-groups")
+        let defaults = TestFiles.defaults("groups")
         let tracked = TrackedBlueprint(connectionID: UUID(), blueprintID: "b1", blueprintName: "B", compareGroup: GroupReference(computer12))
         TrackedBlueprintList.save([tracked], to: defaults)
         #expect(TrackedBlueprintList.load(from: defaults).first?.compareGroup?.key == computer12.id)

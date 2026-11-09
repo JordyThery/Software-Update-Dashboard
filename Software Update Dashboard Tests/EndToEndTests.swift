@@ -11,7 +11,7 @@ struct EndToEndTests {
     private func demoModel(history: StatusHistory? = nil) -> DashboardModel {
         let connections = ConnectionsModel.preview()
         connections.demo.isOn = true
-        let folder = FileManager.default.temporaryDirectory.appending(path: "sud-e2e-\(UUID().uuidString)")
+        let folder = TestFiles.folder("e2e")
         return DashboardModel(connections: connections, history: history ?? StatusHistory(folder: folder))
     }
 
@@ -143,7 +143,7 @@ struct EndToEndTests {
 
     @Test("A change in the Blueprint’s scope shows in the refresh and the summary")
     func scopeChange() async throws {
-        let folder = FileManager.default.temporaryDirectory.appending(path: "sud-e2e-\(UUID().uuidString)")
+        let folder = TestFiles.folder("e2e")
         let history = StatusHistory(folder: folder)
         let model = demoModel(history: history)
         let tracked = try #require(model.trackedBlueprints.first { $0.blueprintName == Self.iPads })

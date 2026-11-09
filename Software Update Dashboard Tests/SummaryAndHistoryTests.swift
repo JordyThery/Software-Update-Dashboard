@@ -79,7 +79,7 @@ struct StatusSummaryTests {
 @Suite("History")
 struct StatusHistoryTests {
     private func history() -> StatusHistory {
-        StatusHistory(folder: FileManager.default.temporaryDirectory.appending(path: "sud-history-\(UUID().uuidString)"))
+        StatusHistory(folder: TestFiles.folder("history"))
     }
 
     @Test("A refresh is saved and read back, newest last")

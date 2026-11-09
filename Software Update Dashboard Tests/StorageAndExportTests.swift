@@ -53,7 +53,7 @@ struct ExportTests {
 @Suite("Stored data")
 struct StoredDataTests {
     private func defaults() -> UserDefaults {
-        UnderTest.emptiedDefaults(domain: "be.jordythery.softwareupdatedashboard.test-stored-\(UUID().uuidString)")
+        TestFiles.defaults("stored")
     }
 
     @Test("A tracked list that can’t be read is kept as a dated copy, once, and never saved over")
@@ -74,8 +74,7 @@ struct StoredDataTests {
 
         // the model refuses every change, so the list is never saved over
         let connections = ConnectionsModel.preview(defaults: defaults)
-        let model = DashboardModel(connections: connections, history: StatusHistory(folder: FileManager.default.temporaryDirectory
-            .appending(path: "sud-stored-\(UUID().uuidString)")))
+        let model = DashboardModel(connections: connections, history: StatusHistory(folder: TestFiles.folder("stored")))
         #expect(model.unreadableTrackedCopy == copy && !model.canChangeTracked)
         model.add(TrackedBlueprint(connectionID: UUID(), blueprintID: "bp-1", blueprintName: "Test Blueprint"))
         #expect(defaults.data(forKey: TrackedBlueprintList.key) == Data("not a list".utf8))
@@ -87,9 +86,9 @@ struct StoredDataTests {
         let defaults = defaults()
         defaults.set(Data("not a list".utf8), forKey: TrackedBlueprintList.key)
         let model = DashboardModel(connections: ConnectionsModel.preview(defaults: defaults),
-                                   history: StatusHistory(folder: FileManager.default.temporaryDirectory.appending(path: "sud-way-\(UUID().uuidString)")))
+                                   history: StatusHistory(folder: TestFiles.folder("way")))
         let copy = try #require(model.unreadableTrackedCopy)
-        let folder = FileManager.default.temporaryDirectory.appending(path: "sud-copies-\(UUID().uuidString)")
+        let folder = TestFiles.folder("copies")
         let file = try model.exportUnreadableCopy(to: folder)
         #expect(file.lastPathComponent == "\(copy).plist")
         let written = try #require(NSDictionary(contentsOf: file) as? [String: Any])
@@ -99,7 +98,8 @@ struct StoredDataTests {
 
         model.startNewTrackedList()
         #expect(model.unreadableTrackedCopy == nil && model.canChangeTracked)
-        #expect(defaults.object(forKey: TrackedBlueprintList.key) == nil)
+        // an empty list is saved, not no list at all
+        #expect(TrackedBlueprintList.read(from: defaults).list.isEmpty && TrackedBlueprintList.read(from: defaults).unreadableCopy == nil)
         #expect(defaults.data(forKey: copy) == Data("not a list".utf8))
         let connection = try #require(model.connections.connectionInUse?.id ?? Optional(UUID()))
         model.add(TrackedBlueprint(connectionID: connection, blueprintID: "bp-1", blueprintName: "Test Blueprint"))
@@ -115,6 +115,23 @@ struct StoredDataTests {
         #expect(CategoryCounts([]).isWorthSaving)
     }
 
+    @Test("Start a New List saves an empty list: the next launch doesn’t move the first version’s groups over again")
+    @MainActor
+    func newListStaysEmpty() throws {
+        let defaults = defaults()
+        let legacy = [SavedTrackedGroup(id: UUID(), connectionID: UUID(), groupID: "1", groupName: "Group", isSmart: false,
+                                        isComputerGroup: false, blueprintID: "bp-1", blueprintName: "Blueprint")]
+        defaults.set(try JSONEncoder().encode(legacy), forKey: TrackedBlueprintList.legacyKey)
+        defaults.set(Data("not a list".utf8), forKey: TrackedBlueprintList.key)
+        let model = DashboardModel(connections: ConnectionsModel.preview(defaults: defaults), history: StatusHistory(folder: TestFiles.folder("new-list")))
+        #expect(model.unreadableTrackedCopy != nil)
+        model.startNewTrackedList()
+        // the app quits before anything is tracked; the next launch:
+        let next = TrackedBlueprintList.read(from: defaults)
+        #expect(next.list.isEmpty && next.unreadableCopy == nil)
+        #expect(defaults.data(forKey: TrackedBlueprintList.legacyKey) != nil)
+    }
+
     @Test("A value that isn’t data is unreadable too, not “nothing saved”")
     func notData() {
         let defaults = defaults()
@@ -126,7 +143,7 @@ struct StoredDataTests {
 
     @Test("History folders of Blueprints no longer tracked stay, but lose their old refreshes")
     func pruneEveryFolder() throws {
-        let history = StatusHistory(folder: FileManager.default.temporaryDirectory.appending(path: "sud-prune-\(UUID().uuidString)"))
+        let history = StatusHistory(folder: TestFiles.folder("prune"))
         let gone = UUID(), tracked = UUID()
         let now = Sample.date("2026-11-09T12:00:00")
         try history.save(HistorySnapshot(date: now.addingTimeInterval(-200 * 86_400), target: nil, devices: []), for: gone)
@@ -181,7 +198,7 @@ struct RefreshAndDemoTests {
     @Test("Without Apple’s data the refresh stops, says why, and keeps the previous result and history")
     func keepsPrevious() async throws {
         let source = Source()
-        let folder = FileManager.default.temporaryDirectory.appending(path: "sud-stop-\(UUID().uuidString)")
+        let folder = TestFiles.folder("stop")
         let model = demoModel(releases: source, history: StatusHistory(folder: folder))
         source.catalog = try await model.connections.appleReleases().catalog()
         let tracked = try #require(model.trackedBlueprints.first)
@@ -244,6 +261,23 @@ struct RefreshAndDemoTests {
         model.startNewTrackedList()
         #expect(model.shownUnreadableCopy == nil && model.trackedBlueprints.isEmpty && model.canChangeTracked)
         #expect(model.connections.defaults.dictionaryRepresentation().keys.allSatisfy { !$0.hasPrefix(TrackedBlueprintList.key) })
+    }
+
+    @Test("A refresh that ends after Demo Mode was switched off is dropped: nothing in either history")
+    func switchDuringRefresh() async throws {
+        let connections = ConnectionsModel.preview()
+        connections.demo.isOn = true
+        let catalog = try await connections.appleReleases().catalog()
+        let history = StatusHistory(folder: TestFiles.folder("switch"))
+        // Apple's data arrives just after Demo Mode was switched off
+        let model = DashboardModel(connections: connections, history: history, releases: {
+            await MainActor.run { connections.demo.isOn = false }
+            return catalog
+        })
+        let tracked = try #require(model.trackedBlueprints.first)
+        await model.refresh(tracked.id)
+        #expect(model.results[tracked.id] == nil && model.errors[tracked.id] == nil)
+        #expect(history.snapshots(for: tracked.id).isEmpty)
     }
 
     @Test("A status report that can’t be read is noted on that device; the others are read")

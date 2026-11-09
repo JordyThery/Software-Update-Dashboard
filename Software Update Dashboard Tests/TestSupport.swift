@@ -2,6 +2,49 @@ import Foundation
 import JTKit
 @testable import Software_Update_Dashboard
 
+/// Every folder and settings domain the tests make, under one prefix:
+/// all removed when the test run ends, and whatever a crashed run left is
+/// swept before the next one makes its first.
+nonisolated enum TestFiles {
+    static let folderPrefix = "sud-"
+    static let domainPrefix = "be.jordythery.softwareupdatedashboard.test-"
+
+    private static let started: Void = {
+        sweep()
+        atexit { TestFiles.sweep() }
+    }()
+
+    /// A folder in the test host’s temporary directory (not made yet).
+    static func folder(_ name: String) -> URL {
+        _ = started
+        return FileManager.default.temporaryDirectory.appending(path: "\(folderPrefix)\(name)-\(UUID().uuidString)")
+    }
+
+    /// An empty settings domain of its own.
+    static func defaults(_ name: String) -> UserDefaults {
+        _ = started
+        return UnderTest.emptiedDefaults(domain: "\(domainPrefix)\(name)-\(UUID().uuidString)")
+    }
+
+    static func sweep() {
+        let files = FileManager.default
+        for url in (try? files.contentsOfDirectory(at: files.temporaryDirectory, includingPropertiesForKeys: nil)) ?? []
+        where url.lastPathComponent.hasPrefix(folderPrefix) {
+            try? files.removeItem(at: url)
+        }
+        let preferences = files.homeDirectoryForCurrentUser.appending(path: "Library/Preferences", directoryHint: .isDirectory)
+        for url in (try? files.contentsOfDirectory(at: preferences, includingPropertiesForKeys: nil)) ?? []
+        where url.lastPathComponent.hasPrefix(domainPrefix) && url.pathExtension == "plist" {
+            // emptied and written out first: otherwise the settings service
+            // writes an empty file back after it’s gone
+            let domain = url.deletingPathExtension().lastPathComponent
+            UserDefaults.standard.removePersistentDomain(forName: domain)
+            CFPreferencesSynchronize(domain as CFString, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+            try? files.removeItem(at: url)
+        }
+    }
+}
+
 /// Made-up devices and dates for the logic tests.
 enum Sample {
     static let utc = TimeZone(identifier: "UTC")!

@@ -4,7 +4,7 @@ Decided by Jordy on 2026-11-09.
 
 ## What it is
 
-A read-only Mac app that answers, for a group of devices, whether they are on the OS version their Blueprint’s software update asks for, and if not, why not.
+A read-only Mac app that answers, for the devices a Blueprint is scoped to, whether they are on the OS version its software update asks for, and if not, why not.
 
 The unit of work is a **tracked Blueprint**: a Blueprint with a software update (changed from a tracked group by Jordy on 2026-11-09). Its devices are those of the Jamf Pro groups it is scoped to, mobile devices and computers together, each device counted once; the scope is read again on every refresh and its changes are kept in the history. A group can be added for comparison: its devices the Blueprint doesn’t reach (a coverage check, not counted). For a tracked Blueprint, the app:
 
@@ -35,10 +35,11 @@ Jamf’s reference (Platform API, Blueprint schema) has three software update se
 | Specific version (`MANUAL`, no delay) | that version | the Blueprint’s last change | the Blueprint’s, device local time |
 | Latest (`AUTOMATIC` `LATEST`, 0–30 days) | Apple’s newest public release, across majors, from the day Apple posts it publicly; the newest its model can run (listed among the hardware to replace, with a note) | Apple’s first release date of the target | public posting date + days, at the Blueprint’s time, device local time |
 | Minor updates (`AUTOMATIC` `SEMANTIC` `minor`, 0–30 days) | the newest public release of its own major, from the day Apple posts it publicly | Apple’s first release date of the target | public posting date + days, at the Blueprint’s time, device local time |
-
-The days are the time until the deadline, not a wait before a release becomes the target (decided by Jordy on 2026-11-09, as Jamf does it on the tenant: macOS 27.2 sent after its 5 Nov public posting, due 19 Nov with 14 days). The detail says it so: “The newest public macOS 27 release: 27.2; installs by 19 Nov”.
 | Apple’s declaration (custom declarations) | as a specific version, with its build | as a specific version | as a specific version |
 
+The days are the time until the deadline, not a wait before a release becomes the target (decided by Jordy on 2026-11-09, as Jamf does it on the tenant: macOS 27.2 sent after its 5 Nov public posting, due 19 Nov with 14 days). The detail says it so: “The newest public macOS 27 release: 27.2; installs by 19 Nov”.
+
+- **A stale report** (decided by Jordy on 2026-11-09): a reported deadline for the rule’s own version counts only when the report is newer than the Blueprint’s last change and, for latest and minor, Apple’s public posting of the version. Otherwise the rule’s deadline counts and the device detail and Inspect say which of the two the report predates; when the rule has no deadline, the reported one stays, labeled as possibly out of date. Not raised when both deadlines fall on the same day.
 - **What Jamf sent comes first** (decided by Jordy on 2026-11-09). When a device reports a pending version (`softwareupdate.pending-version`) with an install reason that includes `declaration`, newer than what it runs and reported after the update started, that version is its target, with the deadline it reports (a moment with an offset; the offset places the device in Deadline per Time Zone). When the rule above gives another version, the detail shows both and flags that another declaration may be enforcing this. For a specific version a lower pending version is an intermediate step, and the Blueprint’s version stands. Pending versions that are stale (equal to or older than the installed one) or come from another reason (`notification`, none) are ignored. Otherwise the rule above, from Apple’s data, applies.
 - **Matching Apple’s release lists:** by the device’s own `softwareupdate.device-id` first, then its model, and only when Apple lists that ID for the release’s major. A device the lists don’t recognize (Intel Macs report `X86LEGACYAP`) is unknown, never unsupported: it is judged by the major and gets that major’s newest release, never an older one only because that one has no device list. The target and the replacement list use the same rule.
 - A device that already runs a release Apple shipped to it, old enough for the rule and newer than the rule’s target, is “Target unknown” (the rule doesn’t fit it), never measured against a lower target.

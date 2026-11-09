@@ -185,13 +185,21 @@ nonisolated enum InspectFindings {
             add("Hardware can’t run the next version", "\(modelID.isEmpty ? status?.deviceID ?? "This model" : modelID) isn’t supported by \(osName) \(next)")
         }
         let updated = status?.newestUpdate.flatMap { JamfPro.serverDate($0, timeZone: ctx.serverTimeZone) }
-        // the device still holds a deadline from before the Blueprint changed
-        if let stale = row?.staleReportedDeadline {
+        // the device still holds a deadline from before the Blueprint changed or Apple posted the version
+        if let reason = row?.staleReason,
+           let stale = row?.staleReportedDeadline.map(day) ?? row?.staleReportedLocal.flatMap(localDay) {
             let since = row?.staleSince.map { " (\(day($0)))" } ?? ""
             let current = DeadlineZones.text(local: row?.deadlineLocal, reported: nil).map { "; the Blueprint’s deadline is \($0)" } ?? ""
-            add("Declaration not refreshed since the Blueprint changed",
-                "The device still reports the deadline \(day(stale)) from before the Blueprint’s last change\(since)\(current). "
-                    + "It takes the current declaration at its next check-in")
+            switch reason {
+            case .blueprintChanged:
+                add("Declaration not refreshed since the Blueprint changed",
+                    "The device still reports the deadline \(stale) from before the Blueprint’s last change\(since)\(current). "
+                        + "It takes the current declaration at its next check-in")
+            case .posted:
+                add("Deadline reported before Apple posted this version",
+                    "The device still reports the deadline \(stale) from before Apple posted this version publicly\(since)\(current). "
+                        + "It takes the current deadline at its next check-in")
+            }
         }
         // stuck only when a downloaded update didn't install after its
         // deadline; before it, prepared is normal; never for a device offline
@@ -199,7 +207,8 @@ nonisolated enum InspectFindings {
             || member.lastSeen.map { ctx.now.timeIntervalSince($0) > Double(ctx.staleDays) * 86_400 } ?? false
         if let state = status?.installState, state.isBusy, let updated, !offline {
             let pendingVersion = status?.pendingVersion?.osVersion ?? "?"
-            if state == .prepared && row?.pastDeadline == true && row?.staleReportedDeadline == nil {
+            // past the deadline that counts (the rule’s, for a stale report), as the row says
+            if state == .prepared && row?.pastDeadline == true {
                 add("Update stuck", "\(osName) \(pendingVersion) is downloaded but not installed after its deadline (last change \(ago(updated, now: ctx.now))); a restart of the device usually gets it going")
             } else if state == .prepared {
                 add("Update downloaded", "\(osName) \(pendingVersion) is downloaded and installs at the deadline")
@@ -324,6 +333,14 @@ nonisolated enum InspectFindings {
         date.formatted(date: .abbreviated, time: .omitted)
     }
 
+    /// A local date-time without a zone (“2026-11-19T23:59:00”) as its day: “19 Nov 2026”.
+    static func localDay(_ local: String) -> String? {
+        guard let date = JamfPlatform.SoftwareUpdateBlock.deadline(local, in: .gmt) else { return nil }
+        var style = Date.FormatStyle(date: .abbreviated, time: .omitted)
+        style.timeZone = .gmt
+        return date.formatted(style)
+    }
+
     /// A moment as the app shows it everywhere: “9 Nov 2026 at 09:11”.
     static func moment(_ date: Date) -> String {
         date.formatted(date: .abbreviated, time: .shortened)
@@ -427,20 +444,23 @@ nonisolated enum DeviceDetailText {
         return first.uppercased() + state.dropFirst()
     }
 
-    /// Whether a Mac has Apple silicon, from its model identifier (“Mac14,2”,
-    /// “MacBookPro18,3”) or its board ID (“J314sAP”; Intel ones are
-    /// “Mac-…”); nil when neither says.
+    /// Whether a Mac has Apple silicon: by its model identifier first
+    /// (“Mac14,2”, “MacBookPro18,3” yes; “MacBookPro16,1” no). The board ID
+    /// from its status report only when the model says nothing, and only
+    /// for what it proves: `X86LEGACYAP`, `VMM-x86_64` and “Mac-…” are Intel.
+    /// A “J…AP” board alone says nothing: Intel Macs with a T2 chip report
+    /// such boards too (“J152FAP”). Nil when nothing tells.
     static func isAppleSilicon(model: String?, boardID: String?) -> Bool? {
-        if let board = boardID?.trimmingCharacters(in: .whitespaces), !board.isEmpty {
-            if board.hasPrefix("Mac-") { return false }
-            if board.uppercased().hasSuffix("AP") { return true }
+        if let model, let match = model.firstMatch(of: #/^([A-Za-z]+)(\d+),\d+$/#), let generation = Int(match.2) {
+            // the first generation of each family with Apple silicon
+            let first: [String: Int] = ["Mac": 13, "VirtualMac": 2, "MacBookAir": 10, "MacBookPro": 17, "Macmini": 9, "iMac": 21]
+            if let from = first[String(match.1)] { return generation >= from }
+            // iMacPro, MacPro (up to 7,1) and the older MacBook are Intel
+            if ["iMacPro", "MacPro", "MacBook"].contains(String(match.1)) { return false }
         }
-        guard let model, let match = model.firstMatch(of: #/^([A-Za-z]+)(\d+),\d+$/#), let generation = Int(match.2) else { return nil }
-        // the first generation of each family with Apple silicon
-        let first: [String: Int] = ["Mac": 13, "VirtualMac": 2, "MacBookAir": 10, "MacBookPro": 17, "Macmini": 9, "iMac": 21]
-        if let from = first[String(match.1)] { return generation >= from }
-        // iMacPro, MacPro (up to 7,1) and the older families are Intel
-        return ["iMacPro", "MacPro", "MacBook"].contains(String(match.1)) ? false : nil
+        guard let board = boardID?.trimmingCharacters(in: .whitespaces).uppercased(), !board.isEmpty else { return nil }
+        if board == "X86LEGACYAP" || board == "VMM-X86_64" || board.hasPrefix("MAC-") { return false }
+        return nil
     }
 
     /// Why a bootstrap token that isn’t escrowed matters: only on a Mac with

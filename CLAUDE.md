@@ -6,7 +6,7 @@ Shared code and the standards for every app: see JTKit's CLAUDE.md and ROADMAP.m
 
 ## What the app does
 
-A read-only Mac app that answers, for a group of devices, whether they are on the OS version their Blueprint's software update asks for, and if not, why not. The unit of work is a tracked group: a Jamf Pro group (mobile devices or computers) plus the Blueprint that enforces its update. Milestone 1: Jamf Pro through the Jamf Platform API, iOS, iPadOS and macOS.
+A read-only Mac app that answers, for the devices a Blueprint is scoped to, whether they are on the OS version its software update asks for, and if not, why not. The unit of work is a tracked Blueprint: a Blueprint with a software update; its devices are those of the Jamf Pro groups it is scoped to. Milestone 1: Jamf Pro through the Jamf Platform API, iOS, iPadOS and macOS.
 
 ## How to work on it
 
@@ -36,7 +36,7 @@ A read-only Mac app that answers, for a group of devices, whether they are on th
 - No code copied from other projects. JAMFGetDDMInfo is GPL and may only inform.
 - `os.Logger` messages that can hold server answers use `privacy: .private`.
 - Demo mode never reaches a real tenant or the real release-data hosts (JTKit's demo network).
-- Stored data: the connections under `connections` in UserDefaults, the one in use under `activeConnectionID`, the demo switch under `demoMode`, the tracked Blueprints under `trackedBlueprints` (moved once from the first version’s `trackedGroups`, which is read but never removed; a value that can’t be read is copied to `trackedBlueprints.unreadable-<date and time>` and never saved over; the banner can write that copy to `Application Support/Unreadable Copies/<key>.plist` for Finder, and Start a New List removes `trackedBlueprints`, never the copy), the history in `History/<tracked Blueprint ID>/`, the secrets in the Keychain under `be.jordythery.softwareupdatedashboard.jamf`. Keep these names.
+- Stored data: the connections under `connections` in UserDefaults, the one in use under `activeConnectionID`, the demo switch under `demoMode`, the tracked Blueprints under `trackedBlueprints` (moved once from the first version’s `trackedGroups`, which is read but never removed; a value that can’t be read is copied to `trackedBlueprints.unreadable-<date and time>` and never saved over; the banner can write that copy to `Application Support/Unreadable Copies/<key>.plist` for Finder, and Start a New List saves an empty `trackedBlueprints`, never touching the copy), the history in `History/<tracked Blueprint ID>/`, the secrets in the Keychain under `be.jordythery.softwareupdatedashboard.jamf`. Keep these names.
 
 ## Watchlist
 

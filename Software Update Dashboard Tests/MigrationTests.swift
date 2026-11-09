@@ -8,7 +8,7 @@ import JTKit
 @Suite("Moving tracked groups to tracked Blueprints")
 struct MigrationTests {
     private func defaults() -> UserDefaults {
-        UnderTest.emptiedDefaults(domain: "be.jordythery.softwareupdatedashboard.test-migration-\(UUID().uuidString)")
+        TestFiles.defaults("migration")
     }
 
     private func legacy(_ entries: [(id: UUID, connection: UUID, blueprint: String)]) -> Data {
@@ -40,7 +40,7 @@ struct MigrationTests {
     func history() throws {
         let defaults = defaults()
         let id = UUID()
-        let history = StatusHistory(folder: FileManager.default.temporaryDirectory.appending(path: "sud-migration-\(UUID().uuidString)"))
+        let history = StatusHistory(folder: TestFiles.folder("migration"))
         try history.save(HistorySnapshot(date: Sample.now, target: "27.1", devices: []), for: id)
         defaults.set(legacy([(id, UUID(), "bp-1")]), forKey: TrackedBlueprintList.legacyKey)
         let tracked = try #require(TrackedBlueprintList.load(from: defaults).first)

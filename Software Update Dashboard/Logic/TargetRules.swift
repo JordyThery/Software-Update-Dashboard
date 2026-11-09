@@ -11,6 +11,9 @@ nonisolated enum DeadlineSource: String, Sendable, Hashable, Codable {
     case postingDate
     /// No public posting date found: the first release date plus the delay.
     case releaseDate
+    /// The device reports it, but from before the Blueprint’s last change
+    /// or Apple’s posting of the version, and the rule gives none of its own.
+    case reportedBeforeChange, reportedBeforePosting
 
     var text: String {
         switch self {
@@ -18,6 +21,25 @@ nonisolated enum DeadlineSource: String, Sendable, Hashable, Codable {
         case .blueprint: "Set in the Blueprint"
         case .postingDate: "From Apple’s posting date"
         case .releaseDate: "From the release date, no posting date found"
+        case .reportedBeforeChange: "Reported by the device before the Blueprint’s last change; may be out of date"
+        case .reportedBeforePosting: "Reported by the device before Apple posted this version; may be out of date"
+        }
+    }
+}
+
+/// What a device’s report of its pending update predates, so its deadline
+/// may not be the current one.
+nonisolated enum StaleReason: String, Sendable, Hashable, Codable {
+    /// The Blueprint changed after the report.
+    case blueprintChanged
+    /// Apple posted the version publicly after the report.
+    case posted
+
+    /// “reported before the Blueprint’s last change”.
+    var text: String {
+        switch self {
+        case .blueprintChanged: "reported before the Blueprint’s last change"
+        case .posted: "reported before Apple posted this version"
         }
     }
 }
@@ -90,8 +112,13 @@ nonisolated struct DeviceTarget: Sendable, Hashable, Codable {
     /// before Apple’s public posting of the version): kept to show, never
     /// used; the rule’s deadline counts.
     var staleReportedDeadline: Date?
+    /// The same written as a local date-time without an offset (the
+    /// device’s local time), when the report gave no moment.
+    var staleReportedLocal: String?
     /// The change it predates: the later of the Blueprint’s last change and the posting.
     var staleSince: Date?
+    /// Which of the two that is.
+    var staleReason: StaleReason?
 
     var osVersion: OSVersion? { version.flatMap(OSVersion.init) }
 
@@ -314,29 +341,56 @@ nonisolated enum TargetRules {
                                   reason: "Jamf sent \(osName) \(version): the device reports it pending from a declaration",
                                   startSetByHand: rule.startSetByHand)
         target.fromDevice = true
-        // a deadline the device reports wins only when the report is newer
-        // than the Blueprint's last change and Apple's public posting of the
-        // version: before them, the device hasn't taken the current declaration
-        let posted = release.flatMap { catalog?.publicPosting(of: $0, model: model, boardID: boardID)?.date }
+        // a local date-time the device reports, without an offset
+        let reportedLocal = pending.targetLocalDateTime?.replacingOccurrences(of: " ", with: "T")
+            .range(of: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$", options: .regularExpression)
+            .flatMap { _ in pending.targetLocalDateTime?.replacingOccurrences(of: " ", with: "T") }
+        // the deadline as the device reports it: a moment with its offset,
+        // or a local date-time; false when it reports none that reads
+        func takeReported() -> Bool {
+            if let moment = pending.targetDate, let offset = pending.targetOffset {
+                target.deadlineDate = moment
+                target.deadlineOffset = offset
+                target.deadlineLocal = localText(moment, offset: offset)
+            } else if let local = reportedLocal {
+                target.deadlineLocal = local
+            } else {
+                return false
+            }
+            target.deadlineSource = .reported
+            return true
+        }
+        // A deadline the device reports wins only when the report is newer
+        // than what could have changed it: the Blueprint's last change and,
+        // for a Blueprint that follows Apple's releases (latest, minor),
+        // Apple's public posting of the version. Only for the rule's own
+        // version: one from another declaration isn't changed by this Blueprint.
+        let isRuleVersion = rule.version.flatMap(OSVersion.init) == version
+        let followsApple = !rule.namedByBlueprint && rule.version != nil
+        let posted = followsApple ? release.flatMap { catalog?.publicPosting(of: $0, model: model, boardID: boardID)?.date } : nil
         let reportedAt = pending.updated.flatMap { JamfPro.serverDate($0, timeZone: serverTimeZone) }
-        let changes = [blueprintChanged, posted].compactMap { $0 }
-        let reportIsCurrent = changes.isEmpty || reportedAt.map { at in changes.allSatisfy { at > $0 } } == true
-        if !reportIsCurrent {
-            target.deadlineLocal = rule.deadlineLocal
-            target.deadlineSource = rule.deadlineSource
-            target.staleReportedDeadline = pending.targetDate
-                ?? pending.targetLocalDateTime.flatMap { JamfPlatform.SoftwareUpdateBlock.deadline($0.replacingOccurrences(of: " ", with: "T"), in: .gmt) }
-            target.staleSince = changes.max()
-        } else if let moment = pending.targetDate, let offset = pending.targetOffset {
-            target.deadlineDate = moment
-            target.deadlineOffset = offset
-            target.deadlineLocal = localText(moment, offset: offset)
-            target.deadlineSource = .reported
-        } else if let local = pending.targetLocalDateTime?.replacingOccurrences(of: " ", with: "T"),
-                  local.range(of: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$", options: .regularExpression) != nil {
-            target.deadlineLocal = local
-            target.deadlineSource = .reported
-        } else {
+        let changes: [(date: Date, reason: StaleReason)] = isRuleVersion
+            ? [blueprintChanged.map { ($0, .blueprintChanged) }, posted.map { ($0, .posted) }].compactMap { $0 } : []
+        let missed = changes.filter { change in reportedAt.map { $0 <= change.date } ?? true }.max { $0.date < $1.date }
+        if let missed {
+            if rule.deadlineLocal == nil {
+                // the rule gives no deadline of its own: keep the reported
+                // one, said to be possibly out of date
+                if takeReported() { target.deadlineSource = missed.reason == .posted ? .reportedBeforePosting : .reportedBeforeChange }
+            } else {
+                target.deadlineLocal = rule.deadlineLocal
+                target.deadlineSource = rule.deadlineSource
+                let staleLocal = pending.targetDate == nil ? reportedLocal : nil
+                let staleDay = pending.targetDate.map { $0.formatted(.iso8601.year().month().day()) } ?? staleLocal.map { String($0.prefix(10)) }
+                // the same day as the rule's deadline: nothing to point out
+                if let staleDay, staleDay != rule.deadlineLocal.map({ String($0.prefix(10)) }) {
+                    target.staleReportedDeadline = pending.targetDate
+                    target.staleReportedLocal = staleLocal
+                    target.staleSince = missed.date
+                    target.staleReason = missed.reason
+                }
+            }
+        } else if !takeReported() {
             target.deadlineLocal = rule.deadlineLocal
             target.deadlineSource = rule.deadlineSource
         }

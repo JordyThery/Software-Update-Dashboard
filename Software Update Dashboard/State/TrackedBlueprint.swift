@@ -52,7 +52,7 @@ nonisolated struct GroupReference: Sendable, Hashable, Codable, Identifiable {
     }
 }
 
-/// What version 0.1 saved: a group with its Blueprint. Read once, to move it
+/// What the first pre-release build saved: a group with its Blueprint. Read once, to move it
 /// to a tracked Blueprint.
 nonisolated struct SavedTrackedGroup: Codable {
     var id: UUID

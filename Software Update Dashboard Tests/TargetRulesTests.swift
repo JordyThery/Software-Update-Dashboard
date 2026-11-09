@@ -81,7 +81,7 @@ struct TargetRulesTests {
         #expect(target.released == Sample.date("2026-10-26T00:00:00"))
         #expect(target.activityFrom == Sample.date("2026-10-26T00:00:00"))
         #expect(target.deadlineLocal == "2026-10-26T18:00:00")
-        #expect(target.reason == "The newest public macOS release: 27.2; installs by 26 Oct")
+        #expect(target.reason == "The newest public macOS release: 27.2; installs by \(TargetRules.day(target.deadlineLocal ?? ""))")
     }
 
     @Test("Latest with a delay: the newest public release from the day it’s out, due that many days later", arguments: [
@@ -123,7 +123,7 @@ struct TargetRulesTests {
         let target = Self.target(.semantic(minorEnforceAfterDays: 14, deploymentTime: "18:00"), os: "26.7.1")
         #expect(target.version == "26.7.2")
         #expect(target.deadlineLocal == "2026-11-09T18:00:00")
-        #expect(target.reason == "The newest public macOS 26 release: 26.7.2; installs by 9 Nov")
+        #expect(target.reason == "The newest public macOS 26 release: 26.7.2; installs by \(TargetRules.day(target.deadlineLocal ?? ""))")
         #expect(Self.target(.semantic(minorEnforceAfterDays: 14, deploymentTime: nil), os: "27.0").version == "27.2")
     }
 

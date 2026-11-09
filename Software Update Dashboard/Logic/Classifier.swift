@@ -120,9 +120,13 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var targetSource: String?
     /// Where the deadline comes from, e.g. “from Apple’s posting date”.
     var deadlineSource: String?
-    /// A deadline the device reported before the Blueprint’s last change: shown, not used.
+    /// A deadline the device reported before the Blueprint’s last change
+    /// (or Apple’s posting of the version): shown, not used. A moment, or
+    /// the device’s local date-time when the report gave no offset.
     var staleReportedDeadline: Date?
+    var staleReportedLocal: String?
     var staleSince: Date?
+    var staleReason: StaleReason?
     /// `softwareupdate.device-id` from the status report.
     var boardID: String?
     /// A Mac’s bootstrap token in Jamf Pro: `ESCROWED`, `NOT_ESCROWED`, `NOT_SUPPORTED`.
@@ -170,7 +174,9 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case targetSource
         case deadlineSource
         case staleReportedDeadline
+        case staleReportedLocal
         case staleSince
+        case staleReason
         case boardID
         case bootstrapToken
     }
@@ -317,7 +323,9 @@ nonisolated enum Classifier {
         status.targetSource = target.source
         status.deadlineSource = target.deadlineSource?.text
         status.staleReportedDeadline = target.staleReportedDeadline
+        status.staleReportedLocal = target.staleReportedLocal
         status.staleSince = target.staleSince
+        status.staleReason = target.staleReason
         if target.fromDevice {
             status.targetFromDevice = true
             status.ruleTarget = target.ruleVersion

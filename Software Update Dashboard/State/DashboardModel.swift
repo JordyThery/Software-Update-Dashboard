@@ -177,11 +177,13 @@ final class DashboardModel {
             generation += 1
             return
         }
-        guard unreadableTrackedCopy != nil else { return }
-        connections.defaults.removeObject(forKey: TrackedBlueprintList.key)
+        // only while the dated copy is still there: it’s all that’s left of the old list
+        guard let copy = unreadableTrackedCopy, connections.defaults.object(forKey: copy) != nil else { return }
         unreadableTrackedCopy = nil
         saved = []
-        generation += 1
+        // an empty list, saved: with no list at all the next launch would
+        // move the first version’s tracked groups over again
+        save()
     }
 
     /// Changes to the tracked Blueprints can’t be saved: the saved list couldn’t be read.
@@ -247,6 +249,12 @@ final class DashboardModel {
             refreshing.remove(id)
             progress[id] = nil
         }
+        // what this refresh belongs to, taken before the first wait: a switch
+        // of Demo Mode or the connection meanwhile drops its result, so
+        // nothing lands in the other side’s history
+        let key = connections.inUseKey
+        let history = history
+        let isDemo = isDemo
         do {
             guard let client = try connections.client() else { throw RefreshError("No connection in use.") }
             let catalog = await appleReleases()
@@ -255,6 +263,7 @@ final class DashboardModel {
             var result = try await workflow.run(tracked, previousScope: previous?.scope) { done, total in
                 Task { @MainActor in self.progress[id] = (done, total) }
             }
+            guard connections.inUseKey == key else { return }
             // nothing measured (the banner says so): a snapshot of zero devices would only drop the chart
             if result.counts.isWorthSaving, let history {
                 if isDemo && previous == nil { seedDemoHistory(result, in: history) }
@@ -263,9 +272,9 @@ final class DashboardModel {
             }
             results[id] = result
         } catch is CancellationError {
-            errors[id] = "Stopped."
+            if connections.inUseKey == key { errors[id] = "Stopped." }
         } catch {
-            errors[id] = error.localizedDescription
+            if connections.inUseKey == key { errors[id] = error.localizedDescription }
         }
     }
 

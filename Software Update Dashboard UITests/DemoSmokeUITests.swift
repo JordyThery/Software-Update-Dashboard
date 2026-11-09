@@ -117,13 +117,13 @@ final class DemoSmokeUITests: JTKitUITestCase {
         XCTAssertTrue(anyContaining("updatable devices on their target").waitForExistence(timeout: 30), "The dashboard didn't load")
         tap(app.menuBars.menuBarItems["Blueprint"])
         tap(app.menuItems["Export Device List as CSV…"])
-        saveInTestFolder()
+        try saveInTestFolder()
         let csv = try XCTUnwrap(waitForFile(ending: ".csv"), "The device list wasn't saved")
         XCTAssertTrue(try String(contentsOf: csv, encoding: .utf8).contains("Field iPad 06"), "The CSV doesn't list the devices")
 
         tap(app.menuBars.menuBarItems["Blueprint"])
         tap(app.menuItems["Export Summary…"])
-        saveInTestFolder()
+        try saveInTestFolder()
         let summary = try XCTUnwrap(waitForFile(ending: ".txt"), "The summary wasn't saved")
         XCTAssertTrue(try String(contentsOf: summary, encoding: .utf8).contains(iPadBlueprint), "The summary doesn't name the Blueprint")
     }
@@ -160,10 +160,20 @@ final class DemoSmokeUITests: JTKitUITestCase {
     }
 
     /// The sandboxed app's Save panel opens in its own last folder: go to
-    /// this test's folder first, so nothing lands among the user's files.
-    private func saveInTestFolder() {
+    /// this test's folder first, and save only once the panel shows it
+    /// (its name, `JTKitUITest-…`, in the Where menu). Otherwise the panel
+    /// is canceled and the test fails, so nothing lands among the user's files.
+    private func saveInTestFolder() throws {
         XCTAssertTrue(app.buttons["OKButton"].firstMatch.waitForExistence(timeout: 15), "No Save panel opened")
         goToFolder(testFolder.path)
+        let name = testFolder.lastPathComponent
+        let shown = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "value == %@ OR label == %@ OR title == %@", name, name, name)).firstMatch
+        guard shown.waitForExistence(timeout: 5) else {
+            app.buttons["CancelButton"].firstMatch.click()
+            XCTFail("The Save panel doesn't show the test's folder: canceled, nothing saved")
+            throw SavePanelNotInTestFolder()
+        }
         saveInChosenFolder()
     }
 
@@ -189,3 +199,6 @@ final class DemoSmokeUITests: JTKitUITestCase {
         return nil
     }
 }
+
+/// The Save panel wasn't in the test's own folder (`saveInTestFolder`).
+private struct SavePanelNotInTestFolder: Error {}

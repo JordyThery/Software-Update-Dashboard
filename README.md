@@ -1,13 +1,13 @@
 # Software Update Dashboard
 
-A read-only Mac app that shows, for a group of devices, whether they are on the OS version their Blueprint’s software update asks for, and if not, why not.
+A read-only Mac app that shows, for the devices a Blueprint is scoped to, whether they are on the OS version its software update asks for, and if not, why not.
 
 ![Software Update Dashboard in Demo Mode: a Blueprint’s dashboard with its progress, categories and history](docs/screenshot.png)
 
 ## Features
 
 - **Tracked Blueprints:** a Blueprint with a software update; its devices are those of the groups it’s scoped to, iPads, iPhones and Macs together, each counted once. Scope changes show in the history. Compare with any group to see which of its devices the Blueprint doesn’t reach.
-- **A target per device:** a specific version, the newest release, or the newest minor release of the device’s own major, after the Blueprint’s delay, from Apple’s release data, with its deadline in the device’s local time. A table per platform and major release on the dashboard. An “Update started” date can be set by hand.
+- **A target per device:** a specific version, the newest release, or the newest minor release of the device’s own major, from Apple’s release data. A release is the target from the day Apple posts it publicly; the Blueprint’s delay only sets the deadline, in the device’s local time. A table per platform and major release on the dashboard. An “Update started” date can be set by hand.
 - **Nine categories with a diagnosis** for every device: on target, in progress, other update, failed, not started, no activity, offline, no report, and hardware that can’t run the target. The diagnosis says in plain language what stands in the way, such as a passcode, a download problem or a deadline still to come. A device whose target can’t be determined (for example a beta of a newer major) is shown as “Target unknown” with the reason, and isn’t counted.
 - **Inspect:** the likely cause for a device, from its inventory, status report and declaration reports.
 - **History** of every refresh, per tracked Blueprint.

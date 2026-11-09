@@ -160,12 +160,13 @@ struct DeviceDetailView: View {
                 if let deadline = DeadlineZones.text(local: device.deadlineLocal, reported: device.deadlineDate) {
                     LabeledContent("Deadline", value: deadline)
                     if let source = device.deadlineSource { Text(source).foregroundStyle(.secondary) }
-                    if let stale = device.staleReportedDeadline, let text = DeadlineZones.text(local: nil, reported: stale) {
-                        LabeledContent("Device reports", value: text)
-                        Text("Reported before the Blueprint’s last change or Apple’s posting of the release, so it isn’t used")
-                            .foregroundStyle(.secondary)
-                    }
                     if device.pastDeadline == true { WarningLabel("Past the deadline") }
+                }
+                // a deadline the device reported earlier, not used: shown also when the rule has none
+                if let reason = device.staleReason,
+                   let text = DeadlineZones.text(local: device.staleReportedLocal, reported: device.staleReportedDeadline) {
+                    LabeledContent("Device reports", value: text)
+                    Text(reason.text.prefix(1).uppercased() + reason.text.dropFirst() + ", so it isn’t used").foregroundStyle(.secondary)
                 }
                 if let from = device.activityFrom {
                     // a day: the update start set by hand in this Mac’s time, else a release day (UTC)
