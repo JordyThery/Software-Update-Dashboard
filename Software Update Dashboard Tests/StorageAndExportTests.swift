@@ -33,14 +33,14 @@ struct ExportTests {
         var device = Sample.classify(Sample.mac(), nil)
         device.deadlineDate = Sample.date("2026-11-19T22:59:06")
         device.deadlineLocal = "2026-11-19T22:59:06"
-        device.deadlineSource = "reported by the device"
-        #expect(device.csvLine.contains(",2026-11-19T22:59:06Z,reported by the device,"))
+        device.deadlineSource = "Reported by the device"
+        #expect(device.csvLine.contains(",2026-11-19T22:59:06Z,Reported by the device,"))
         let header = DeviceStatus.csvColumns
         #expect(header.firstIndex(of: "deadline_source") == header.firstIndex(of: "deadline").map { $0 + 1 })
         device.deadlineDate = nil
         device.deadlineLocal = "2026-11-19T23:59:00"
-        device.deadlineSource = "from Apple’s posting date"
-        #expect(device.csvLine.contains(",2026-11-19T23:59:00,from Apple’s posting date,"))
+        device.deadlineSource = "From Apple’s posting date"
+        #expect(device.csvLine.contains(",2026-11-19T23:59:00,From Apple’s posting date,"))
     }
 
     @Test("A release date is a day, without a time, the same everywhere")
@@ -136,7 +136,7 @@ struct StoredDataTests {
         #expect(FileManager.default.fileExists(atPath: history.folder.appending(path: gone.uuidString).path))
     }
 
-    @Test("The chart marks where the rule, this app’s counting or the scope changed")
+    @Test("The chart marks where the software update, the app’s counting or the scope changed, once per refresh")
     func historyMarks() {
         let day = 86_400.0
         let snapshots = [
@@ -146,9 +146,18 @@ struct StoredDataTests {
             HistorySnapshot(date: Sample.now + 3 * day, target: "Version 27.1", devices: []),
         ]
         let marks = HistoryMark.marks(snapshots)
-        #expect(marks.map(\.kind) == [.counting, .rule])
+        #expect(marks.map(\.kinds) == [[.counting], [.rule]])
         #expect(marks.map(\.date) == [Sample.now + day, Sample.now + 2 * day])
-        #expect(marks[1].text == "Rule: Version 27.1")
+        #expect(marks[1].text == "The Blueprint’s software update changed to “Version 27.1”, so earlier counts don’t compare")
+        #expect(marks.allSatisfy { !$0.text.contains(":") })
+
+        // the software update and the scope changing in one refresh: one mark
+        let a = GroupReference(key: .init(kind: .mobileDevice, groupID: "1"), name: "A", isSmart: false)
+        let b = GroupReference(key: .init(kind: .mobileDevice, groupID: "2"), name: "B", isSmart: false)
+        let both = HistoryMark.marks([HistorySnapshot(date: Sample.now, target: "Minor updates", devices: [], scope: [a]),
+                                      HistorySnapshot(date: Sample.now + day, target: "Version 27.1", devices: [], scope: [a, b])])
+        #expect(both.count == 1 && both[0].kinds == [.rule, .scope])
+        #expect(both[0].text.contains("scope changed, 1 group added (B)"))
     }
 }
 
@@ -195,17 +204,46 @@ struct RefreshAndDemoTests {
         #expect(folder.path.hasPrefix(model.connections.demo.scratchDirectory.path))
     }
 
-    @Test("Stop Tracking in demo mode changes nothing, in memory or on disk")
+    @Test("Stop Tracking in demo mode removes it from the demo’s list and history only; nothing saved changes")
     func demoRemove() async throws {
         let model = demoModel()
         let tracked = try #require(model.trackedBlueprints.first)
         await model.refresh(tracked.id)
-        let saved = model.snapshots(tracked.id).count
-        #expect(saved > 0)
+        #expect(model.snapshots(tracked.id).count > 0)
         model.remove(tracked.id)
-        #expect(model.tracked(tracked.id) != nil)
-        #expect(model.snapshots(tracked.id).count == saved)
+        #expect(model.tracked(tracked.id) == nil && model.trackedBlueprints.count == 1)
+        #expect(model.snapshots(tracked.id).isEmpty)
         #expect(model.connections.defaults.object(forKey: TrackedBlueprintList.key) == nil)
+        // a new demo session starts with both again
+        model.connectionChanged()
+        #expect(model.trackedBlueprints.count == 2)
+    }
+
+    @Test("Demo situation: Apple’s release data unreachable stops the refresh and keeps the one before")
+    func demoAppleDataUnreachable() async throws {
+        let model = demoModel()
+        let tracked = try #require(model.trackedBlueprints.first)
+        await model.refresh(tracked.id)
+        let before = try #require(model.results[tracked.id])
+        await model.setDemoSituation(.appleDataUnreachable)
+        #expect(model.errors[tracked.id] == AppleDataUnavailable().localizedDescription)
+        #expect(model.results[tracked.id]?.date == before.date)
+        await model.setDemoSituation(.sampleData)
+        #expect(model.errors[tracked.id] == nil)
+    }
+
+    @Test("Demo situation: an unreadable saved list shows its banner with a made-up copy, never the real settings")
+    func demoUnreadableList() async throws {
+        let model = demoModel()
+        #expect(model.shownUnreadableCopy == nil && model.canChangeTracked)
+        await model.setDemoSituation(.unreadableList)
+        let copy = try #require(model.shownUnreadableCopy)
+        #expect(!model.canChangeTracked && model.unreadableTrackedCopy == nil)
+        let file = try model.exportUnreadableCopy()
+        #expect(file.path.hasPrefix(model.connections.demo.scratchDirectory.path) && file.lastPathComponent == "\(copy).plist")
+        model.startNewTrackedList()
+        #expect(model.shownUnreadableCopy == nil && model.trackedBlueprints.isEmpty && model.canChangeTracked)
+        #expect(model.connections.defaults.dictionaryRepresentation().keys.allSatisfy { !$0.hasPrefix(TrackedBlueprintList.key) })
     }
 
     @Test("A status report that can’t be read is noted on that device; the others are read")

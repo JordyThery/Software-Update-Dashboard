@@ -33,7 +33,7 @@ struct ContentView: View {
                 }
             }
             .safeAreaInset(edge: .top) {
-                if let copy = model.unreadableTrackedCopy, !connections.demoChoice.isActive {
+                if let copy = model.shownUnreadableCopy {
                     UnreadableListBanner(model: model, copy: copy)
                 }
             }
@@ -119,11 +119,9 @@ struct SidebarView: View {
                             Button("Refresh") { Task { await model.refresh(tracked.id) } }
                             Button("Compare with a Group…") { sheet = .compare(tracked.id) }
                             Button("Set Update Start…") { sheet = .updateStarted(tracked.id) }
-                            if !model.connections.demoChoice.isActive {
-                                Divider()
-                                Button("Stop Tracking…", role: .destructive) { stopTracking = tracked.id }
-                                    .disabled(!model.canChangeTracked)
-                            }
+                            Divider()
+                            Button("Stop Tracking…", role: .destructive) { stopTracking = tracked.id }
+                                .disabled(!model.canChangeTracked)
                         }
                 }
             }
@@ -151,15 +149,8 @@ struct UnreadableListBanner: View {
     @State private var exportError: String?
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Label {
-                Text("The saved list of tracked Blueprints couldn’t be read. It was kept as the setting “\(copy)”, and changes to the list aren’t saved until you start a new list.")
-                    .fixedSize(horizontal: false, vertical: true)
-                if let exportError { Text(exportError).foregroundStyle(.secondary) }
-            } icon: {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-            }
-            Spacer()
+        WarningBanner(text: "The saved list of tracked Blueprints couldn’t be read. A copy was kept, and changes to the list aren’t saved until you start a new list.",
+                      detail: exportError, help: "The copy is the setting “\(copy)”.") {
             Button("Show Copy in Finder") {
                 do {
                     NSWorkspace.shared.activateFileViewerSelecting([try model.exportUnreadableCopy()])
@@ -169,14 +160,11 @@ struct UnreadableListBanner: View {
             }
             Button("Start a New List…") { confirmsNewList = true }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.bar)
         .confirmationDialog("Start a new list of tracked Blueprints?", isPresented: $confirmsNewList, titleVisibility: .visible) {
             Button("Start a New List") { model.startNewTrackedList() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The list that couldn’t be read stays as the setting “\(copy)”; nothing is deleted. Histories on this Mac are kept.")
+            Text("The copy of the list that couldn’t be read is kept; nothing is deleted. Histories on this Mac are kept.")
         }
     }
 }

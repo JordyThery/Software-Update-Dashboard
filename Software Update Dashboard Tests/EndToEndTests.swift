@@ -121,6 +121,9 @@ struct EndToEndTests {
     func history() async throws {
         let (model, result) = try await refreshed(Self.iPads)
         #expect(model.snapshots(result.tracked.id).count == 6)
+        // the made-up days hold a change of software update with a pilot group joining, and the group leaving
+        let marks = HistoryMark.marks(model.snapshots(result.tracked.id))
+        #expect(marks.map(\.kinds) == [[.rule, .scope], [.scope]])
         await model.refresh(result.tracked.id)
         let snapshots = model.snapshots(result.tracked.id)
         #expect(snapshots.count == 7)

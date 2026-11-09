@@ -53,3 +53,10 @@ nonisolated enum StatusCategory: String, CaseIterable, Sendable, Codable, Identi
         }
     }
 }
+
+/// A count with its noun in the singular or the plural: “1 device”, “6 devices”.
+nonisolated enum Plural {
+    static func count(_ n: Int, _ singular: String, _ plural: String? = nil) -> String {
+        "\(n) \(n == 1 ? singular : plural ?? singular + "s")"
+    }
+}

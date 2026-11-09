@@ -25,8 +25,12 @@ struct DeviceListView: View {
     var body: some View {
         Table(devices, selection: $selection, sortOrder: $sortOrder) {
             TableColumn("Name", value: \.name)
+                .width(min: 120, ideal: 150)
             TableColumn("Serial", value: \.serial)
+                // serial numbers are 10 to 12 characters: never cut off
+                .width(min: 110, ideal: 120)
             TableColumn("Model", value: \.modelIdentifier)
+                .width(min: 80, ideal: 110)
             TableColumn("OS", value: \.currentOS)
                 .width(min: 60, ideal: 70)
             TableColumn("Target") { device in
@@ -70,16 +74,21 @@ struct DeviceListView: View {
         }
         .inspector(isPresented: $showsDetail) {
             Group {
-                if selection.count == 1, let id = selection.first, let device = result.devices.first(where: { $0.id == id }) {
+                if selected.count == 1, let id = selected.first, let device = result.devices.first(where: { $0.id == id }) {
                     DeviceDetailView(model: model, result: result, device: device)
                         // a fresh form per device, so nothing of the one before stays on screen
                         .id(device.id)
                 } else {
-                    ContentUnavailableView(selection.isEmpty ? "No Device Selected" : "\(selection.count) Devices Selected",
+                    ContentUnavailableView(selected.isEmpty ? "No Device Selected"
+                                           : "\(Plural.count(selected.count, "Device")) Selected",
                                            systemImage: "ipad.and.iphone")
                 }
             }
             .inspectorColumnWidth(min: 280, ideal: 340)
+        }
+        .onChange(of: result.tracked.id) {
+            // another Blueprint’s devices: nothing of the one before stays selected
+            selection = []
         }
         .toolbar {
             ToolbarItem {
@@ -91,6 +100,11 @@ struct DeviceListView: View {
                 .help(showsDetail ? "Hide the device detail" : "Show the device detail")
             }
         }
+    }
+
+    /// The selection, without devices that aren’t in this refresh.
+    private var selected: Set<DeviceStatus.ID> {
+        selection.intersection(result.devices.map(\.id))
     }
 
     private func inspect(_ ids: Set<DeviceStatus.ID>) {
@@ -119,33 +133,34 @@ struct DeviceDetailView: View {
                 LabeledContent("Time zone", value: device.timeZone ?? (device.isComputer ? "Not in Jamf Pro for Macs" : "Not reported"))
                 if device.isComputer {
                     LabeledContent("Bootstrap token", value: DeviceDetailText.bootstrap(device.bootstrapToken))
+                    if device.bootstrapToken?.uppercased() == "NOT_ESCROWED" {
+                        WarningLabel(DeviceDetailText.notEscrowedWarning)
+                    }
                 }
                 LabeledContent("Last contact") {
                     if let date = device.lastContact { Text(date, format: .relative(presentation: .named)) } else { Text("Never") }
                 }
             }
             Section("Target") {
-                LabeledContent("Target", value: device.targetSource ?? device.targetVersion
+                LabeledContent("Target", value: device.targetVersion
                                ?? (device.category == .targetUnknown ? "Unknown" : "None"))
-                if let reason = device.targetReason { Text(reason).foregroundStyle(.secondary) }
-                if device.targetFromDevice == true {
+                // one line: where the target comes from, or why there is none
+                if let line = device.targetSource ?? device.targetReason { Text(line).foregroundStyle(.secondary) }
+                if device.targetFromDevice == true, device.targetDiffersFromRule == true {
                     LabeledContent("Blueprint’s rule gives", value: device.ruleTarget ?? "No version")
                     if let rule = device.ruleReason { Text(rule).foregroundStyle(.secondary) }
-                    if device.targetDiffersFromRule == true {
-                        WarningLabel("Another declaration may be enforcing this: the device’s pending version differs from the Blueprint’s rule")
-                    }
+                    WarningLabel("Another declaration may be enforcing this: the device’s pending version differs from the Blueprint’s rule")
                 }
                 if let released = device.targetReleased {
                     LabeledContent("Released by Apple", value: Self.releaseDay(released))
                 }
                 if let deadline = DeadlineZones.text(local: device.deadlineLocal, reported: device.deadlineDate) {
                     LabeledContent("Deadline", value: deadline)
-                    if let source = device.deadlineSource {
-                        Text("Deadline \(source)").foregroundStyle(.secondary)
-                    }
-                    if let stale = device.staleReportedDeadline {
-                        LabeledContent("Device reports", value: DeadlineZones.text(local: nil, reported: stale)?
-                            .replacingOccurrences(of: "reported by the device", with: "reported before the Blueprint’s last change") ?? "")
+                    if let source = device.deadlineSource { Text(source).foregroundStyle(.secondary) }
+                    if let stale = device.staleReportedDeadline, let text = DeadlineZones.text(local: nil, reported: stale) {
+                        LabeledContent("Device reports", value: text)
+                        Text("Reported before the Blueprint’s last change or Apple’s posting of the release, so it isn’t used")
+                            .foregroundStyle(.secondary)
                     }
                     if device.pastDeadline == true { WarningLabel("Past the deadline") }
                 }
@@ -156,7 +171,7 @@ struct DeviceDetailView: View {
                 }
             }
             Section("Software Update") {
-                LabeledContent("Install state", value: device.installState ?? "–")
+                LabeledContent("Install state", value: DeviceDetailText.installState(device.installState))
                 LabeledContent("Pending version", value: device.pendingVersion ?? "–")
                 if !device.error.isEmpty {
                     LabeledContent("Last error", value: device.error)
@@ -172,12 +187,20 @@ struct DeviceDetailView: View {
                 if model.isInspecting(device, in: result.tracked.id) {
                     ProgressView("Inspecting…").controlSize(.small)
                 } else if let inspection = model.inspection(of: device, in: result.tracked.id) {
-                    LabeledContent("Likely cause", value: inspection.cause)
-                    Text(inspection.detail).foregroundStyle(.secondary)
-                    ForEach(Array(inspection.findings.dropFirst().enumerated()), id: \.offset) { _, finding in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(finding.cause)
-                            Text(finding.detail).font(.caption).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Likely cause").font(.subheadline).foregroundStyle(.secondary)
+                        Text(inspection.cause).font(.headline)
+                        Text(inspection.detail).foregroundStyle(.secondary)
+                    }
+                    let others = Array(inspection.findings.dropFirst())
+                    if !others.isEmpty {
+                        Text(others.count == 1 ? "Also Found" : "Also Found (\(others.count))")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                        ForEach(Array(others.enumerated()), id: \.offset) { _, finding in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(finding.cause)
+                                Text(finding.detail).foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }

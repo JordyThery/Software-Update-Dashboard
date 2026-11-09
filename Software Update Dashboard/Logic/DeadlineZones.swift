@@ -81,16 +81,17 @@ nonisolated enum DeadlineZones {
                     < ($1.label, $1.deadline ?? .distantFuture, $1.localDeadline, $1.target ?? "") }
     }
 
-    /// A deadline as it is shown everywhere: a reported moment in this
-    /// Mac’s time zone, “reported by the device”; a computed one in the
-    /// device’s local time.
+    /// A deadline as it is shown everywhere, with its time basis in
+    /// parentheses: a reported moment in this Mac’s time zone, “(this Mac’s
+    /// time)”; a local date-time as “(device’s local time)”. Where it comes
+    /// from is said apart (`DeadlineSource`).
     static func text(local: String?, reported: Date?, timeZone: TimeZone = .current) -> String? {
         if let reported {
             var style = Date.FormatStyle(date: .abbreviated, time: .shortened)
             style.timeZone = timeZone
-            return "\(reported.formatted(style)), reported by the device"
+            return "\(reported.formatted(style)) (this Mac’s time)"
         }
-        return local.map { "\(TargetRules.readable($0)), device local time" }
+        return local.map { "\(TargetRules.readable($0)) (device’s local time)" }
     }
 }
 

@@ -159,9 +159,9 @@ struct DeviceTargetTests {
         // shown the same way everywhere
         let amsterdam = TimeZone(identifier: "Europe/Amsterdam")!
         let text = DeadlineZones.text(local: "2026-11-19T22:59:06", reported: Sample.date("2026-11-19T22:59:06"), timeZone: amsterdam)
-        #expect(text?.hasSuffix(", reported by the device") == true)
+        #expect(text?.hasSuffix(" (this Mac’s time)") == true)
         #expect(text?.contains("23:59") == true)
-        #expect(DeadlineZones.text(local: "2026-11-09T23:59:00", reported: nil)?.hasSuffix(", device local time") == true)
+        #expect(DeadlineZones.text(local: "2026-11-09T23:59:00", reported: nil)?.hasSuffix(" (device’s local time)") == true)
 
         // the macOS 27 row: each distinct deadline once (to the minute)
         let row = MajorRow.deadlines([mac("1", target: "27.2", local: "", reported: "2026-11-19T22:59:06"),
@@ -169,17 +169,17 @@ struct DeviceTargetTests {
                                       mac("3", target: "27.2", local: "", reported: "2026-11-09T22:59:06"),
                                       mac("5", target: "27.2", local: "2026-11-09T23:59:00", reported: nil)])
         #expect(row.count == 3)
-        #expect(row.filter { $0.hasSuffix("reported by the device") }.count == 2)
+        #expect(row.filter { $0.hasSuffix("(this Mac’s time)") }.count == 2)
     }
 
     @Test("Where the target comes from, in plain words")
     func source() {
-        #expect(Self.fromDevice(Self.status(pending: "26.7.2", reason: "declaration")).source == "26.7.2, sent by Jamf, matches the Blueprint’s rule")
-        #expect(Self.fromDevice(Self.status(pending: "27.2", reason: "declaration")).source == "27.2, sent by Jamf; the Blueprint’s rule gives 26.7.2")
-        #expect(Self.rule(os: "26.7.1", model: "MacBookPro18,3", boardID: "J314sAP").source == "26.7.2, from Apple’s data and the Blueprint’s rule")
+        #expect(Self.fromDevice(Self.status(pending: "26.7.2", reason: "declaration")).source == "Sent by Jamf, matches the Blueprint’s rule")
+        #expect(Self.fromDevice(Self.status(pending: "27.2", reason: "declaration")).source == "Sent by Jamf: the device reports it pending from a declaration")
+        #expect(Self.rule(os: "26.7.1", model: "MacBookPro18,3", boardID: "J314sAP").source == "From Apple’s data and the Blueprint’s rule")
         #expect(Self.rule(os: "26.7.1", model: "MacBookPro18,3", boardID: nil,
                           .specific(targetOSVersion: "27.2", targetLocalDateTime: nil, detailsURL: nil)).source
-                == "27.2, the version the Blueprint names")
+                == "The version the Blueprint names")
     }
 
     @Test("A Mac that can’t run the newest major stays on the list to replace, with the target Jamf sent")
@@ -362,7 +362,8 @@ struct InspectStaleAndStuckTests {
         let reports = pair(14, versions: "^(15[.][0-8]([.][0-9]+)*)$", lists: ["J313AP"], reported: "2026-10-14T19:08:00")
         let result = evaluate(member, status: status, row: row, reports: reports)
         #expect(result.cause == "Not evaluated since the update started")
-        #expect(result.detail.contains("2026-10-14") && result.detail.contains("2026-10-26"))
+        #expect(result.detail.contains(InspectFindings.day(Sample.date("2026-10-14T19:08:00")))
+                && result.detail.contains(InspectFindings.day(Sample.date("2026-10-26T00:00:00"))))
         #expect(!result.findings.contains { $0.cause == "No update declaration applies" })
         // the Blueprint's last change counts too
         row.activityFrom = Sample.date("2026-10-01T00:00:00")
@@ -446,7 +447,7 @@ struct PostingDeadlineTests {
         #expect(target.version == "27.0.1")
         #expect(target.deadlineLocal == "2026-10-12T23:59:00")
         #expect(target.deadlineSource == .releaseDate)
-        #expect(target.deadlineSource?.text == "from the release date, no posting date found")
+        #expect(target.deadlineSource?.text == "From the release date, no posting date found")
     }
 
     static func pending(updated: String, deadline: String = "2026-11-09 22:59:06 +0000") -> JamfPro.SoftwareUpdateStatus {
@@ -471,10 +472,10 @@ struct PostingDeadlineTests {
         #expect(target.staleReportedDeadline == nil)
         let device = Sample.classify(Sample.mac(os: "27.0.1", model: "MacBookPro18,3"), Self.pending(updated: "2026-11-07T08:00:00"),
                                      target: target)
-        #expect(device.deadlineSource == "reported by the device")
+        #expect(device.deadlineSource == "Reported by the device")
         let named = Self.rule(os: "27.0.1", .specific(targetOSVersion: "27.2", targetLocalDateTime: "2026-11-20T17:00:00", detailsURL: nil))
         #expect(named.deadlineSource == .blueprint)
-        #expect(Sample.classify(Sample.mac(os: "27.0.1"), nil, target: Self.rule(os: "27.0.1")).deadlineSource == "from Apple’s posting date")
+        #expect(Sample.classify(Sample.mac(os: "27.0.1"), nil, target: Self.rule(os: "27.0.1")).deadlineSource == "From Apple’s posting date")
     }
 
     @Test("The live case: 9 Nov reported before a 6 Nov change, the rule gives 19 Nov: not late, not stuck")
@@ -497,7 +498,8 @@ struct PostingDeadlineTests {
                                     now: Sample.date("2026-11-10T08:00:00"), serverTimeZone: Sample.utc))
         #expect(!inspected.findings.contains { $0.cause == "Update stuck" })
         let finding = try #require(inspected.findings.first { $0.cause == "Declaration not refreshed since the Blueprint changed" })
-        #expect(finding.detail.contains("2026-11-09") && finding.detail.contains("2026-11-06"))
+        #expect(finding.detail.contains(InspectFindings.day(Sample.date("2026-11-09T22:59:06")))
+                && finding.detail.contains(InspectFindings.day(Sample.date("2026-11-06T09:00:00"))))
         // the posting alone makes a report stale too
         #expect(Self.sent(status).staleReportedDeadline != nil)
     }

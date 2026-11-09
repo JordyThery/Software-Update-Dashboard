@@ -81,7 +81,7 @@ nonisolated struct RefreshResult: Sendable {
 /// known, so the refresh stops and the previous one is kept.
 nonisolated struct AppleDataUnavailable: LocalizedError, Equatable {
     var errorDescription: String? {
-        "Apple’s release data couldn’t be read, so no device’s target is known. The previous refresh is kept; try again later."
+        "Apple’s release data couldn’t be read, so no device’s target is known."
     }
 }
 
@@ -229,9 +229,9 @@ nonisolated struct RefreshWorkflow: Sendable {
             case .specific(let version, let deadline, _):
                 "Version \(version)" + (deadline.map { " by \(TargetRules.readable($0))" } ?? "")
             case .latest(let days, _):
-                (days ?? 0) == 0 ? "The newest release, without delay" : "The newest release, \(days ?? 0) days after its release"
+                (days ?? 0) == 0 ? "The newest release, without delay" : "The newest release, \(Plural.count(days ?? 0, "day")) after its release"
             case .semantic(let days, _):
-                (days ?? 0) == 0 ? "Minor updates, without delay" : "Minor updates, \(days ?? 0) days after their release"
+                (days ?? 0) == 0 ? "Minor updates, without delay" : "Minor updates, \(Plural.count(days ?? 0, "day")) after their release"
             case .unknown:
                 "A software update this app doesn’t read"
             }

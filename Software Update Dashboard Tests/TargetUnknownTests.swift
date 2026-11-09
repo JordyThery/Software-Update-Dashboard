@@ -94,7 +94,7 @@ struct TargetUnknownTests {
         #expect(summary.contains("Devices:    1 (Minor updates)"))
         #expect(summary.contains("Target unknown: 1 device not measured"))
         #expect(summary.contains("beta of macOS 28"))
-        #expect(summary.contains("1 of 1 updatable devices on target"))
+        #expect(summary.contains("1 of 1 updatable device on target"))
     }
 
     @Test("Without Apple’s data the refresh stops before reading anything")

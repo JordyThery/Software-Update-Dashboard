@@ -75,7 +75,13 @@ struct BlueprintCommands: Commands {
             Button("Stop Tracking…") {
                 if let id = selectedID { focus?.stopTracking.wrappedValue = id }
             }
-            .disabled(selectedID == nil || isDemo || focus?.model.canChangeTracked == false)
+            .disabled(selectedID == nil || focus?.model.canChangeTracked == false)
+            if isDemo, let model = focus?.model {
+                Divider()
+                Picker("Demo Situation", selection: Binding(get: { model.demoSituation }, set: { situation in Task { await model.setDemoSituation(situation) } })) {
+                    ForEach(DemoSituation.allCases) { Text($0.rawValue).tag($0) }
+                }
+            }
         }
     }
 }

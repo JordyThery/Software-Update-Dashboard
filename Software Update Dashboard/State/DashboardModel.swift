@@ -2,6 +2,16 @@ import Foundation
 import JTKit
 import Observation
 
+/// What Demo Mode shows besides its sample data, picked in the Blueprint
+/// menu: situations the sample data alone never gets into. In memory only.
+enum DemoSituation: String, CaseIterable, Identifiable {
+    case sampleData = "Sample Data"
+    case appleDataUnreachable = "Apple’s Release Data Unreachable"
+    case unreadableList = "Saved List Unreadable"
+
+    var id: String { rawValue }
+}
+
 /// The tracked Blueprints of the connection in use, their latest refresh and
 /// history, and Inspect.
 @MainActor
@@ -32,6 +42,8 @@ final class DashboardModel {
     /// The saved tracked Blueprints couldn’t be read: where they were copied.
     /// Nothing is saved over them until the app is restarted with a readable list.
     private(set) var unreadableTrackedCopy: String?
+    /// Demo Mode’s situation; always sample data outside Demo Mode.
+    private(set) var demoSituation: DemoSituation = .sampleData
 
     @ObservationIgnored private var saved: [TrackedBlueprint]
     /// Demo mode’s two, changed in memory only.
@@ -80,10 +92,17 @@ final class DashboardModel {
         Task { await refresh(tracked.id) }
     }
 
+    /// Stops tracking a Blueprint and deletes its history. In Demo Mode only
+    /// the demo’s list in memory and its history in the demo’s own folder.
     func remove(_ id: UUID) {
-        guard !isDemo, canChangeTracked else { return }
-        saved.removeAll { $0.id == id }
-        save()
+        guard canChangeTracked else { return }
+        if isDemo {
+            demoTracked = trackedBlueprints.filter { $0.id != id }
+            generation += 1
+        } else {
+            saved.removeAll { $0.id == id }
+            save()
+        }
         history?.remove(id)
         results[id] = nil
         inspections = inspections.filter { $0.key.tracked != id }
@@ -101,6 +120,7 @@ final class DashboardModel {
     }
 
     private func change(_ id: UUID, _ edit: (inout TrackedBlueprint) -> Void) {
+        guard canChangeTracked else { return }
         if isDemo {
             var list = trackedBlueprints
             guard let index = list.firstIndex(where: { $0.id == id }) else { return }
@@ -108,7 +128,7 @@ final class DashboardModel {
             demoTracked = list
             generation += 1
         } else {
-            guard canChangeTracked, let index = saved.firstIndex(where: { $0.id == id }) else { return }
+            guard let index = saved.firstIndex(where: { $0.id == id }) else { return }
             edit(&saved[index])
             save()
         }
@@ -124,11 +144,19 @@ final class DashboardModel {
     /// setting under its dated name), so it can be shown in Finder; written
     /// once, never overwritten.
     func exportUnreadableCopy(to folder: URL? = nil) throws -> URL {
-        guard let key = unreadableTrackedCopy, let value = connections.defaults.object(forKey: key) else {
-            throw RefreshError("There is no copy of an unreadable list.")
+        let key: String, value: Any
+        if isDemo {
+            // a made-up copy in the demo’s own folder; the real settings stay untouched
+            guard demoSituation == .unreadableList else { throw RefreshError("There is no copy of an unreadable list.") }
+            (key, value) = (Self.demoUnreadableCopy, "A sample of a list that couldn’t be read")
+        } else {
+            guard let copy = unreadableTrackedCopy, let saved = connections.defaults.object(forKey: copy) else {
+                throw RefreshError("There is no copy of an unreadable list.")
+            }
+            (key, value) = (copy, saved)
         }
-        let folder = try folder ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
-                                                          appropriateFor: nil, create: true)
+        let folder = try folder ?? (isDemo ? connections.demo.scratchDirectory
+            : FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
             .appending(path: "Unreadable Copies", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let file = folder.appending(path: "\(key).plist")
@@ -142,6 +170,13 @@ final class DashboardModel {
     /// Starts again with an empty list: the unreadable value is removed from
     /// `trackedBlueprints`, its dated copy stays, and changes are saved again.
     func startNewTrackedList() {
+        if isDemo {
+            guard demoSituation == .unreadableList else { return }
+            demoSituation = .sampleData
+            demoTracked = []
+            generation += 1
+            return
+        }
         guard unreadableTrackedCopy != nil else { return }
         connections.defaults.removeObject(forKey: TrackedBlueprintList.key)
         unreadableTrackedCopy = nil
@@ -150,7 +185,28 @@ final class DashboardModel {
     }
 
     /// Changes to the tracked Blueprints can’t be saved: the saved list couldn’t be read.
-    var canChangeTracked: Bool { isDemo || unreadableTrackedCopy == nil }
+    var canChangeTracked: Bool { shownUnreadableCopy == nil }
+
+    /// The unreadable list’s copy the banner names: the real one, or Demo
+    /// Mode’s made-up one in its “Saved List Unreadable” situation.
+    var shownUnreadableCopy: String? {
+        if isDemo { return demoSituation == .unreadableList ? Self.demoUnreadableCopy : nil }
+        return unreadableTrackedCopy
+    }
+
+    nonisolated static let demoUnreadableCopy = "\(TrackedBlueprintList.key).unreadable-demo"
+
+    // MARK: Demo situations
+
+    /// Switches Demo Mode’s situation and reads every Blueprint again, so
+    /// the window shows it straight away.
+    func setDemoSituation(_ situation: DemoSituation) async {
+        guard isDemo, situation != demoSituation else { return }
+        demoSituation = situation
+        forgetReleaseData()
+        generation += 1
+        await refreshAll()
+    }
 
     // MARK: History
 
@@ -199,10 +255,8 @@ final class DashboardModel {
             var result = try await workflow.run(tracked, previousScope: previous?.scope) { done, total in
                 Task { @MainActor in self.progress[id] = (done, total) }
             }
-            if !result.counts.isWorthSaving {
-                // nothing was measured: a snapshot of zero devices would only drop the chart
-                result.problems.append("No device has a target, so this refresh isn’t saved in the history.")
-            } else if let history {
+            // nothing measured (the banner says so): a snapshot of zero devices would only drop the chart
+            if result.counts.isWorthSaving, let history {
                 if isDemo && previous == nil { seedDemoHistory(result, in: history) }
                 try? history.save(HistorySnapshot(date: result.date, target: result.rule, devices: result.devices, scope: result.scope),
                                   for: id)
@@ -220,6 +274,8 @@ final class DashboardModel {
     private func appleReleases() async -> AppleReleases.Catalog? {
         let key = connections.inUseKey
         if let catalog, catalog.key == key, Date().timeIntervalSince(catalog.date) < 3_600 { return catalog.value }
+        // Demo Mode’s “Apple’s Release Data Unreachable”: as if no source answered
+        if isDemo && demoSituation == .appleDataUnreachable { return nil }
         let read: AppleReleases.Catalog?
         if let releasesOverride { read = try? await releasesOverride() } else { read = try? await connections.appleReleases().catalog() }
         guard let fetched = read else { return nil }
@@ -228,8 +284,13 @@ final class DashboardModel {
     }
 
     /// Five made-up earlier days for demo mode, so its chart has a history:
-    /// each day back, fewer devices on target.
+    /// each day back, fewer devices on target. Three days back the software
+    /// update was another one and a made-up pilot group joined the scope;
+    /// it left a day back: the chart marks both refreshes.
     private func seedDemoHistory(_ result: RefreshResult, in history: StatusHistory) {
+        let earlierRule = result.rule.hasPrefix("Version") ? "Minor updates, without delay" : "The newest release, without delay"
+        let pilot = GroupReference(key: .init(kind: result.scope.first?.key.kind ?? .mobileDevice, groupID: "699"),
+                                   name: "Pilot Devices", isSmart: false)
         for daysAgo in (1...5).reversed() {
             var devices = result.devices
             var onTarget = devices.indices.filter { devices[$0].category == .onTarget }
@@ -237,7 +298,8 @@ final class DashboardModel {
             for _ in 0..<min(daysAgo, onTarget.count) { devices[onTarget.removeLast()].category = .inProgress }
             for _ in 0..<min(daysAgo / 2, updating.count) { devices[updating.removeLast()].category = .notStarted }
             let date = result.date.addingTimeInterval(-Double(daysAgo) * 86_400)
-            try? history.save(HistorySnapshot(date: date, target: result.rule, devices: devices, scope: result.scope),
+            try? history.save(HistorySnapshot(date: date, target: daysAgo > 3 ? earlierRule : result.rule, devices: devices,
+                                              scope: (2...3).contains(daysAgo) ? result.scope + [pilot] : result.scope),
                               for: result.tracked.id)
         }
     }
@@ -291,7 +353,7 @@ final class DashboardModel {
         var notes: [String] = []
         if let change = result.scopeChange { notes.append(change.text) }
         if let coverage = result.coverage {
-            notes.append("Compared with \(coverage.group.name): \(coverage.notReached.count) of \(coverage.members) devices not reached by the Blueprint")
+            notes.append("Compared with \(coverage.group.name): \(coverage.notReached.count) of \(Plural.count(coverage.members, "device")) not reached by the Blueprint")
         }
         if let started = result.tracked.updateStarted {
             notes.append("Update started set by hand: \(started.formatted(date: .abbreviated, time: .shortened))")
@@ -312,6 +374,7 @@ final class DashboardModel {
         inspections = [:]
         forgetReleaseData()
         demoTracked = nil
+        demoSituation = .sampleData
         selection = .overview
     }
 }

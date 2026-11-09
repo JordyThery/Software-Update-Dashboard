@@ -31,7 +31,8 @@ struct BlueprintView: View {
                 ReadingProgress(model: model, id: tracked.id)
             } else if let error = model.errors[tracked.id] {
                 ContentUnavailableView {
-                    Label("Couldn’t Read the Blueprint", systemImage: "exclamationmark.triangle")
+                    Label(error == AppleDataUnavailable().localizedDescription ? "Couldn’t Read Apple’s Release Data" : "Couldn’t Read the Blueprint",
+                          systemImage: "exclamationmark.triangle")
                 } description: {
                     Text(error)
                 } actions: {
@@ -49,8 +50,12 @@ struct BlueprintView: View {
         }
         .safeAreaInset(edge: .top) {
             // a refresh that stopped keeps the previous one on screen: say so
-            if let result = model.results[tracked.id], let error = model.errors[tracked.id], !model.refreshing.contains(tracked.id) {
-                RefreshStoppedBanner(error: error, shown: result.date) { Task { await model.refresh(tracked.id) } }
+            if let result = model.results[tracked.id], !model.refreshing.contains(tracked.id) {
+                if let error = model.errors[tracked.id] {
+                    RefreshStoppedBanner(error: error, shown: result.date) { Task { await model.refresh(tracked.id) } }
+                } else if !result.counts.isWorthSaving && page == .dashboard {
+                    NoTargetBanner { page = .devices }
+                }
             }
         }
         .navigationTitle(tracked.blueprintName)
@@ -110,6 +115,39 @@ struct BlueprintView: View {
     }
 }
 
+/// A warning across the top of the content: what happened, and what to do
+/// about it. The same sign and color as every other warning in the app.
+struct WarningBanner<Actions: View>: View {
+    let text: String
+    /// A second line, e.g. why the action didn’t work.
+    var detail: String?
+    /// A tooltip on the text, for details only support needs.
+    var help: String?
+    @ViewBuilder var actions: Actions
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Label {
+                VStack(alignment: .leading, spacing: 4) {
+                    // no fixedSize here: in a top inset it pushes the whole window’s content out of view
+                    Text(text)
+                        .help(help ?? "")
+                    if let detail { Text(detail).foregroundStyle(.secondary) }
+                }
+            } icon: {
+                // the sign every warning in the app uses (JTKit’s WarningLabel)
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .symbolRenderingMode(.multicolor)
+                    .accessibilityHidden(true)
+            }
+            Spacer()
+            actions
+        }
+        .padding(10)
+        .background(.bar)
+    }
+}
+
 /// The last refresh stopped: why, and which refresh is shown instead.
 struct RefreshStoppedBanner: View {
     let error: String
@@ -117,18 +155,22 @@ struct RefreshStoppedBanner: View {
     let tryAgain: () -> Void
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Label {
-                Text("The refresh stopped: \(error) Showing the refresh of \(shown.formatted(date: .abbreviated, time: .shortened)).")
-                    .fixedSize(horizontal: false, vertical: true)
-            } icon: {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-            }
-            Spacer()
+        WarningBanner(text: "The refresh stopped: \(error) Showing the refresh of \(shown.formatted(date: .abbreviated, time: .shortened)).") {
             Button("Try Again", action: tryAgain)
         }
-        .padding(10)
-        .background(.bar)
+    }
+}
+
+/// No device got a target: nothing was measured or saved. The devices
+/// say why, each in its own row.
+struct NoTargetBanner: View {
+    let showDevices: () -> Void
+
+    var body: some View {
+        WarningBanner(text: "No device has a target, so nothing is measured and this refresh isn’t saved in the history. "
+                      + "Each device in Devices says why its target is unknown.") {
+            Button("Show Devices", action: showDevices)
+        }
     }
 }
 
@@ -143,7 +185,7 @@ struct ReadingProgress: View {
                 ProgressView(value: Double(progress.done), total: Double(progress.total)) {
                     Text("Reading status reports")
                 } currentValueLabel: {
-                    Text("\(progress.done) of \(progress.total) devices")
+                    Text("\(progress.done) of \(Plural.count(progress.total, "device"))")
                 }
                 .frame(maxWidth: 320)
             } else {
@@ -232,8 +274,8 @@ struct RuleSection: View {
                 Text("Scope").foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(result.scope.isEmpty ? "No Jamf Pro groups" : result.scope.map(\.name).joined(separator: ", "))
-                    Text("\(result.devices.count) devices, each counted once").font(.caption).foregroundStyle(.secondary)
-                    if let change = result.scopeChange { Text(change.text).font(.caption).foregroundStyle(.orange) }
+                    Text("\(Plural.count(result.devices.count, "device")), each counted once").font(.caption).foregroundStyle(.secondary)
+                    if let change = result.scopeChange { WarningLabel(change.text).font(.caption) }
                 }
             }
             if let settings = result.settings.first, let text = Self.settingsText(settings) {
@@ -261,7 +303,7 @@ struct RuleSection: View {
         var parts: [String] = []
         let deferrals = [("all updates", settings.combinedDeferralDays), ("majors", settings.majorDeferralDays),
                          ("minors", settings.minorDeferralDays), ("system", settings.systemDeferralDays)]
-            .compactMap { name, days in days.map { "\(name) \($0) days" } }
+            .compactMap { name, days in days.map { "\(name) \(Plural.count($0, "day"))" } }
         if !deferrals.isEmpty { parts.append("Deferred: " + deferrals.joined(separator: ", ")) }
         if let cadence = settings.recommendedCadence { parts.append("Cadence: \(cadence)") }
         if let beta = settings.betaProgramEnrollment { parts.append("Beta: \(String(describing: beta))") }
@@ -277,12 +319,12 @@ struct ProgressSection: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text(counts.percentText).font(.system(.largeTitle, design: .rounded, weight: .semibold))
-                Text("\(counts[.onTarget]) of \(counts.updatable) updatable devices on their target")
+                Text("\(counts[.onTarget]) of \(Plural.count(counts.updatable, "updatable device")) on \(counts.updatable == 1 ? "its" : "their") target")
                     .foregroundStyle(.secondary)
             }
             ProgressBar(counts: counts)
             ProgressLegend(counts: counts)
-            Text("Updatable leaves out unsupported hardware, offline devices and devices without a report. \(counts.total) devices in all"
+            Text("Updatable leaves out unsupported hardware, offline devices and devices without a report. \(Plural.count(counts.total, "device")) in all"
                  + (pastDeadline > 0 ? "; \(pastDeadline) past their deadline." : "."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -294,7 +336,7 @@ struct CategoryGrid: View {
     let counts: CategoryCounts
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], alignment: .leading, spacing: 12) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
             ForEach(StatusCategory.allCases) { category in
                 VStack(alignment: .leading, spacing: 4) {
                     Label(category.title, systemImage: category.systemImage)
@@ -302,11 +344,13 @@ struct CategoryGrid: View {
                         .foregroundStyle(.secondary)
                     Text("\(counts[category])")
                         .font(.title2.monospacedDigit().weight(.semibold))
-                    if let note = category.note(staleDays: 30) {
+                    // what the count means, only when there is something to count
+                    if counts[category] > 0, let note = category.note(staleDays: 30) {
                         Text(note).font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                // every card in a row as tall as the tallest, all aligned to the top
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(12)
                 .background(.background.secondary, in: .rect(cornerRadius: 8))
                 .accessibilityElement(children: .combine)
@@ -347,11 +391,28 @@ struct MajorsSection: View {
     }
 }
 
-/// The five progress groups per refresh, with the refreshes where the scope changed marked.
+/// The five progress groups per refresh, with the refreshes where the
+/// counts stop comparing marked by number and listed under the chart.
 struct HistoryChart: View {
     let snapshots: [HistorySnapshot]
 
     private var marks: [HistoryMark] { HistoryMark.marks(snapshots) }
+
+    /// The chart’s labels: one per mark, except marks too close to tell
+    /// apart on the axis share one (“2, 3”), so labels never overlap.
+    private var labels: [(date: Date, text: String)] {
+        guard let first = snapshots.first?.date, let last = snapshots.last?.date else { return [] }
+        let closeTogether = max(1, last.timeIntervalSince(first)) * 0.05
+        var labels: [(date: Date, numbers: [Int])] = []
+        for (index, mark) in marks.enumerated() {
+            if let previous = labels.last, mark.date.timeIntervalSince(previous.date) < closeTogether {
+                labels[labels.count - 1].numbers.append(index + 1)
+            } else {
+                labels.append((mark.date, [index + 1]))
+            }
+        }
+        return labels.map { ($0.date, $0.numbers.map(String.init).joined(separator: ", ")) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -368,22 +429,39 @@ struct HistoryChart: View {
                                 .foregroundStyle(by: .value("Group", group.rawValue))
                                 .lineStyle(StrokeStyle(lineWidth: 1))
                                 .accessibilityLabel("\(group.rawValue), \(snapshot.date.formatted(date: .abbreviated, time: .shortened))")
-                                .accessibilityValue("\(count) \(count == 1 ? "device" : "devices")")
+                                .accessibilityValue(Plural.count(count, "device"))
                         }
                     }
                     ForEach(marks) { mark in
                         RuleMark(x: .value("Change", mark.date))
                             .foregroundStyle(.secondary)
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                            .annotation(position: .top, alignment: .leading) { Text(mark.kind.rawValue).font(.caption2) }
                             .accessibilityLabel(mark.text)
+                    }
+                    ForEach(labels, id: \.date) { label in
+                        RuleMark(x: .value("Change", label.date))
+                            .foregroundStyle(.clear)
+                            .annotation(position: .top, alignment: .center, spacing: 2) {
+                                Text(label.text).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                            }
+                            .accessibilityHidden(true)
                     }
                 }
                 .chartForegroundStyleScale(domain: ProgressGroup.allCases.map(\.rawValue),
                                            range: ProgressGroup.allCases.map(\.color))
                 .frame(height: 180)
-                ForEach(marks) { mark in
-                    Text("\(mark.date.formatted(date: .abbreviated, time: .omitted)): \(mark.text)").font(.caption).foregroundStyle(.secondary)
+                if !marks.isEmpty {
+                    Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 4) {
+                        ForEach(Array(marks.enumerated()), id: \.element.id) { index, mark in
+                            GridRow {
+                                Text("\(index + 1)").font(.subheadline.weight(.semibold)).monospacedDigit()
+                                Text(mark.date.formatted(date: .abbreviated, time: .shortened)).monospacedDigit()
+                                Text(mark.text).fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 }
             }
         }
@@ -465,9 +543,10 @@ struct CoverageSection: View {
             }
             if let coverage = result.coverage {
                 if coverage.notReached.isEmpty {
-                    Label("The Blueprint reaches all \(coverage.members) devices of \(coverage.group.name).", systemImage: "checkmark.circle")
+                    Label(coverage.members == 1 ? "The Blueprint reaches the only device of \(coverage.group.name)."
+                          : "The Blueprint reaches all \(coverage.members) devices of \(coverage.group.name).", systemImage: "checkmark.circle")
                 } else {
-                    WarningLabel("\(coverage.notReached.count) of \(coverage.members) devices in \(coverage.group.name) aren’t in the Blueprint’s scope.")
+                    WarningLabel("\(coverage.notReached.count) of \(Plural.count(coverage.members, "device")) in \(coverage.group.name) \(coverage.notReached.count == 1 ? "isn’t" : "aren’t") in the Blueprint’s scope.")
                     ForEach(coverage.notReached.prefix(50), id: \.id) { member in
                         Text("\(member.name ?? "Unnamed")  \(member.serialNumber ?? "")  \(member.osVersion ?? "")")
                             .font(.callout.monospaced())

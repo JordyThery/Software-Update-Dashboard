@@ -66,29 +66,37 @@ nonisolated struct HistorySnapshot: Sendable, Hashable, Codable, Identifiable {
     }
 }
 
-/// A point in the history where counts on either side don’t compare: the
-/// Blueprint’s rule, this app’s target rules or the scope changed.
+/// A refresh in the history where counts on either side don’t compare:
+/// the Blueprint’s software update or its scope changed, or an app update
+/// changed how targets are worked out. One mark per refresh, whatever
+/// changed in it.
 nonisolated struct HistoryMark: Sendable, Hashable, Identifiable {
-    enum Kind: String, Sendable { case rule = "Rule", counting = "Counting", scope = "Scope" }
+    enum Kind: String, Sendable { case rule = "Software update", counting = "App update", scope = "Scope" }
     var date: Date
-    var kind: Kind
+    var kinds: [Kind]
+    /// What changed, in one sentence without a colon.
     var text: String
 
-    var id: String { "\(date.timeIntervalSince1970) \(kind.rawValue)" }
+    var id: Date { date }
 
     static func marks(_ snapshots: [HistorySnapshot]) -> [HistoryMark] {
-        zip(snapshots, snapshots.dropFirst()).flatMap { previous, next -> [HistoryMark] in
-            var marks: [HistoryMark] = []
+        zip(snapshots, snapshots.dropFirst()).compactMap { previous, next -> HistoryMark? in
+            var kinds: [Kind] = []
+            var parts: [String] = []
             if previous.target != next.target {
-                marks.append(HistoryMark(date: next.date, kind: .rule, text: "Rule: \(next.target ?? "unknown")"))
+                kinds.append(.rule)
+                parts.append("the Blueprint’s software update changed to “\(next.target ?? "unknown")”")
             } else if previous.rules != next.rules {
-                marks.append(HistoryMark(date: next.date, kind: .counting,
-                                         text: "Counting: this app’s target rules changed; earlier counts don’t compare"))
+                kinds.append(.counting)
+                parts.append("targets are worked out differently after an app update")
             }
             if let change = ScopeChange(from: previous.scope, to: next.scope) {
-                marks.append(HistoryMark(date: next.date, kind: .scope, text: change.text))
+                kinds.append(.scope)
+                parts.append("the Blueprint’s scope changed, \(change.description)")
             }
-            return marks
+            guard !parts.isEmpty else { return nil }
+            let text = parts.joined(separator: "; ") + ", so earlier counts don’t compare"
+            return HistoryMark(date: next.date, kinds: kinds, text: text.prefix(1).uppercased() + text.dropFirst())
         }
     }
 }
@@ -108,15 +116,20 @@ nonisolated struct ScopeChange: Sendable, Hashable {
     }
 
     /// “Scope: 1 group added (Name), 1 removed (Name)”.
-    var text: String {
+    var text: String { "Scope: " + description }
+
+    /// “1 group added (Name), 1 removed (Name)”.
+    var description: String {
         var parts: [String] = []
         if !added.isEmpty {
             parts.append("\(added.count) \(added.count == 1 ? "group" : "groups") added (\(added.map(\.name).joined(separator: ", ")))")
         }
         if !removed.isEmpty {
-            parts.append("\(removed.count) removed (\(removed.map(\.name).joined(separator: ", ")))")
+            // “1 group removed” on its own, “…, 1 removed” after what was added
+            let what = added.isEmpty ? Plural.count(removed.count, "group") : "\(removed.count)"
+            parts.append("\(what) removed (\(removed.map(\.name).joined(separator: ", ")))")
         }
-        return "Scope: " + parts.joined(separator: ", ")
+        return parts.joined(separator: ", ")
     }
 }
 

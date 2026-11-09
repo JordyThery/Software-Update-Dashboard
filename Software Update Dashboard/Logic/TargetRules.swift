@@ -14,10 +14,10 @@ nonisolated enum DeadlineSource: String, Sendable, Hashable, Codable {
 
     var text: String {
         switch self {
-        case .reported: "reported by the device"
-        case .blueprint: "set in the Blueprint"
-        case .postingDate: "from Apple’s posting date"
-        case .releaseDate: "from the release date, no posting date found"
+        case .reported: "Reported by the device"
+        case .blueprint: "Set in the Blueprint"
+        case .postingDate: "From Apple’s posting date"
+        case .releaseDate: "From the release date, no posting date found"
         }
     }
 }
@@ -80,6 +80,8 @@ nonisolated struct DeviceTarget: Sendable, Hashable, Codable {
     /// The Blueprint names this version itself (a specific version): what
     /// Jamf sends, not a reading of Apple’s data.
     var namedByBlueprint = false
+    /// Nothing in the device’s major is public yet: held to what it runs.
+    var heldToCurrent = false
     /// The deadline as a moment, when the device reported it with an offset.
     var deadlineDate: Date?
     /// That offset from UTC, in seconds.
@@ -93,16 +95,20 @@ nonisolated struct DeviceTarget: Sendable, Hashable, Codable {
 
     var osVersion: OSVersion? { version.flatMap(OSVersion.init) }
 
-    /// Where the target comes from, for the device detail: “27.2, sent by
-    /// Jamf, matches the Blueprint’s rule”, “26.7.2, from Apple’s data”.
+    /// Where the target comes from, for the gray line under the version in
+    /// the device detail: “Sent by Jamf, matches the Blueprint’s rule”,
+    /// “From Apple’s data and the Blueprint’s rule”. Nil without a target
+    /// (the reason says why).
     var source: String? {
-        guard let version, unknown == nil else { return nil }
+        guard version != nil, unknown == nil else { return nil }
         if fromDevice {
-            if !differsFromRule { return "\(version), sent by Jamf, matches the Blueprint’s rule" }
-            return "\(version), sent by Jamf; the Blueprint’s rule gives \(ruleVersion ?? "no version")"
+            return differsFromRule ? "Sent by Jamf: the device reports it pending from a declaration"
+                : "Sent by Jamf, matches the Blueprint’s rule"
         }
-        if namedByBlueprint { return "\(version), the version the Blueprint names" }
-        return "\(version), from Apple’s data and the Blueprint’s rule"
+        if namedByBlueprint { return "The version the Blueprint names" }
+        if heldToCurrent { return "No public release of its major yet, so it stays on the version it runs" }
+        if limitedByHardware { return "From Apple’s data: the newest release this model can run" }
+        return "From Apple’s data and the Blueprint’s rule"
     }
 }
 
@@ -219,8 +225,10 @@ nonisolated enum TargetRules {
         guard let pick = newestRelease(catalog, ctx.platform, model: model, boardID: boardID, days: 0, now: ctx.now,
                                        major: current.major) else {
             // nothing in this major is public yet: the version it runs is what it’s held to
-            return DeviceTarget(version: current.description, reason: "No public \(osName) \(current.major) release yet",
-                                limitedByHardware: limited)
+            var held = DeviceTarget(version: current.description, reason: "No public \(osName) \(current.major) release yet",
+                                    limitedByHardware: limited)
+            held.heldToCurrent = true
+            return held
         }
         if let unknown = runsNewer(current, than: pick, catalog, ctx.platform, days: 0, now: ctx.now, osName: osName) { return unknown }
         let due = basis(pick, catalog, model: model, boardID: boardID).map { deadline(released: $0.date, days: days, time: time) }

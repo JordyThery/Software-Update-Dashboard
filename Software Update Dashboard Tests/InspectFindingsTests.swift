@@ -107,7 +107,7 @@ struct InspectFindingsTests {
                               reports: [report(1, "CONFIGURATION", active: true)])
         let all = result.findings.map { "\($0.cause): \($0.detail)" }
         #expect(all.contains("Passcode: Passcode present: yes; the update installs once the passcode is entered on the device, or after it’s cleared"))
-        #expect(all.contains("Update error: InstallationKeybagRequired (2 failures, last 2026-11-05 09:30)"))
+        #expect(all.contains("Update error: InstallationKeybagRequired (2 failures, last \(InspectFindings.moment(Sample.date("2026-11-05T09:30:00"))))"))
         // prepared before the deadline is normal, not stuck
         #expect(all.contains("Update downloaded: iPadOS 27.0.1 is downloaded and installs at the deadline"))
         #expect(!all.contains { $0.hasPrefix("Update stuck") })

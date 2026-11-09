@@ -204,7 +204,7 @@ nonisolated enum InspectFindings {
             } else if state == .prepared {
                 add("Update downloaded", "\(osName) \(pendingVersion) is downloaded and installs at the deadline")
             } else {
-                add("Update in progress", "\(state.rawValue) \(osName) \(pendingVersion), last change \(ago(updated, now: ctx.now))")
+                add("Update in progress", "\(DeviceDetailText.installState(state.rawValue)) \(osName) \(pendingVersion), last change \(ago(updated, now: ctx.now))")
             }
         }
         if category == .notStarted, status?.installState == JamfPro.SoftwareUpdateStatus.InstallState.none,
@@ -232,8 +232,7 @@ nonisolated enum InspectFindings {
            since.map({ failAt >= $0 }) ?? true {
             let reason = Classifier.shortError(status?.failure?.reason)
             let count = status?.failure?.count.map { "\($0) \($0 == 1 ? "failure" : "failures"), " } ?? ""
-            let last = String(failTime.prefix(16)).replacingOccurrences(of: "T", with: " ")
-            add("Update error", "\(reason.isEmpty ? "No reason given" : reason) (\(count)last \(last))")
+            add("Update error", "\(reason.isEmpty ? "No reason given" : reason) (\(count)last \(moment(failAt)))")
         }
         if let updated, let contact = member.lastSeen, contact.timeIntervalSince(updated) > 2 * 86_400 {
             add("Update status not reported", "Last software update report \(day(updated)), last contact \(day(contact))")
@@ -317,8 +316,14 @@ nonisolated enum InspectFindings {
         ((Double(megabytes) / 1024 * 10).rounded() / 10).formatted(.number.precision(.fractionLength(1)).locale(Locale(identifier: "en_US_POSIX")))
     }
 
+    /// A day as the app shows it everywhere: “28 Oct 2026”.
     static func day(_ date: Date) -> String {
-        date.formatted(.iso8601.year().month().day())
+        date.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    /// A moment as the app shows it everywhere: “9 Nov 2026 at 09:11”.
+    static func moment(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .shortened)
     }
 }
 
@@ -411,4 +416,14 @@ nonisolated enum DeviceDetailText {
         default: status ?? "Not reported"
         }
     }
+
+    /// An install state as a capitalized word: “Failed”, “None”; “–” when
+    /// there is none.
+    static func installState(_ state: String?) -> String {
+        guard let state, let first = state.first else { return "–" }
+        return first.uppercased() + state.dropFirst()
+    }
+
+    /// Why a bootstrap token that isn’t escrowed matters, for the device detail.
+    static let notEscrowedWarning = "Without an escrowed bootstrap token, the Mac can’t install an enforced update on its own: it waits for a user to approve it."
 }

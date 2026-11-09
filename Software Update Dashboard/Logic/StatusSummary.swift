@@ -84,7 +84,7 @@ nonisolated enum StatusSummary {
         if let previous {
             lines.append("  Changes since the previous refresh (\(previous.date.formatted(date: .abbreviated, time: .shortened))) in brackets.")
         }
-        var progress = "  Progress:   \(counts[.onTarget]) of \(counts.updatable) updatable devices on target"
+        var progress = "  Progress:   \(counts[.onTarget]) of \(Plural.count(counts.updatable, "updatable device")) on target"
         if let percent = counts.percentOnTarget { progress += " (\(percent.formatted(.number.precision(.fractionLength(0...1)).locale(locale)))%)" }
         progress += "; updatable excludes unsupported, offline and no report"
         lines.append(progress)
