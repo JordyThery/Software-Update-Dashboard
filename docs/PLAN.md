@@ -10,7 +10,7 @@ The unit of work is a **tracked Blueprint**: a Blueprint with a software update 
 
 - reads the Blueprint’s software update: target version, build, deadline, and its blocks (the steps that hold a software update, each with its own activation predicate);
 - reads each device’s inventory and its declarative device management (DDM) status items, and the declaration reports;
-- sorts every device into nine categories with a plain-language diagnosis: on target, no report, unsupported, offline, no activity, other update, failed, in progress, not started;
+- sorts every device into nine categories with a plain-language diagnosis: on target, no report, unsupported, offline, no activity, other update, failed, in progress, not started; a device without a target (Apple’s data unreachable, no software update, no release for its platform, a beta of a newer major) is “Target unknown” with its reason, outside every count and the history, and a refresh without Apple’s data stops and keeps the previous one;
 - gives every device its own target (see below) and keeps a history per refresh, 180 days per tracked Blueprint;
 - marks unsupported hardware, with a replacement list (model, number of devices, last version it can run);
 - shows the deadline per time zone (the deadline is the device’s local time) and points out unusual zones;

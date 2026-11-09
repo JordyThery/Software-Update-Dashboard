@@ -126,7 +126,7 @@ struct LiveReadTests {
             return
         }
         // diagnostic, kinds only: what the membership answer holds (over the Platform API, IDs and names)
-        if let raw = try? await client.json("pro/v2/mobile-device-groups/\(chosen.group.isSmart ? "smart" : "static")-group-membership/\(chosen.group.id)",
+        if let raw = try? await client.json("pro/v2/mobile-device-groups/\(chosen.group.isSmart ? "smart" : "static")-group-membership/\(chosen.group.groupID)",
                                             query: [URLQueryItem(name: "page", value: "0"), URLQueryItem(name: "page-size", value: "1")]),
            let first = raw["results"]?.arrayValue?.first?.objectValue {
             func kind(_ key: String) -> String {
@@ -139,9 +139,14 @@ struct LiveReadTests {
                 default: "other"
                 }
             }
-            run.record(step: step("diagnostic: membership value kinds"), passed: true,
-                       note: ["mobileDeviceId", "managementId", "timeZone", "lastContactDate", "osVersion", "serialNumber",
-                              "modelIdentifier", "displayName"].map { "\($0): \(kind($0))" }.joined(separator: ", "))
+            let kinds = ["mobileDeviceId", "managementId", "timeZone", "lastContactDate", "osVersion", "serialNumber",
+                         "modelIdentifier", "displayName"].map { ($0, kind($0)) }
+            // the member's ID at least must be there, or the diagnostic read the wrong thing
+            run.record(step: step("diagnostic: membership value kinds"), passed: kinds[0].1 != "absent",
+                       note: kinds.map { "\($0.0): \($0.1)" }.joined(separator: ", "))
+        } else {
+            run.record(step: step("diagnostic: membership value kinds"), passed: false,
+                       note: "the group's first membership page couldn't be read")
         }
         let withManagementID = chosen.members.filter { $0.managementID != nil }.count
         let withZone = chosen.members.filter { $0.timeZone != nil }.count
@@ -205,10 +210,12 @@ struct LiveReadTests {
             throw error
         }
 
-        // 5. the app's own refresh (no Apple release data: not on the allow-list)
+        // 5. the app's own refresh. Apple's release data isn't read here: an
+        // empty catalog, so targets that depend on it are “Target unknown”
+        // and a specific version is measured.
         if let tracked {
             do {
-                let result = try await RefreshWorkflow(client: client, catalog: nil, serverTimeZone: .gmt).run(tracked)
+                let result = try await RefreshWorkflow(client: client, catalog: AppleReleases.Catalog(), serverTimeZone: .gmt).run(tracked)
                 let counts = StatusCategory.allCases.filter { result.counts[$0] > 0 }.map { "\($0.rawValue) \(result.counts[$0])" }
                 let unreadable = result.devices.filter { $0.statusProblem != nil }.count
                 let targets = Set(result.devices.compactMap(\.targetVersion)).count

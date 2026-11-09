@@ -7,6 +7,8 @@ struct BlueprintFocus {
     let page: Binding<BlueprintView.Page>?
     let sheet: Binding<BlueprintSheet?>
     let export: ((Bool) -> Void)?
+    /// Set to ask for confirmation before Stop Tracking.
+    let stopTracking: Binding<UUID?>
 }
 
 extension FocusedValues {
@@ -38,7 +40,7 @@ struct BlueprintCommands: Commands {
         }
         CommandMenu("Blueprint") {
             Button("Track a Blueprint…") { focus?.sheet.wrappedValue = .track }
-                .disabled(focus == nil || focus?.model.connectionID == nil || isDemo)
+                .disabled(focus == nil || focus?.model.connectionID == nil || isDemo || focus?.model.canChangeTracked == false)
             Divider()
             Button("Refresh") {
                 if let id = selectedID, let model = focus?.model { Task { await model.refresh(id) } }
@@ -70,10 +72,10 @@ struct BlueprintCommands: Commands {
             Button("Export Summary…") { focus?.export?(false) }
                 .disabled(focus?.export == nil || result == nil)
             Divider()
-            Button("Stop Tracking") {
-                if let id = selectedID { focus?.model.remove(id) }
+            Button("Stop Tracking…") {
+                if let id = selectedID { focus?.stopTracking.wrappedValue = id }
             }
-            .disabled(selectedID == nil || isDemo)
+            .disabled(selectedID == nil || isDemo || focus?.model.canChangeTracked == false)
         }
     }
 }

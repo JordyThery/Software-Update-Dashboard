@@ -98,6 +98,8 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     /// The device’s own target and why (nil in history saved before targets per device).
     var targetVersion: String?
     var targetReason: String?
+    /// Apple’s release date of the target, a day (shown without a time).
+    var targetReleased: Date?
     /// Reports and errors before this didn’t count.
     var activityFrom: Date?
     /// The deadline in the device’s local time.
@@ -134,6 +136,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case statusProblem
         case targetVersion
         case targetReason
+        case targetReleased
         case activityFrom
         case deadlineLocal
         case pastDeadline
@@ -275,6 +278,15 @@ nonisolated enum Classifier {
         var status = classify(input, context: ctx)
         status.targetVersion = target.version
         status.targetReason = target.reason
+        status.targetReleased = target.released
+        if target.unknown != nil {
+            // never measured against nothing: shown with its reason, left out of every count
+            status.category = .targetUnknown
+            status.diagnosis = "Target unknown: " + target.reason
+            status.activityFrom = nil
+            status.limitedByHardware = nil
+            return status
+        }
         status.activityFrom = target.activityFrom
         status.deadlineLocal = target.deadlineLocal
         status.pastDeadline = status.category == .onTarget ? false
@@ -321,12 +333,17 @@ extension JamfPro.GroupMember {
 }
 
 /// CSV as spreadsheets read it: a field with a comma, quote or line break
-/// is quoted, with its quotes doubled.
+/// is quoted, with its quotes doubled. A field that starts like a formula
+/// (`=`, `+`, `-`, `@`, a tab or a carriage return), e.g. a device name
+/// someone typed, gets an apostrophe first, so a spreadsheet shows it as
+/// text instead of running it.
 nonisolated enum CSV {
     static func line(_ fields: [String]) -> String {
         fields.map { field in
-            field.contains(where: { $0 == "," || $0 == "\"" || $0.isNewline })
-                ? "\"" + field.replacingOccurrences(of: "\"", with: "\"\"") + "\"" : field
+            let formula = field.unicodeScalars.first.map { "=+-@\t\r".unicodeScalars.contains($0) } ?? false
+            let text = formula ? "'" + field : field
+            return formula || text.contains(where: { $0 == "," || $0 == "\"" || $0.isNewline })
+                ? "\"" + text.replacingOccurrences(of: "\"", with: "\"\"") + "\"" : text
         }.joined(separator: ",")
     }
 

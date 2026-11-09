@@ -11,7 +11,6 @@ struct SettingsView: View {
         ConnectionsSettingsTab(
             store: connections.saved,
             services: [.jamfPlatform],
-            optionalFields: [.jamfProWebURL],
             roles: [connections.role()],
             newRecord: ConnectionsModel.newRecord,
             didDelete: { connections.connectionWasDeleted($0) },
@@ -21,7 +20,7 @@ struct SettingsView: View {
                 Picker("Jamf Pro server time zone", selection: record.serverTimeZone) {
                     ForEach(Self.timeZones, id: \.self) { Text($0).tag($0) }
                 }
-                Text("Jamf Pro writes the times of devices’ status reports in its own time zone. Jamf Cloud uses UTC.")
+                Text("Jamf Pro writes the times of devices’ status reports in its own time zone. Jamf Cloud servers normally use UTC.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -42,7 +41,7 @@ struct SettingsView: View {
         Create an integration in Jamf Account scoped to a platform environment, in the region your Jamf Pro is hosted in. \
         It needs these read permissions only: \(ConnectionsModel.permissions.joined(separator: ", ")). \
         Software Update Dashboard never changes anything in Jamf. Copy the environment ID from the integration’s details. \
-        Integrations expire after six months. The Jamf Pro web address is optional and used only for “Open in Jamf Pro” links. \
+        Integrations expire after six months. \
         The client secret is stored in the Keychain.
         """
 }

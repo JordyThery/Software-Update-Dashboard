@@ -30,7 +30,7 @@ struct DeviceListView: View {
             TableColumn("OS", value: \.currentOS)
                 .width(min: 60, ideal: 70)
             TableColumn("Target") { device in
-                Text(device.targetVersion ?? "–")
+                Text(device.targetVersion ?? (device.category == .targetUnknown ? "Unknown" : "–"))
                     .foregroundStyle(device.limitedByHardware == true ? .orange : .primary)
                     .help(device.targetReason ?? "")
             }
@@ -72,6 +72,8 @@ struct DeviceListView: View {
             Group {
                 if selection.count == 1, let id = selection.first, let device = result.devices.first(where: { $0.id == id }) {
                     DeviceDetailView(model: model, result: result, device: device)
+                        // a fresh form per device, so nothing of the one before stays on screen
+                        .id(device.id)
                 } else {
                     ContentUnavailableView(selection.isEmpty ? "No Device Selected" : "\(selection.count) Devices Selected",
                                            systemImage: "ipad.and.iphone")
@@ -120,8 +122,11 @@ struct DeviceDetailView: View {
                 }
             }
             Section("Target") {
-                LabeledContent("Target", value: device.targetVersion ?? "None")
+                LabeledContent("Target", value: device.targetVersion ?? (device.category == .targetUnknown ? "Unknown" : "None"))
                 if let reason = device.targetReason { Text(reason).foregroundStyle(.secondary) }
+                if let released = device.targetReleased {
+                    LabeledContent("Released by Apple", value: Self.releaseDay(released))
+                }
                 if let deadline = device.deadlineLocal {
                     LabeledContent("Deadline", value: "\(TargetRules.readable(deadline)), \(device.timeZone ?? "device local time")")
                     if device.pastDeadline == true { WarningLabel("Past the deadline") }
@@ -165,5 +170,13 @@ struct DeviceDetailView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// Apple dates a release by its day: “26 Oct 2026”, without a time,
+    /// read in UTC so it is the same day everywhere.
+    static func releaseDay(_ date: Date) -> String {
+        var style = Date.FormatStyle(date: .abbreviated, time: .omitted)
+        style.timeZone = .gmt
+        return date.formatted(style)
     }
 }

@@ -77,10 +77,11 @@ final class ConnectionsModel {
                                 holdsSavedConnections: !(isTestHost || isSandbox || LiveLaunch.isSwitched))
     }
 
-    /// A model for previews and tests: nothing saved, no Keychain.
-    static func preview(activityLog: ActivityLog? = nil) -> ConnectionsModel {
+    /// A model for previews and tests: nothing saved, no Keychain. A test
+    /// that reads its own settings passes its own throwaway `defaults`.
+    static func preview(activityLog: ActivityLog? = nil, defaults given: UserDefaults? = nil) -> ConnectionsModel {
         let activityLog = activityLog ?? ActivityLog()
-        let defaults = UnderTest.emptiedDefaults(domain: "be.jordythery.softwareupdatedashboard.preview")
+        let defaults = given ?? UnderTest.emptiedDefaults(domain: "be.jordythery.softwareupdatedashboard.preview")
         let list = ConnectionStore<AppConnection>(storage: InMemoryConnectionStorage(),
                                                    secrets: [.main: SecretLocation(store: SandboxSecretStore())])
         return ConnectionsModel(saved: list, defaults: defaults, activityLog: activityLog,

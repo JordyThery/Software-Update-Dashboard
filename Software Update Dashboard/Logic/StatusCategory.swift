@@ -1,7 +1,9 @@
 import Foundation
 
-/// The nine categories every device is sorted into. Raw values are the CSV
-/// strings and the history’s keys: never rename them.
+/// The categories every device is sorted into. Raw values are the CSV
+/// strings and the history’s keys: never rename them. `targetUnknown` isn’t
+/// a measurement: a device without a target is shown, but left out of the
+/// counts, the progress figure and the history.
 nonisolated enum StatusCategory: String, CaseIterable, Sendable, Codable, Identifiable {
     case onTarget = "on-target"
     case inProgress = "in-progress"
@@ -12,8 +14,12 @@ nonisolated enum StatusCategory: String, CaseIterable, Sendable, Codable, Identi
     case noActivity = "no-activity"
     case offline = "offline"
     case noReport = "no-report"
+    case targetUnknown = "target-unknown"
 
     var id: String { rawValue }
+
+    /// The categories a device is measured in: all but `targetUnknown`.
+    static let measured = allCases.filter { $0 != .targetUnknown }
 
     /// The category as people read it.
     var title: String {
@@ -27,6 +33,7 @@ nonisolated enum StatusCategory: String, CaseIterable, Sendable, Codable, Identi
         case .noActivity: "No activity"
         case .offline: "Offline"
         case .noReport: "No report"
+        case .targetUnknown: "Target unknown"
         }
     }
 
@@ -41,6 +48,7 @@ nonisolated enum StatusCategory: String, CaseIterable, Sendable, Codable, Identi
         case .unsupported: "(hardware can’t run the target)"
         case .noActivity: "(no report since the update started)"
         case .offline: "(no contact for more than \(staleDays) days)"
+        case .targetUnknown: "(not measured, not in the progress figure)"
         default: nil
         }
     }

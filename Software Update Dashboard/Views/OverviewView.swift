@@ -88,6 +88,9 @@ struct BlueprintCard: View {
                         .font(.callout)
                     }
                     ProgressBar(counts: latest.counts)
+                    if model.errors[tracked.id] != nil {
+                        WarningLabel("The last refresh stopped; showing an earlier one").font(.callout)
+                    }
                 } else if let error = model.errors[tracked.id] {
                     WarningLabel(error).font(.callout).lineLimit(3)
                 } else {

@@ -29,19 +29,26 @@ final class DashboardModel {
     private(set) var inspections: [DeviceKey: InspectResult] = [:]
     private(set) var inspecting: Set<DeviceKey> = []
     private(set) var inspectError: String?
+    /// The saved tracked Blueprints couldn’t be read: where they were copied.
+    /// Nothing is saved over them until the app is restarted with a readable list.
+    private(set) var unreadableTrackedCopy: String?
 
     @ObservationIgnored private var saved: [TrackedBlueprint]
     /// Demo mode’s two, changed in memory only.
     @ObservationIgnored private var demoTracked: [TrackedBlueprint]?
     @ObservationIgnored private var catalog: (key: String, value: AppleReleases.Catalog, date: Date)?
     @ObservationIgnored private let historyOverride: StatusHistory?
+    /// Where Apple’s release data comes from; tests replace it.
+    @ObservationIgnored private let releasesOverride: (@Sendable () async throws -> AppleReleases.Catalog)?
     /// Changes when the list changes, so views read it again.
     private var generation = 0
 
-    init(connections: ConnectionsModel, history: StatusHistory? = nil) {
+    init(connections: ConnectionsModel, history: StatusHistory? = nil,
+         releases: (@Sendable () async throws -> AppleReleases.Catalog)? = nil) {
         self.connections = connections
         historyOverride = history
-        saved = TrackedBlueprintList.load(from: connections.defaults)
+        releasesOverride = releases
+        (saved, unreadableTrackedCopy) = TrackedBlueprintList.read(from: connections.defaults)
     }
 
     // MARK: Tracked Blueprints
@@ -66,7 +73,7 @@ final class DashboardModel {
     }
 
     func add(_ tracked: TrackedBlueprint) {
-        guard !isDemo, !isTracked(blueprintID: tracked.blueprintID) else { return }
+        guard !isDemo, canChangeTracked, !isTracked(blueprintID: tracked.blueprintID) else { return }
         saved.append(tracked)
         save()
         selection = .blueprint(tracked.id)
@@ -74,7 +81,7 @@ final class DashboardModel {
     }
 
     func remove(_ id: UUID) {
-        guard !isDemo else { return }
+        guard !isDemo, canChangeTracked else { return }
         saved.removeAll { $0.id == id }
         save()
         history?.remove(id)
@@ -101,7 +108,7 @@ final class DashboardModel {
             demoTracked = list
             generation += 1
         } else {
-            guard let index = saved.firstIndex(where: { $0.id == id }) else { return }
+            guard canChangeTracked, let index = saved.firstIndex(where: { $0.id == id }) else { return }
             edit(&saved[index])
             save()
         }
@@ -109,9 +116,12 @@ final class DashboardModel {
     }
 
     private func save() {
-        TrackedBlueprintList.save(saved, to: connections.defaults)
+        if unreadableTrackedCopy == nil { TrackedBlueprintList.save(saved, to: connections.defaults) }
         generation += 1
     }
+
+    /// Changes to the tracked Blueprints can’t be saved: the saved list couldn’t be read.
+    var canChangeTracked: Bool { isDemo || unreadableTrackedCopy == nil }
 
     // MARK: History
 
@@ -173,11 +183,14 @@ final class DashboardModel {
         }
     }
 
-    /// Apple’s release data, read at most once an hour per connection.
+    /// Apple’s release data, read at most once an hour per connection; nil
+    /// when it can’t be read (a refresh then stops and keeps the previous one).
     private func appleReleases() async -> AppleReleases.Catalog? {
         let key = connections.inUseKey
         if let catalog, catalog.key == key, Date().timeIntervalSince(catalog.date) < 3_600 { return catalog.value }
-        guard let fetched = try? await connections.appleReleases().catalog() else { return nil }
+        let read: AppleReleases.Catalog?
+        if let releasesOverride { read = try? await releasesOverride() } else { read = try? await connections.appleReleases().catalog() }
+        guard let fetched = read else { return nil }
         catalog = (key, fetched, Date())
         return fetched
     }
@@ -254,12 +267,17 @@ final class DashboardModel {
                                   previous: previous, staleDays: 30, date: result.date, notes: notes)
     }
 
+    /// Reads Apple’s release data again at the next refresh.
+    func forgetReleaseData() {
+        catalog = nil
+    }
+
     /// When the connection in use changes, nothing of the previous one stays.
     func connectionChanged() {
         results = [:]
         errors = [:]
         inspections = [:]
-        catalog = nil
+        forgetReleaseData()
         demoTracked = nil
         selection = .overview
     }

@@ -9,7 +9,7 @@ extension StatusCategory {
         case .inProgress, .otherUpdate: .info
         case .failed: .failure
         case .notStarted, .noActivity: .attention
-        case .unsupported, .offline, .noReport: .neutral
+        case .unsupported, .offline, .noReport, .targetUnknown: .neutral
         }
     }
 
@@ -24,6 +24,7 @@ extension StatusCategory {
         case .noActivity: "moon.zzz"
         case .offline: "wifi.slash"
         case .noReport: "questionmark.circle"
+        case .targetUnknown: "scope"
         }
     }
 }

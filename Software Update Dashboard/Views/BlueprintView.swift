@@ -47,6 +47,12 @@ struct BlueprintView: View {
                 }
             }
         }
+        .safeAreaInset(edge: .top) {
+            // a refresh that stopped keeps the previous one on screen: say so
+            if let result = model.results[tracked.id], let error = model.errors[tracked.id], !model.refreshing.contains(tracked.id) {
+                RefreshStoppedBanner(error: error, shown: result.date) { Task { await model.refresh(tracked.id) } }
+            }
+        }
         .navigationTitle(tracked.blueprintName)
         .navigationSubtitle(model.results[tracked.id]?.rule ?? "")
         .toolbar {
@@ -101,6 +107,28 @@ struct BlueprintView: View {
         exportName = "\(tracked.blueprintName) \(day)\(csv ? ".csv" : ".txt")"
         exportType = csv ? .commaSeparatedText : .plainText
         export = TextExportDocument(text: text)
+    }
+}
+
+/// The last refresh stopped: why, and which refresh is shown instead.
+struct RefreshStoppedBanner: View {
+    let error: String
+    let shown: Date
+    let tryAgain: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Label {
+                Text("The refresh stopped: \(error) Showing the refresh of \(shown.formatted(date: .abbreviated, time: .shortened)).")
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            }
+            Spacer()
+            Button("Try Again", action: tryAgain)
+        }
+        .padding(10)
+        .background(.bar)
     }
 }
 
@@ -323,11 +351,7 @@ struct MajorsSection: View {
 struct HistoryChart: View {
     let snapshots: [HistorySnapshot]
 
-    private var scopeChanges: [(Date, String)] {
-        zip(snapshots, snapshots.dropFirst()).compactMap { previous, next in
-            ScopeChange(from: previous.scope, to: next.scope).map { (next.date, $0.text) }
-        }
-    }
+    private var marks: [HistoryMark] { HistoryMark.marks(snapshots) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -347,19 +371,19 @@ struct HistoryChart: View {
                                 .accessibilityValue("\(count) \(count == 1 ? "device" : "devices")")
                         }
                     }
-                    ForEach(scopeChanges, id: \.0) { date, text in
-                        RuleMark(x: .value("Scope change", date))
+                    ForEach(marks) { mark in
+                        RuleMark(x: .value("Change", mark.date))
                             .foregroundStyle(.secondary)
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                            .annotation(position: .top, alignment: .leading) { Text("Scope").font(.caption2) }
-                            .accessibilityLabel(text)
+                            .annotation(position: .top, alignment: .leading) { Text(mark.kind.rawValue).font(.caption2) }
+                            .accessibilityLabel(mark.text)
                     }
                 }
                 .chartForegroundStyleScale(domain: ProgressGroup.allCases.map(\.rawValue),
                                            range: ProgressGroup.allCases.map(\.color))
                 .frame(height: 180)
-                ForEach(scopeChanges, id: \.0) { date, text in
-                    Text("\(date.formatted(date: .abbreviated, time: .omitted)): \(text)").font(.caption).foregroundStyle(.secondary)
+                ForEach(marks) { mark in
+                    Text("\(mark.date.formatted(date: .abbreviated, time: .omitted)): \(mark.text)").font(.caption).foregroundStyle(.secondary)
                 }
             }
         }

@@ -67,11 +67,20 @@ nonisolated struct RefreshResult: Sendable {
     var pastDeadline: Int { devices.filter { $0.pastDeadline == true }.count }
 }
 
+/// Apple’s release data couldn’t be read at all: no device’s target is
+/// known, so the refresh stops and the previous one is kept.
+nonisolated struct AppleDataUnavailable: LocalizedError, Equatable {
+    var errorDescription: String? {
+        "Apple’s release data couldn’t be read, so no device’s target is known. The previous refresh is kept; try again later."
+    }
+}
+
 /// A refresh: reads the Blueprint’s software update and scope, the scope
 /// groups’ members with their inventory and each one’s status report (all
 /// GETs, through JTKit), gives every device its own target and sorts it.
 nonisolated struct RefreshWorkflow: Sendable {
     let client: JamfPlatform.Client
+    /// Apple’s release data; nil when it couldn’t be read (the refresh stops).
     let catalog: AppleReleases.Catalog?
     let serverTimeZone: TimeZone
     var staleDays = 30
@@ -80,8 +89,9 @@ nonisolated struct RefreshWorkflow: Sendable {
 
     func run(_ tracked: TrackedBlueprint, previousScope: [GroupReference]? = nil, now: Date = Date(),
              progress: @Sendable (Int, Int) -> Void = { _, _ in }) async throws -> RefreshResult {
+        guard let catalog else { throw AppleDataUnavailable() }
         let (blueprint, blocks) = try await JamfPlatform.Blueprints(client: client).softwareUpdate(blueprintID: tracked.blueprintID)
-        var problems = catalog.map(\.problems) ?? ["Apple’s release data couldn’t be read: targets of automatic updates and unsupported hardware aren’t known."]
+        var problems = catalog.problems
         if blocks.isEmpty { problems.append("The Blueprint has no software update.") }
 
         // the scope, read on every refresh
@@ -120,7 +130,7 @@ nonisolated struct RefreshWorkflow: Sendable {
             members: members, devices: devices, majors: MajorRow.rows(devices),
             zones: DeadlineZones.zones(devices: devices),
             replacements: Replacement.list(devices) { model, isComputer in
-                catalog?.lastSupportedVersion(model: model, boardID: model, isComputer ? .macOS : .iOS)?.description
+                catalog.lastSupportedVersion(model: model, boardID: model, isComputer ? .macOS : .iOS)?.description
             },
             coverage: coverage, problems: problems)
     }
@@ -180,10 +190,11 @@ nonisolated struct RefreshWorkflow: Sendable {
     /// A device by kind and Jamf Pro number: a Mac and an iPad can share a number.
     static func key(_ member: JamfPro.GroupMember) -> String { "\(member.kind.rawValue)/\(member.id)" }
 
-    /// The block for a device: the one whose activation predicate names its
-    /// OS (iPadOS, iOS, macOS), else one without a predicate, else the first.
+    /// The block for a device: the one whose activation predicate asks for
+    /// its OS (`== 'iPadOS'`; never `!= 'iPadOS'`), else one without a
+    /// predicate, else the first.
     static func block(for osName: String, in blocks: [JamfPlatform.SoftwareUpdateBlock]) -> JamfPlatform.SoftwareUpdateBlock? {
-        blocks.first { $0.activationPredicate?.contains("'\(osName)'") == true }
+        blocks.first { $0.activationPredicate?.range(of: "==\\s*'\(osName)'", options: .regularExpression) != nil }
             ?? blocks.first { $0.activationPredicate == nil }
             ?? blocks.first
     }

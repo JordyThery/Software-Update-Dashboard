@@ -10,6 +10,8 @@ struct ContentView: View {
     @State private var page: BlueprintView.Page = .dashboard
     /// Set by the menu or the toolbar: true for the CSV, false for the summary.
     @State private var exportRequest: Bool?
+    /// The tracked Blueprint whose Stop Tracking waits for confirmation.
+    @State private var stopTracking: UUID?
 
     init(connections: ConnectionsModel) {
         self.connections = connections
@@ -18,15 +20,22 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(model: model, sheet: $sheet)
+            SidebarView(model: model, sheet: $sheet, stopTracking: $stopTracking)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         } detail: {
-            if connections.connectionInUse == nil {
-                NoConnectionView(demo: connections.demo)
-            } else if case .blueprint(let id)? = model.selection, let tracked = model.tracked(id) {
-                BlueprintView(model: model, tracked: tracked, page: $page, exportRequest: $exportRequest, sheet: $sheet)
-            } else {
-                OverviewView(model: model, sheet: $sheet)
+            Group {
+                if connections.connectionInUse == nil {
+                    NoConnectionView(demo: connections.demo)
+                } else if case .blueprint(let id)? = model.selection, let tracked = model.tracked(id) {
+                    BlueprintView(model: model, tracked: tracked, page: $page, exportRequest: $exportRequest, sheet: $sheet)
+                } else {
+                    OverviewView(model: model, sheet: $sheet)
+                }
+            }
+            .safeAreaInset(edge: .top) {
+                if let copy = model.unreadableTrackedCopy, !connections.demoChoice.isActive {
+                    UnreadableListBanner(copy: copy)
+                }
             }
         }
         .toolbar {
@@ -41,12 +50,33 @@ struct ContentView: View {
             case .updateStarted(let id): UpdateStartedSheet(model: model, trackedID: id)
             }
         }
+        .confirmationDialog(stopTrackingTitle, isPresented: Binding(get: { stopTracking != nil }, set: { if !$0 { stopTracking = nil } }),
+                            titleVisibility: .visible) {
+            Button("Stop Tracking and Delete History", role: .destructive) {
+                if let id = stopTracking { model.remove(id) }
+                stopTracking = nil
+            }
+            Button("Cancel", role: .cancel) { stopTracking = nil }
+        } message: {
+            Text(stopTrackingMessage)
+        }
         .onChange(of: connections.inUseKey) {
             model.connectionChanged()
         }
         .focusedSceneValue(\.blueprintFocus, BlueprintFocus(
             model: model, page: selectedID != nil ? $page : nil, sheet: $sheet,
-            export: selectedID != nil ? { exportRequest = $0 } : nil))
+            export: selectedID != nil ? { exportRequest = $0 } : nil, stopTracking: $stopTracking))
+    }
+
+    private var stopTrackingTitle: String {
+        "Stop tracking “\(stopTracking.flatMap { model.tracked($0)?.blueprintName } ?? "this Blueprint")”?"
+    }
+
+    private var stopTrackingMessage: String {
+        let refreshes = stopTracking.map { model.snapshots($0).count } ?? 0
+        let history = refreshes == 0 ? "Its history on this Mac will be deleted."
+            : "Its history on this Mac (\(refreshes) \(refreshes == 1 ? "refresh" : "refreshes")) will be deleted and can’t be restored."
+        return history + " Nothing changes in Jamf."
     }
 
     private var selectedID: UUID? {
@@ -74,6 +104,7 @@ enum BlueprintSheet: Identifiable, Hashable {
 struct SidebarView: View {
     @Bindable var model: DashboardModel
     @Binding var sheet: BlueprintSheet?
+    @Binding var stopTracking: UUID?
 
     var body: some View {
         List(selection: $model.selection) {
@@ -90,7 +121,8 @@ struct SidebarView: View {
                             Button("Set Update Start…") { sheet = .updateStarted(tracked.id) }
                             if !model.connections.demoChoice.isActive {
                                 Divider()
-                                Button("Stop Tracking", role: .destructive) { model.remove(tracked.id) }
+                                Button("Stop Tracking…", role: .destructive) { stopTracking = tracked.id }
+                                    .disabled(!model.canChangeTracked)
                             }
                         }
                 }
@@ -103,10 +135,28 @@ struct SidebarView: View {
                 } label: {
                     Label("Track a Blueprint…", systemImage: "plus")
                 }
-                .disabled(model.connectionID == nil || model.connections.demoChoice.isActive)
+                .disabled(model.connectionID == nil || model.connections.demoChoice.isActive || !model.canChangeTracked)
                 .help(model.connections.demoChoice.isActive ? "Demo Mode has its own sample Blueprints." : "Track a Blueprint with a software update")
             }
         }
+    }
+}
+
+/// The saved tracked Blueprints couldn’t be read: they were copied, and
+/// nothing is saved over them.
+struct UnreadableListBanner: View {
+    let copy: String
+
+    var body: some View {
+        Label {
+            Text("The saved list of tracked Blueprints couldn’t be read. It was kept as the setting “\(copy)”, and changes to the list aren’t saved until it can be read again.")
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.bar)
     }
 }
 

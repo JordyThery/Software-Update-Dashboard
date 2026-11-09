@@ -75,14 +75,38 @@ nonisolated enum TrackedBlueprintList {
     /// The saved list; the first time, the tracked groups of the earlier
     /// version moved over, each keeping its ID and so its history.
     static func load(from defaults: UserDefaults) -> [TrackedBlueprint] {
-        if let data = defaults.data(forKey: key) {
-            return (try? JSONDecoder().decode([TrackedBlueprint].self, from: data)) ?? []
+        read(from: defaults).list
+    }
+
+    /// The saved list, and where a list that can’t be read was copied: as
+    /// JTKit keeps unreadable saved connections, under
+    /// `trackedBlueprints.unreadable-<date and time>`, an earlier copy never
+    /// replaced. The list itself must then never be saved over.
+    static func read(from defaults: UserDefaults, now: Date = .now) -> (list: [TrackedBlueprint], unreadableCopy: String?) {
+        if let value = defaults.object(forKey: key) {
+            if let data = value as? Data, let list = try? JSONDecoder().decode([TrackedBlueprint].self, from: data) {
+                return (list, nil)
+            }
+            // the same value copied at an earlier launch: that copy is enough
+            let copies = defaults.dictionaryRepresentation().filter { $0.key.hasPrefix("\(key).unreadable") }
+            if let earlier = copies.first(where: { ($0.value as? NSObject) == (value as? NSObject) }) {
+                return ([], earlier.key)
+            }
+            let stamp = "\(key).\(FileCopies.unreadableStamp(now))"
+            var copyKey = stamp
+            var number = 2
+            while defaults.object(forKey: copyKey) != nil {
+                copyKey = "\(stamp)-\(number)"
+                number += 1
+            }
+            defaults.set(value, forKey: copyKey)
+            return ([], copyKey)
         }
         guard let data = defaults.data(forKey: legacyKey),
-              let legacy = try? JSONDecoder().decode([SavedTrackedGroup].self, from: data) else { return [] }
+              let legacy = try? JSONDecoder().decode([SavedTrackedGroup].self, from: data) else { return ([], nil) }
         let moved = migrated(legacy)
         save(moved, to: defaults)
-        return moved
+        return (moved, nil)
     }
 
     /// The earlier tracked groups as tracked Blueprints: the same ID (and so

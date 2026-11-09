@@ -1,6 +1,23 @@
 import Foundation
 import JTKit
 
+/// Why a device has no target. Such a device is never measured: it is
+/// shown as “Target unknown” with this reason.
+nonisolated enum TargetUnknown: String, Sendable, Hashable, Codable, CaseIterable {
+    /// Apple’s release data couldn’t be read.
+    case appleDataUnreachable
+    /// The Blueprint has no software update for this device.
+    case noSoftwareUpdate
+    /// The Blueprint’s software update is one this app can’t read.
+    case unreadableUpdate
+    /// Apple’s release data has no release for the device’s platform or major.
+    case noReleaseForPlatform
+    /// The device runs a beta of a major newer than Apple’s newest release.
+    case betaOfNewerMajor
+    /// The device reports no OS version, and the rule depends on it.
+    case noReportedVersion
+}
+
 /// The version one device is measured against, and from when.
 nonisolated struct DeviceTarget: Sendable, Hashable, Codable {
     /// Nil when there is no target (unknown, or nothing this hardware can run).
@@ -23,6 +40,8 @@ nonisolated struct DeviceTarget: Sendable, Hashable, Codable {
     var noApplicableRelease = false
     /// `activityFrom` is the “Update started” date set by hand.
     var startSetByHand = false
+    /// Set when there is no target; `reason` says it in plain language.
+    var unknown: TargetUnknown?
 
     var osVersion: OSVersion? { version.flatMap(OSVersion.init) }
 }
@@ -54,7 +73,7 @@ nonisolated enum TargetRules {
         switch ctx.block?.enforcement {
         case .specific(let text, let deadline, _)?:
             guard let version = OSVersion(text) else {
-                return DeviceTarget(reason: "The Blueprint asks for a version this app can’t read (\(text))")
+                return DeviceTarget(reason: "The Blueprint asks for a version this app can’t read (\(text))", unknown: .unreadableUpdate)
             }
             let build = ctx.block?.targetBuildVersion ?? ctx.catalog?.build(of: version, ctx.platform)
             let canRun = ctx.catalog?.supports(model: model, boardID: boardID, major: version.major, ctx.platform)
@@ -70,10 +89,12 @@ nonisolated enum TargetRules {
             target = latest(days: days ?? 0, time: time, model: model, boardID: boardID, osName: osName, ctx)
         case .semantic(let days, let time)?:
             target = minor(current, days: days ?? 0, time: time, model: model, boardID: boardID, osName: osName, ctx)
-        case .unknown?, nil:
-            target = DeviceTarget(reason: ctx.block == nil ? "The Blueprint has no software update"
-                                                           : "The Blueprint’s software update is a kind this app doesn’t read")
+        case .unknown?:
+            return DeviceTarget(reason: "The Blueprint’s software update is a kind this app doesn’t read", unknown: .unreadableUpdate)
+        case nil:
+            return DeviceTarget(reason: "The Blueprint has no software update for \(osName)", unknown: .noSoftwareUpdate)
         }
+        if target.unknown != nil { return target }
         if let started = ctx.updateStarted {
             target.activityFrom = started
             target.startSetByHand = true
@@ -85,13 +106,15 @@ nonisolated enum TargetRules {
     /// the model can run.
     private static func latest(days: Int, time: String?, model: String?, boardID: String?, osName: String, _ ctx: Context) -> DeviceTarget {
         guard let catalog = ctx.catalog else {
-            return DeviceTarget(reason: "Apple’s release data couldn’t be read, so the newest release isn’t known")
+            return DeviceTarget(reason: "Apple’s release data couldn’t be read, so the newest release isn’t known",
+                                unknown: .appleDataUnreachable)
         }
         let eligible = releases(catalog, ctx.platform, days: days, now: ctx.now)
         guard let newest = eligible.first else {
-            return DeviceTarget(reason: "No \(osName) release is \(days) days old yet")
+            return DeviceTarget(reason: "Apple’s release data has no \(osName) release" + (days == 0 ? "" : " at least \(days) days old"),
+                                unknown: .noReleaseForPlatform)
         }
-        guard let pick = eligible.first(where: { catalog.supports(model: model, boardID: boardID, major: $0.version.major, ctx.platform) != false }) else {
+        guard let pick = eligible.first(where: { runs($0, model: model, boardID: boardID, catalog, ctx.platform) }) else {
             return DeviceTarget(reason: "No \(osName) release runs on this model", noApplicableRelease: true)
         }
         let limited = pick.version.major < newest.version.major
@@ -108,17 +131,27 @@ nonisolated enum TargetRules {
     private static func minor(_ current: OSVersion?, days: Int, time: String?, model: String?, boardID: String?, osName: String,
                               _ ctx: Context) -> DeviceTarget {
         guard let catalog = ctx.catalog else {
-            return DeviceTarget(reason: "Apple’s release data couldn’t be read, so the newest minor release isn’t known")
+            return DeviceTarget(reason: "Apple’s release data couldn’t be read, so the newest minor release isn’t known",
+                                unknown: .appleDataUnreachable)
         }
-        guard let current else { return DeviceTarget(reason: "The device reports no \(osName) version") }
+        guard let current else {
+            return DeviceTarget(reason: "The device reports no \(osName) version, so its minor updates aren’t known",
+                                unknown: .noReportedVersion)
+        }
         let inMajor = catalog.releases.filter { $0.platform == ctx.platform && $0.version.major == current.major && $0.version.extra == nil }
+        let knownMajors = catalog.majors(ctx.platform)
         guard !inMajor.isEmpty else {
-            return DeviceTarget(reason: "Apple’s release data has no \(osName) \(current.major) releases")
+            if let newest = knownMajors.first, current.major > newest {
+                return DeviceTarget(reason: "The device runs a beta of \(osName) \(current.major), newer than Apple’s newest release (\(osName) \(newest))",
+                                    unknown: .betaOfNewerMajor)
+            }
+            return DeviceTarget(reason: "Apple’s release data has no \(osName) \(current.major) release", unknown: .noReleaseForPlatform)
         }
-        let newestMajor = catalog.majors(ctx.platform).first ?? current.major
+        let newestMajor = knownMajors.first ?? current.major
         let limited = newestMajor > current.major
             && catalog.supports(model: model, boardID: boardID, major: newestMajor, ctx.platform) == false
-        guard let pick = releases(catalog, ctx.platform, days: days, now: ctx.now).first(where: { $0.version.major == current.major }) else {
+        guard let pick = releases(catalog, ctx.platform, days: days, now: ctx.now)
+            .first(where: { $0.version.major == current.major && runs($0, model: model, boardID: boardID, catalog, ctx.platform) }) else {
             // nothing in this major is old enough yet: the version it runs is what it’s held to
             return DeviceTarget(version: current.description, reason: "No \(osName) \(current.major) release is \(days) days old yet",
                                 limitedByHardware: limited)
@@ -129,6 +162,15 @@ nonisolated enum TargetRules {
             reason: days == 0 ? "The newest \(osName) \(current.major) release: \(pick.version)"
                               : "The newest \(osName) \(current.major) release at least \(days) days old: \(pick.version)",
             limitedByHardware: limited)
+    }
+
+    /// Whether the model can run a release: by the release’s own device
+    /// list when Apple’s data has one for this device (some releases are
+    /// for some devices only), else by its major.
+    static func runs(_ release: AppleReleases.Release, model: String?, boardID: String?, _ catalog: AppleReleases.Catalog,
+                     _ platform: AppleReleases.Platform) -> Bool {
+        catalog.supports(release: release, model: model, boardID: boardID)
+            ?? (catalog.supports(model: model, boardID: boardID, major: release.version.major, platform) != false)
     }
 
     /// The platform’s releases at least `days` old, newest first (no Rapid

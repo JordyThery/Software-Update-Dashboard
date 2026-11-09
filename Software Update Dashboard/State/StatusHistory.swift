@@ -41,19 +41,55 @@ nonisolated struct HistorySnapshot: Sendable, Hashable, Codable, Identifiable {
     /// for; nil when unknown. Refreshes are compared only for the same one.
     var target: String?
     var counts: CategoryCounts
+    /// The measured devices: those whose target was unknown aren’t kept.
     var devices: [DeviceStatus]
     /// The Blueprint’s scope at the time, as Jamf Pro groups (nil in entries
     /// saved before the scope was kept).
     var scope: [GroupReference]?
+    /// How this app measured: `currentRules` from targets per device with
+    /// “Target unknown” left out; nil in entries saved before. The chart
+    /// marks where it changes, as counts on either side don’t compare.
+    var rules: Int?
+
+    /// The target rules of this version.
+    static let currentRules = 2
 
     var id: Date { date }
 
-    init(date: Date, target: String?, devices: [DeviceStatus], scope: [GroupReference]? = nil) {
+    init(date: Date, target: String?, devices: [DeviceStatus], scope: [GroupReference]? = nil, rules: Int? = currentRules) {
         self.date = date
         self.target = target
-        self.devices = devices
+        self.rules = rules
+        self.devices = devices.filter { $0.category != .targetUnknown }
         self.scope = scope
-        counts = CategoryCounts(devices)
+        counts = CategoryCounts(self.devices)
+    }
+}
+
+/// A point in the history where counts on either side don’t compare: the
+/// Blueprint’s rule, this app’s target rules or the scope changed.
+nonisolated struct HistoryMark: Sendable, Hashable, Identifiable {
+    enum Kind: String, Sendable { case rule = "Rule", counting = "Counting", scope = "Scope" }
+    var date: Date
+    var kind: Kind
+    var text: String
+
+    var id: String { "\(date.timeIntervalSince1970) \(kind.rawValue)" }
+
+    static func marks(_ snapshots: [HistorySnapshot]) -> [HistoryMark] {
+        zip(snapshots, snapshots.dropFirst()).flatMap { previous, next -> [HistoryMark] in
+            var marks: [HistoryMark] = []
+            if previous.target != next.target {
+                marks.append(HistoryMark(date: next.date, kind: .rule, text: "Rule: \(next.target ?? "unknown")"))
+            } else if previous.rules != next.rules {
+                marks.append(HistoryMark(date: next.date, kind: .counting,
+                                         text: "Counting: this app’s target rules changed; earlier counts don’t compare"))
+            }
+            if let change = ScopeChange(from: previous.scope, to: next.scope) {
+                marks.append(HistoryMark(date: next.date, kind: .scope, text: change.text))
+            }
+            return marks
+        }
     }
 }
 
@@ -106,13 +142,15 @@ nonisolated struct StatusHistory: Sendable {
         folder.appending(path: groupID.uuidString, directoryHint: .isDirectory)
     }
 
-    /// Saves a refresh and removes those older than 180 days.
+    /// Saves a refresh and removes those older than 180 days, in every
+    /// folder (also of Blueprints no longer tracked here, e.g. under another
+    /// connection: their folders stay, their old refreshes go).
     func save(_ snapshot: HistorySnapshot, for groupID: UUID) throws {
         let groupFolder = groupFolder(groupID)
         try FileManager.default.createDirectory(at: groupFolder, withIntermediateDirectories: true)
         let data = try Self.encoder.encode(snapshot)
         try data.write(to: groupFolder.appending(path: Self.fileName(for: snapshot.date)), options: .atomic)
-        prune(groupID, now: snapshot.date)
+        pruneAll(now: snapshot.date)
     }
 
     /// Every refresh of a group, oldest first; since a date if given.
@@ -135,9 +173,21 @@ nonisolated struct StatusHistory: Sendable {
         try? FileManager.default.removeItem(at: groupFolder(groupID))
     }
 
+    /// Every folder’s refreshes older than 180 days.
+    func pruneAll(now: Date) {
+        let folders = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        for groupFolder in folders where UUID(uuidString: groupFolder.lastPathComponent) != nil {
+            prune(folder: groupFolder, now: now)
+        }
+    }
+
     func prune(_ groupID: UUID, now: Date) {
+        prune(folder: groupFolder(groupID), now: now)
+    }
+
+    private func prune(folder groupFolder: URL, now: Date) {
         let cutoff = now.addingTimeInterval(-Double(Self.retentionDays) * 86_400)
-        let files = (try? FileManager.default.contentsOfDirectory(at: groupFolder(groupID), includingPropertiesForKeys: nil)) ?? []
+        let files = (try? FileManager.default.contentsOfDirectory(at: groupFolder, includingPropertiesForKeys: nil)) ?? []
         for file in files where file.pathExtension == "json" {
             if let date = Self.date(fromFileName: file.lastPathComponent), date < cutoff {
                 try? FileManager.default.removeItem(at: file)
