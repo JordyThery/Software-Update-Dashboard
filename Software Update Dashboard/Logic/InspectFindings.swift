@@ -256,8 +256,11 @@ nonisolated enum InspectFindings {
                                         detail: "The last error names the bootstrap token; Jamf Pro reports it as \(token.lowercased()). "
                                             + "Without an escrowed bootstrap token the Mac can’t install an enforced update on its own"),
                                 at: 0)
-            } else if (member.bootstrapTokenEscrowedStatus ?? row?.bootstrapToken)?.uppercased() == "NOT_ESCROWED" {
-                add("Bootstrap token not escrowed", "Jamf Pro reports the bootstrap token as not escrowed; enforced updates may wait for a user")
+            } else if (member.bootstrapTokenEscrowedStatus ?? row?.bootstrapToken)?.uppercased() == "NOT_ESCROWED",
+                      let why = DeviceDetailText.notEscrowedWarning(
+                          appleSilicon: DeviceDetailText.isAppleSilicon(model: modelID, boardID: status?.deviceID ?? row?.boardID)) {
+                // an Intel Mac updates without an escrowed token: nothing to report
+                add("Bootstrap token not escrowed", "Jamf Pro reports the bootstrap token as not escrowed. " + why)
             }
         }
 
@@ -424,6 +427,30 @@ nonisolated enum DeviceDetailText {
         return first.uppercased() + state.dropFirst()
     }
 
-    /// Why a bootstrap token that isn’t escrowed matters, for the device detail.
-    static let notEscrowedWarning = "Without an escrowed bootstrap token, the Mac can’t install an enforced update on its own: it waits for a user to approve it."
+    /// Whether a Mac has Apple silicon, from its model identifier (“Mac14,2”,
+    /// “MacBookPro18,3”) or its board ID (“J314sAP”; Intel ones are
+    /// “Mac-…”); nil when neither says.
+    static func isAppleSilicon(model: String?, boardID: String?) -> Bool? {
+        if let board = boardID?.trimmingCharacters(in: .whitespaces), !board.isEmpty {
+            if board.hasPrefix("Mac-") { return false }
+            if board.uppercased().hasSuffix("AP") { return true }
+        }
+        guard let model, let match = model.firstMatch(of: #/^([A-Za-z]+)(\d+),\d+$/#), let generation = Int(match.2) else { return nil }
+        // the first generation of each family with Apple silicon
+        let first: [String: Int] = ["Mac": 13, "VirtualMac": 2, "MacBookAir": 10, "MacBookPro": 17, "Macmini": 9, "iMac": 21]
+        if let from = first[String(match.1)] { return generation >= from }
+        // iMacPro, MacPro (up to 7,1) and the older families are Intel
+        return ["iMacPro", "MacPro", "MacBook"].contains(String(match.1)) ? false : nil
+    }
+
+    /// Why a bootstrap token that isn’t escrowed matters: only on a Mac with
+    /// Apple silicon, where an enforced update needs it to install on its
+    /// own. Nil for an Intel Mac; said as a condition when the chip isn’t known.
+    static func notEscrowedWarning(appleSilicon: Bool?) -> String? {
+        switch appleSilicon {
+        case true?: "Without an escrowed bootstrap token, this Mac with Apple silicon can’t install an enforced update on its own: it waits for a user to approve it."
+        case false?: nil
+        case nil: "On a Mac with Apple silicon, an enforced update can’t install on its own without an escrowed bootstrap token: it waits for a user to approve it."
+        }
+    }
 }

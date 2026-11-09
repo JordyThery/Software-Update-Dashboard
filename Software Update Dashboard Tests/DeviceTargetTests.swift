@@ -293,6 +293,34 @@ struct InspectDeclarationPairTests {
         let quiet = evaluate([report("act", 12, active: true), report("cfg", 12, active: true)], member: mac)
         #expect(quiet.findings.contains { $0.cause == "Bootstrap token not escrowed" })
     }
+
+    @Test("A token that isn’t escrowed matters only on Apple silicon: an Intel Mac gets no warning")
+    func bootstrapIntel() {
+        var intel = Sample.mac(os: "26.7.1", model: "MacBookPro16,1")
+        intel.bootstrapTokenEscrowedStatus = "NOT_ESCROWED"
+        intel.supervised = true
+        let result = evaluate([report("act", 12, active: true), report("cfg", 12, active: true)], member: intel)
+        #expect(!result.findings.contains { $0.cause.hasPrefix("Bootstrap token") })
+        #expect(DeviceDetailText.notEscrowedWarning(appleSilicon: DeviceDetailText.isAppleSilicon(model: "MacBookPro16,1", boardID: nil)) == nil)
+
+        var silicon = intel
+        silicon.modelIdentifier = "MacBookPro18,3"
+        let found = evaluate([report("act", 12, active: true), report("cfg", 12, active: true)], member: silicon)
+        let finding = found.findings.first { $0.cause == "Bootstrap token not escrowed" }
+        #expect(finding?.detail.contains("Apple silicon") == true)
+    }
+
+    @Test("Apple silicon from the model identifier or the board ID", arguments: [
+        ("Mac14,2", nil, true), ("MacBookAir10,1", nil, true), ("MacBookPro17,1", nil, true), ("Macmini9,1", nil, true),
+        ("iMac21,1", nil, true), ("VirtualMac2,1", nil, true), ("MacBookPro16,1", nil, false), ("MacBookAir9,1", nil, false),
+        ("Macmini8,1", nil, false), ("iMac20,1", nil, false), ("MacPro7,1", nil, false), ("iMacPro1,1", nil, false),
+        ("", "J314sAP", true), ("", "Mac-827FAC58A8FDFA22", false), ("", nil, nil), ("iPad14,8", nil, nil),
+    ] as [(String, String?, Bool?)])
+    func appleSilicon(model: String, boardID: String?, expected: Bool?) {
+        #expect(DeviceDetailText.isAppleSilicon(model: model, boardID: boardID) == expected)
+        // when the chip isn’t known, the warning says when it applies
+        if expected == nil { #expect(DeviceDetailText.notEscrowedWarning(appleSilicon: nil)?.hasPrefix("On a Mac with Apple silicon, ") == true) }
+    }
 }
 
 @Suite("Inspect: stuck updates and stale declaration reports")

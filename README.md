@@ -2,6 +2,8 @@
 
 A read-only Mac app that shows, for a group of devices, whether they are on the OS version their Blueprint’s software update asks for, and if not, why not.
 
+![Software Update Dashboard in Demo Mode: a Blueprint’s dashboard with its progress, categories and history](docs/screenshot.png)
+
 ## Features
 
 - **Tracked Blueprints:** a Blueprint with a software update; its devices are those of the groups it’s scoped to, iPads, iPhones and Macs together, each counted once. Scope changes show in the history. Compare with any group to see which of its devices the Blueprint doesn’t reach.
@@ -12,7 +14,7 @@ A read-only Mac app that shows, for a group of devices, whether they are on the 
 - **Unsupported hardware** with a replacement list: the model, how many devices, and the last version it can run.
 - **Deadlines per time zone:** the deadline is each device’s local time, and unusual time zones are pointed out.
 - **Exports:** the device list as CSV, and a summary.
-- **Demo Mode:** sample iPads and Macs in the middle of an update, without a Jamf tenant.
+- **Demo Mode:** sample iPads and Macs in the middle of an update, without a Jamf tenant. Blueprint › Demo Situation shows what happens when Apple’s release data can’t be read or the saved list of tracked Blueprints can’t be read.
 
 ## Requirements
 

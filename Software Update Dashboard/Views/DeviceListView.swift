@@ -133,8 +133,11 @@ struct DeviceDetailView: View {
                 LabeledContent("Time zone", value: device.timeZone ?? (device.isComputer ? "Not in Jamf Pro for Macs" : "Not reported"))
                 if device.isComputer {
                     LabeledContent("Bootstrap token", value: DeviceDetailText.bootstrap(device.bootstrapToken))
-                    if device.bootstrapToken?.uppercased() == "NOT_ESCROWED" {
-                        WarningLabel(DeviceDetailText.notEscrowedWarning)
+                    // only a Mac with Apple silicon needs the token to install an enforced update
+                    if device.bootstrapToken?.uppercased() == "NOT_ESCROWED",
+                       let why = DeviceDetailText.notEscrowedWarning(
+                           appleSilicon: DeviceDetailText.isAppleSilicon(model: device.modelIdentifier, boardID: device.boardID)) {
+                        WarningLabel(why)
                     }
                 }
                 LabeledContent("Last contact") {

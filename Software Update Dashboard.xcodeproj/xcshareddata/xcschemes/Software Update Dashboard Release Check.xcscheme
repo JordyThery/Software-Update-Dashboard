@@ -44,9 +44,9 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "08B045B730A1CE9A00A8222B"
-               BuildableName = "Software Update DashboardUITests.xctest"
-               BlueprintName = "Software Update DashboardUITests"
+               BlueprintIdentifier = "08387F1430A255A100DCD88F"
+               BuildableName = "Software Update Dashboard UITests.xctest"
+               BlueprintName = "Software Update Dashboard UITests"
                ReferencedContainer = "container:Software Update Dashboard.xcodeproj">
             </BuildableReference>
          </TestableReference>

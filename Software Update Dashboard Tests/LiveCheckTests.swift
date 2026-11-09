@@ -9,8 +9,10 @@ import Testing
 // (JTKIT_LIVE=1) and passes the credentials it read from the login Keychain.
 // ⌘U skips them. One role only: jamfpro-production, the allow-list's
 // read-only production Jamf Pro over the Platform API. Reads only: the
-// policy refuses anything else, and so do the app's own clients. Reports
-// hold counts and findings, never a name, serial or host.
+// policy refuses anything else, and so do the app's own clients. Apple's
+// release data comes from the allow-list's public hosts, GET only and
+// without credentials. Reports hold counts and findings, never a name,
+// serial or host.
 
 private let live = LiveCheckRun.isEnabled
 
@@ -33,6 +35,14 @@ private func liveClient(_ run: LiveCheckRun) throws -> JamfPlatform.Client {
     return try JamfPlatform.Client(connection: connection, secret: { secret },
                                    recorder: RequestRecorder(session: run.network.session, log: nil, category: "Live check"),
                                    permits: ConnectionsModel.permits)
+}
+
+/// Apple’s release data as the app reads it (JTKit’s AppleReleases), on the
+/// run’s guarded network: only the allow-list’s public hosts, GET only.
+@MainActor
+private func liveAppleReleases(_ run: LiveCheckRun) -> AppleReleases.Client {
+    AppleReleases.Client(recorder: RequestRecorder(session: run.network.session, log: nil, category: "Live check"),
+                         userAgent: "Software Update Dashboard/live-check")
 }
 
 /// Records a step; a failed one also fails the test, so the run can’t pass with it.
@@ -87,6 +97,31 @@ struct LiveReadTests {
     /// Every ID and name of these devices, for `neverReport`.
     static func identifiers(_ members: [JamfPro.GroupMember]) -> [String] {
         members.flatMap { [$0.id, $0.serialNumber, $0.managementID, $0.udid, $0.name].compactMap { $0 } }
+    }
+
+    /// Apple’s release data from both public sources, as the app reads it
+    /// before every refresh: no tenant, no credentials, GET only.
+    @Test func appleReleaseData() async throws {
+        let run = try LiveCheckRun.current()
+        defer { checkUnderTest(run, when: "after Apple's release data") }
+        do {
+            let catalog = try await liveAppleReleases(run).catalog()
+            for (platform, name) in [(AppleReleases.Platform.iOS, "iOS and iPadOS"), (.macOS, "macOS")] {
+                let majors = catalog.majors(platform)
+                let releases = catalog.releases.filter { $0.platform == platform }.count
+                record(run, "Apple's release data: \(name)", passed: !majors.isEmpty,
+                       note: "\(releases) releases, majors \(majors.prefix(3).map(String.init).joined(separator: ", "))")
+            }
+            record(run, "Apple's release data: both sources read", passed: catalog.problems.isEmpty,
+                   note: catalog.problems.isEmpty ? nil : catalog.problems.joined(separator: "; "))
+        } catch {
+            record(run, "Apple's release data", passed: false, note: "\(type(of: error))")
+            throw error
+        }
+        let refusals = run.network.refusals
+        record(run, "Apple's release data: nothing sent but GETs to the public hosts", passed: refusals.isEmpty,
+               note: refusals.isEmpty ? nil : "\(refusals.count) refused")
+        #expect(refusals.isEmpty)
     }
 
     @Test func mobileGroupEndToEnd() async throws {
@@ -220,12 +255,11 @@ struct LiveReadTests {
             throw error
         }
 
-        // 5. the app's own refresh. Apple's release data isn't read here: an
-        // empty catalog, so targets that depend on it are “Target unknown”
-        // and a specific version is measured.
+        // 5. the app's own refresh, with Apple's release data from the public hosts as the app reads it
         if let tracked {
             do {
-                let result = try await RefreshWorkflow(client: client, catalog: AppleReleases.Catalog(), serverTimeZone: .gmt).run(tracked)
+                let catalog = try await liveAppleReleases(run).catalog()
+                let result = try await RefreshWorkflow(client: client, catalog: catalog, serverTimeZone: .gmt).run(tracked)
                 run.neverReport(Self.identifiers(result.members) + result.scope.flatMap { [$0.group.groupID, $0.name] })
                 let counts = StatusCategory.allCases.filter { result.counts[$0] > 0 }.map { "\($0.rawValue) \(result.counts[$0])" }
                 let unreadable = result.devices.filter { $0.statusProblem != nil }.count

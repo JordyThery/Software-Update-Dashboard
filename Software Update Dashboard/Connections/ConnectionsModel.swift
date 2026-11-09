@@ -164,7 +164,7 @@ final class ConnectionsModel {
     // MARK: Settings
 
     static func newRecord(_ service: ConnectionService) -> AppConnection {
-        AppConnection(connection: Connection(name: "", service: .jamfPlatform, region: .eu))
+        AppConnection(connection: Connection(name: "New Connection", service: .jamfPlatform, region: .eu))
     }
 
     /// Signs in and checks each read permission the app uses that has a list
