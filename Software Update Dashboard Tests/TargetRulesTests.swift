@@ -81,11 +81,14 @@ struct TargetRulesTests {
         #expect(target.released == Sample.date("2026-10-26T00:00:00"))
         #expect(target.activityFrom == Sample.date("2026-10-26T00:00:00"))
         #expect(target.deadlineLocal == "2026-10-26T18:00:00")
-        #expect(target.reason == "The newest macOS release: 27.2")
+        #expect(target.reason == "The newest public macOS release: 27.2; installs by 26 Oct")
     }
 
-    @Test("Latest with a delay: a release counts once it is that many days old", arguments: [
-        ("2026-11-08T23:00:00", "27.1", "2026-10-14T16:00:00"),
+    @Test("Latest with a delay: the newest public release from the day it’s out, due that many days later", arguments: [
+        // the day before 27.2: 27.1, due 14 days after its own release
+        ("2026-10-25T23:00:00", "27.1", "2026-10-14T16:00:00"),
+        // the day after: 27.2 at once, due on 9 Nov
+        ("2026-10-27T00:00:00", "27.2", "2026-11-09T16:00:00"),
         ("2026-11-09T00:00:00", "27.2", "2026-11-09T16:00:00"),
     ])
     func latestWithDelay(now: String, version: String, deadline: String) {
@@ -120,15 +123,19 @@ struct TargetRulesTests {
         let target = Self.target(.semantic(minorEnforceAfterDays: 14, deploymentTime: "18:00"), os: "26.7.1")
         #expect(target.version == "26.7.2")
         #expect(target.deadlineLocal == "2026-11-09T18:00:00")
-        #expect(target.reason == "The newest macOS 26 release at least 14 days old: 26.7.2")
+        #expect(target.reason == "The newest public macOS 26 release: 26.7.2; installs by 9 Nov")
         #expect(Self.target(.semantic(minorEnforceAfterDays: 14, deploymentTime: nil), os: "27.0").version == "27.2")
     }
 
-    @Test("Minor updates with a delay not yet passed: the release before it")
+    @Test("Minor updates with a delay not yet passed: the new release already, due later; before it’s out, none newer")
     func minorWithDelay() {
         let target = Self.target(.semantic(minorEnforceAfterDays: 14, deploymentTime: "18:00"), os: "26.7.1", now: "2026-11-08T12:00:00")
-        #expect(target.version == "26.7.1")
-        #expect(target.activityFrom == Sample.date("2026-09-30T00:00:00"))
+        #expect(target.version == "26.7.2")
+        #expect(target.deadlineLocal == "2026-11-09T18:00:00")
+        #expect(target.activityFrom == Sample.date("2026-10-26T00:00:00"))
+        // before 26.7.2 is out, the Mac on 26.7.1 is already on the newest public release
+        let before = Self.target(.semantic(minorEnforceAfterDays: 14, deploymentTime: "18:00"), os: "26.7.1", now: "2026-10-25T12:00:00")
+        #expect(before.version == "26.7.1")
     }
 
     @Test("Minor updates without delay")

@@ -20,7 +20,7 @@
 - Hardware that can’t run the newest major stays in Hardware to Replace, also when its target comes from the device.
 - The device detail says where the target comes from.
 - Deadlines count from Apple’s public posting date of the release, as Jamf does, and the device detail says where each deadline comes from. A deadline a device reported before the Blueprint’s last change is shown but not used.
-- A release becomes a target only once Apple offers it publicly.
+- A release becomes the target from the day Apple offers it publicly; the Blueprint’s delay sets its deadline, as Jamf does.
 - A refresh in which no device has a target isn’t saved in the history.
 - The CSV export writes a reported deadline with its time zone and says where each deadline comes from.
 - When the saved list of tracked Blueprints can’t be read, its copy can be shown in Finder and a new list started.

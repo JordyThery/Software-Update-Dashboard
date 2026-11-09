@@ -163,35 +163,37 @@ nonisolated enum TargetRules {
         return target
     }
 
-    /// `LATEST`: the newest release at least `days` old, across majors, that
-    /// the model can run.
+    /// `LATEST`: the newest release Apple offers publicly, across majors,
+    /// that the model can run; due `days` after its public posting.
     private static func latest(_ current: OSVersion?, days: Int, time: String?, model: String?, boardID: String?, osName: String,
                                _ ctx: Context) -> DeviceTarget {
         guard let catalog = ctx.catalog else {
             return DeviceTarget(reason: "Apple’s release data couldn’t be read, so the newest release isn’t known",
                                 unknown: .appleDataUnreachable)
         }
-        let eligible = releases(catalog, ctx.platform, days: days, now: ctx.now, model: model, boardID: boardID)
+        // a release is the target from the day Apple offers it publicly; the
+        // delay only sets its deadline, as Jamf does
+        let eligible = releases(catalog, ctx.platform, days: 0, now: ctx.now, model: model, boardID: boardID)
         guard let newest = eligible.first else {
-            return DeviceTarget(reason: "Apple’s release data has no \(osName) release" + (days == 0 ? "" : " at least \(days) days old"),
-                                unknown: .noReleaseForPlatform)
+            return DeviceTarget(reason: "Apple’s release data has no public \(osName) release", unknown: .noReleaseForPlatform)
         }
-        guard let pick = newestRelease(catalog, ctx.platform, model: model, boardID: boardID, days: days, now: ctx.now) else {
+        guard let pick = newestRelease(catalog, ctx.platform, model: model, boardID: boardID, days: 0, now: ctx.now) else {
             return DeviceTarget(reason: "No \(osName) release runs on this model", noApplicableRelease: true)
         }
-        if let unknown = runsNewer(current, than: pick, catalog, ctx.platform, days: days, now: ctx.now, osName: osName) { return unknown }
+        if let unknown = runsNewer(current, than: pick, catalog, ctx.platform, days: 0, now: ctx.now, osName: osName) { return unknown }
         let limited = pick.version.major < newest.version.major
+        let due = basis(pick, catalog, model: model, boardID: boardID).map { deadline(released: $0.date, days: days, time: time) }
         return DeviceTarget(
             version: pick.version.description, build: catalog.build(of: pick, model: model, boardID: boardID), released: pick.releaseDate, activityFrom: pick.releaseDate,
-            deadlineLocal: basis(pick, catalog, model: model, boardID: boardID).map { deadline(released: $0.date, days: days, time: time) },
+            deadlineLocal: due,
             deadlineSource: basis(pick, catalog, model: model, boardID: boardID)?.source,
-            reason: (days == 0 ? "The newest \(osName) release: \(pick.version)" : "The newest \(osName) release at least \(days) days old: \(pick.version)")
+            reason: "The newest public \(osName) release: \(pick.version)" + (due.map { "; installs by \(day($0))" } ?? "")
                 + (limited ? " (the newest this model can run; it can’t run \(osName) \(newest.version.major))" : ""),
             limitedByHardware: limited)
     }
 
-    /// `SEMANTIC` minor: the newest release of the device’s own major at
-    /// least `days` old.
+    /// `SEMANTIC` minor: the newest release of the device’s own major that
+    /// Apple offers publicly; due `days` after its public posting.
     private static func minor(_ current: OSVersion?, days: Int, time: String?, model: String?, boardID: String?, osName: String,
                               _ ctx: Context) -> DeviceTarget {
         guard let catalog = ctx.catalog else {
@@ -214,19 +216,19 @@ nonisolated enum TargetRules {
         let newestMajor = knownMajors.first ?? current.major
         let limited = newestMajor > current.major
             && catalog.supports(model: model, boardID: boardID, major: newestMajor, ctx.platform) == false
-        guard let pick = newestRelease(catalog, ctx.platform, model: model, boardID: boardID, days: days, now: ctx.now,
+        guard let pick = newestRelease(catalog, ctx.platform, model: model, boardID: boardID, days: 0, now: ctx.now,
                                        major: current.major) else {
-            // nothing in this major is old enough yet: the version it runs is what it’s held to
-            return DeviceTarget(version: current.description, reason: "No \(osName) \(current.major) release is \(days) days old yet",
+            // nothing in this major is public yet: the version it runs is what it’s held to
+            return DeviceTarget(version: current.description, reason: "No public \(osName) \(current.major) release yet",
                                 limitedByHardware: limited)
         }
-        if let unknown = runsNewer(current, than: pick, catalog, ctx.platform, days: days, now: ctx.now, osName: osName) { return unknown }
+        if let unknown = runsNewer(current, than: pick, catalog, ctx.platform, days: 0, now: ctx.now, osName: osName) { return unknown }
+        let due = basis(pick, catalog, model: model, boardID: boardID).map { deadline(released: $0.date, days: days, time: time) }
         return DeviceTarget(
             version: pick.version.description, build: catalog.build(of: pick, model: model, boardID: boardID), released: pick.releaseDate, activityFrom: pick.releaseDate,
-            deadlineLocal: basis(pick, catalog, model: model, boardID: boardID).map { deadline(released: $0.date, days: days, time: time) },
+            deadlineLocal: due,
             deadlineSource: basis(pick, catalog, model: model, boardID: boardID)?.source,
-            reason: days == 0 ? "The newest \(osName) \(current.major) release: \(pick.version)"
-                              : "The newest \(osName) \(current.major) release at least \(days) days old: \(pick.version)",
+            reason: "The newest public \(osName) \(current.major) release: \(pick.version)" + (due.map { "; installs by \(day($0))" } ?? ""),
             limitedByHardware: limited)
     }
 
@@ -409,6 +411,14 @@ nonisolated enum TargetRules {
         guard let local else { return nil }
         let zone = timeZone.flatMap(TimeZone.init(identifier:)) ?? .current
         return JamfPlatform.SoftwareUpdateBlock.deadline(local, in: zone).map { $0 <= now }
+    }
+
+    /// `2026-11-19T23:59:00` as a day, “19 Nov”, without moving it to a zone.
+    static func day(_ local: String) -> String {
+        guard let date = JamfPlatform.SoftwareUpdateBlock.deadline(local, in: .gmt) else { return local }
+        var style = Date.FormatStyle().day().month(.abbreviated)
+        style.timeZone = .gmt
+        return date.formatted(style)
     }
 
     /// `2026-11-23T17:00:00` as people read it, without moving it to a zone.

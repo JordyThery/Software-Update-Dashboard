@@ -429,6 +429,12 @@ struct PostingDeadlineTests {
         #expect(target.deadlineLocal == "2026-11-19T23:59:00")
         #expect(target.deadlineSource == .postingDate)
         #expect(target.activityFrom == Sample.date("2026-10-26T00:00:00"))
+        #expect(target.reason == "The newest public macOS 27 release: 27.2; installs by 19 Nov")
+        // the live case: on 6 Nov, the day after Apple's public posting, 27.2 is already the target, due 19 Nov
+        let dayAfter = Self.rule(os: "27.0.1", now: "2026-11-06T09:00:00")
+        #expect(dayAfter.version == "27.2" && dayAfter.deadlineLocal == "2026-11-19T23:59:00")
+        // on 4 Nov, before the posting, it isn't
+        #expect(Self.rule(os: "27.0.1", now: "2026-11-04T09:00:00").version == "27.0.1")
         // every platform
         let iPad = Self.rule(os: "27.0", platform: .iOS, model: "iPad14,8", boardID: nil)
         #expect(iPad.deadlineLocal == "2026-11-16T23:59:00" && iPad.deadlineSource == .postingDate)
