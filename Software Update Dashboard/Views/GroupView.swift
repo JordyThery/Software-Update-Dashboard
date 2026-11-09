@@ -13,7 +13,8 @@ struct GroupView: View {
 
     let model: DashboardModel
     let group: TrackedGroup
-    @State private var page: Page = .dashboard
+    @Binding var page: Page
+    @Binding var exportRequest: Bool?
     @State private var export: TextExportDocument?
     @State private var exportName = ""
     @State private var exportType: UTType = .plainText
@@ -26,8 +27,7 @@ struct GroupView: View {
                 case .devices: DeviceListView(model: model, result: result)
                 }
             } else if model.refreshing.contains(group.id) {
-                ProgressView(model.progress[group.id].map { "Reading \($0)…" } ?? "Reading from Jamf…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ReadingProgress(model: model, id: group.id)
             } else if let error = model.errors[group.id] {
                 ContentUnavailableView {
                     Label("Couldn’t Read the Group", systemImage: "exclamationmark.triangle")
@@ -77,13 +77,16 @@ struct GroupView: View {
                     } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
-                    .keyboardShortcut("r")
                     .help("Read the group from Jamf again")
                 }
             }
         }
         .task(id: group.id) {
             if model.results[group.id] == nil && model.errors[group.id] == nil { await model.refresh(group.id) }
+        }
+        .onChange(of: exportRequest) {
+            if let csv = exportRequest { prepareExport(csv: csv) }
+            exportRequest = nil
         }
         .fileExporter(isPresented: Binding(get: { export != nil }, set: { if !$0 { export = nil } }),
                       document: export, contentType: exportType, defaultFilename: exportName) { _ in
@@ -98,6 +101,49 @@ struct GroupView: View {
         exportName = "\(group.groupName) \(day)\(csv ? ".csv" : ".txt")"
         exportType = csv ? .commaSeparatedText : .plainText
         export = TextExportDocument(text: text)
+    }
+}
+
+/// While a group is read: how many status reports are in.
+struct ReadingProgress: View {
+    let model: DashboardModel
+    let id: UUID
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if let progress = model.progress[id], let done = Int(progress.split(separator: " ").first ?? ""),
+               let total = Int(progress.split(separator: " ").dropFirst(2).first ?? ""), total > 0 {
+                ProgressView(value: Double(done), total: Double(total)) {
+                    Text("Reading status reports")
+                } currentValueLabel: {
+                    Text("\(done) of \(total) devices")
+                }
+                .frame(maxWidth: 320)
+            } else {
+                ProgressView("Reading from Jamf…")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// The progress bar’s groups by name and count, so the bar never relies on color alone.
+struct ProgressLegend: View {
+    let counts: CategoryCounts
+
+    var body: some View {
+        HStack(spacing: 16) {
+            ForEach(ProgressGroup.allCases) { group in
+                HStack(spacing: 4) {
+                    RoundedRectangle(cornerRadius: 2).fill(group.color).frame(width: 10, height: 10)
+                        .accessibilityHidden(true)
+                    Text("\(group.rawValue) \(group.count(in: counts))")
+                }
+                .help(group.explanation)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
 }
 
@@ -183,6 +229,7 @@ struct ProgressSection: View {
                     .foregroundStyle(.secondary)
             }
             ProgressBar(counts: counts)
+            ProgressLegend(counts: counts)
             Text("Updatable leaves out unsupported hardware, offline devices and devices without a report. \(counts.total) devices in all.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -229,9 +276,12 @@ struct HistoryChart: View {
                 Chart {
                     ForEach(snapshots) { snapshot in
                         ForEach(ProgressGroup.allCases) { group in
-                            AreaMark(x: .value("Refresh", snapshot.date),
-                                     y: .value("Devices", group.count(in: snapshot.counts)))
+                            let count = group.count(in: snapshot.counts)
+                            AreaMark(x: .value("Refresh", snapshot.date), y: .value("Devices", count))
                                 .foregroundStyle(by: .value("Group", group.rawValue))
+                                .lineStyle(StrokeStyle(lineWidth: 1))
+                                .accessibilityLabel("\(group.rawValue), \(snapshot.date.formatted(date: .abbreviated, time: .shortened))")
+                                .accessibilityValue("\(count) \(count == 1 ? "device" : "devices")")
                         }
                     }
                 }

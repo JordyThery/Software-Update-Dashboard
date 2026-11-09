@@ -37,7 +37,6 @@ struct OverviewView: View {
                 } label: {
                     Label("Refresh All", systemImage: "arrow.clockwise")
                 }
-                .keyboardShortcut("r")
                 .disabled(model.groups.isEmpty || !model.refreshing.isEmpty)
                 .help("Read every tracked group from Jamf again")
             }

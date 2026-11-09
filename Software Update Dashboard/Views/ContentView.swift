@@ -7,6 +7,9 @@ struct ContentView: View {
     let connections: ConnectionsModel
     @State private var model: DashboardModel
     @State private var isAdding = false
+    @State private var page: GroupView.Page = .dashboard
+    /// Set by the menu or the toolbar: true for the CSV, false for the summary.
+    @State private var exportRequest: Bool?
 
     init(connections: ConnectionsModel) {
         self.connections = connections
@@ -24,7 +27,7 @@ struct ContentView: View {
                 switch model.selection {
                 case .group(let id)?:
                     if let group = model.group(id) {
-                        GroupView(model: model, group: group)
+                        GroupView(model: model, group: group, page: $page, exportRequest: $exportRequest)
                     } else {
                         OverviewView(model: model, isAdding: $isAdding)
                     }
@@ -44,6 +47,16 @@ struct ContentView: View {
         .onChange(of: connections.inUseKey) {
             model.connectionChanged()
         }
+        .focusedSceneValue(\.groupFocus, GroupFocus(
+            model: model,
+            page: isGroupSelected ? $page : nil,
+            isAdding: $isAdding,
+            export: isGroupSelected ? { exportRequest = $0 } : nil))
+    }
+
+    private var isGroupSelected: Bool {
+        if case .group? = model.selection { return true }
+        return false
     }
 }
 
@@ -71,19 +84,16 @@ struct SidebarView: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            HStack {
+        .toolbar {
+            ToolbarItem {
                 Button {
                     isAdding = true
                 } label: {
                     Label("Track a Group…", systemImage: "plus")
                 }
-                .buttonStyle(.borderless)
                 .disabled(model.connectionID == nil || model.connections.demoChoice.isActive)
                 .help(model.connections.demoChoice.isActive ? "Demo Mode has its own sample groups." : "Track a Jamf Pro group and its update Blueprint")
-                Spacer()
             }
-            .padding(10)
         }
     }
 }
