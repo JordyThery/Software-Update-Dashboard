@@ -125,7 +125,8 @@ struct DeviceDetailView: View {
                 }
             }
             Section("Target") {
-                LabeledContent("Target", value: device.targetVersion ?? (device.category == .targetUnknown ? "Unknown" : "None"))
+                LabeledContent("Target", value: device.targetSource ?? device.targetVersion
+                               ?? (device.category == .targetUnknown ? "Unknown" : "None"))
                 if let reason = device.targetReason { Text(reason).foregroundStyle(.secondary) }
                 if device.targetFromDevice == true {
                     LabeledContent("Blueprint’s rule gives", value: device.ruleTarget ?? "No version")
@@ -137,9 +138,8 @@ struct DeviceDetailView: View {
                 if let released = device.targetReleased {
                     LabeledContent("Released by Apple", value: Self.releaseDay(released))
                 }
-                if let deadline = device.deadlineLocal {
-                    LabeledContent("Deadline", value: "\(TargetRules.readable(deadline)), "
-                                   + (device.timeZone ?? device.deadlineOffset.map(DeadlineZone.offsetText) ?? "device local time"))
+                if let deadline = DeadlineZones.text(local: device.deadlineLocal, reported: device.deadlineDate) {
+                    LabeledContent("Deadline", value: deadline)
                     if device.pastDeadline == true { WarningLabel("Past the deadline") }
                 }
                 if let from = device.activityFrom {

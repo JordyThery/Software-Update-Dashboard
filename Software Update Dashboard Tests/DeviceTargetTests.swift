@@ -129,29 +129,76 @@ struct DeviceTargetTests {
 
     // MARK: Deadline per time zone
 
-    @Test("A Mac with a reported offset is grouped by it; rows without a zone are told apart by target")
+    @Test("A reported deadline is a moment, never a time zone; computed ones stay in local time, told apart by target")
     func zones() {
-        func mac(_ id: String, target: String?, local: String, offset: Int?) -> DeviceStatus {
+        func mac(_ id: String, target: String?, local: String, reported: String?) -> DeviceStatus {
             var device = Sample.classify(Sample.mac(id), nil)
             device.targetVersion = target
             device.deadlineLocal = local
-            device.deadlineOffset = offset
-            device.deadlineDate = offset.flatMap { TimeZone(secondsFromGMT: $0) }
-                .flatMap { JamfPlatform.SoftwareUpdateBlock.deadline(local, in: $0) }
+            device.deadlineDate = reported.map(Sample.date)
+            device.deadlineOffset = reported == nil ? nil : 0
             return device
         }
         let zones = DeadlineZones.zones(devices: [
-            mac("1", target: "26.7.2", local: "2026-11-09T22:59:12", offset: 0),
-            mac("2", target: "26.7.2", local: "2026-11-09T22:59:12", offset: 0),
-            mac("3", target: "26.7.2", local: "2026-11-09T23:59:00", offset: nil),
-            mac("4", target: "27.2", local: "2026-11-09T23:59:00", offset: nil),
+            // written in UTC by the device: 22:59 UTC is 23:59 in Amsterdam
+            mac("1", target: "27.2", local: "2026-11-19T22:59:06", reported: "2026-11-19T22:59:06"),
+            mac("2", target: "27.2", local: "2026-11-19T22:59:09", reported: "2026-11-19T22:59:09"),
+            mac("3", target: "27.2", local: "2026-11-09T22:59:06", reported: "2026-11-09T22:59:06"),
+            mac("4", target: "26.7.2", local: "2026-11-09T23:59:00", reported: nil),
+            mac("5", target: "27.2", local: "2026-11-09T23:59:00", reported: nil),
         ])
-        #expect(zones.count == 3)
-        #expect(zones[0].label == "UTC+00:00 (from the device’s report)" && zones[0].deviceCount == 2)
-        #expect(zones[0].deadline == Sample.date("2026-11-09T22:59:12"))
-        let noZone = zones.filter { $0.zone == nil && $0.offset == nil }
-        #expect(Set(noZone.compactMap(\.target)) == ["26.7.2", "27.2"])
-        #expect(Set(zones.map(\.id)).count == 3)
+        #expect(zones.count == 4)
+        #expect(zones.allSatisfy { !$0.label.contains("UTC") })
+        let reported = zones.filter { $0.reported != nil }
+        #expect(reported.map(\.deviceCount).sorted() == [1, 2])
+        #expect(reported.allSatisfy { $0.unusual == nil && $0.deadline == $0.reported })
+        let computed = zones.filter { $0.reported == nil }
+        #expect(Set(computed.compactMap(\.target)) == ["26.7.2", "27.2"])
+        #expect(computed.allSatisfy { $0.unusual?.hasPrefix("Jamf Pro has no time zone for Macs") == true })
+
+        // shown the same way everywhere
+        let amsterdam = TimeZone(identifier: "Europe/Amsterdam")!
+        let text = DeadlineZones.text(local: "2026-11-19T22:59:06", reported: Sample.date("2026-11-19T22:59:06"), timeZone: amsterdam)
+        #expect(text?.hasSuffix(", reported by the device") == true)
+        #expect(text?.contains("23:59") == true)
+        #expect(DeadlineZones.text(local: "2026-11-09T23:59:00", reported: nil)?.hasSuffix(", device local time") == true)
+
+        // the macOS 27 row: each distinct deadline once (to the minute)
+        let row = MajorRow.deadlines([mac("1", target: "27.2", local: "", reported: "2026-11-19T22:59:06"),
+                                      mac("2", target: "27.2", local: "", reported: "2026-11-19T22:59:09"),
+                                      mac("3", target: "27.2", local: "", reported: "2026-11-09T22:59:06"),
+                                      mac("5", target: "27.2", local: "2026-11-09T23:59:00", reported: nil)])
+        #expect(row.count == 3)
+        #expect(row.filter { $0.hasSuffix("reported by the device") }.count == 2)
+    }
+
+    @Test("Where the target comes from, in plain words")
+    func source() {
+        #expect(Self.fromDevice(Self.status(pending: "26.7.2", reason: "declaration")).source == "26.7.2, sent by Jamf, matches the Blueprint’s rule")
+        #expect(Self.fromDevice(Self.status(pending: "27.2", reason: "declaration")).source == "27.2, sent by Jamf; the Blueprint’s rule gives 26.7.2")
+        #expect(Self.rule(os: "26.7.1", model: "MacBookPro18,3", boardID: "J314sAP").source == "26.7.2, from Apple’s data and the Blueprint’s rule")
+        #expect(Self.rule(os: "26.7.1", model: "MacBookPro18,3", boardID: nil,
+                          .specific(targetOSVersion: "27.2", targetLocalDateTime: nil, detailsURL: nil)).source
+                == "27.2, the version the Blueprint names")
+    }
+
+    @Test("A Mac that can’t run the newest major stays on the list to replace, with the target Jamf sent")
+    func replacement() {
+        let rule = Self.rule(os: "26.7.1", model: "MacBookPro16,1", boardID: "X86LEGACYAP")
+        #expect(rule.limitedByHardware)
+        #expect(TargetRules.cannotRunNewestMajor(Self.catalog, .macOS, model: "MacBookPro16,1", boardID: "X86LEGACYAP"))
+        let sent = TargetRules.fromDevice(rule, status: Self.status(pending: "26.7.2", reason: "declaration"), os: "26.7.1",
+                                          osName: "macOS", catalog: Self.catalog, platform: .macOS, serverTimeZone: Sample.utc)
+        #expect(sent.fromDevice && sent.limitedByHardware)
+        var device = Sample.classify(Sample.mac(os: "26.7.1", model: "MacBookPro16,1"), nil, target: sent)
+        device.boardID = "X86LEGACYAP"
+        let list = Replacement.list([device]) { device in
+            TargetRules.newestRelease(Self.catalog, .macOS, model: device.modelIdentifier, boardID: device.boardID, knownOnly: true)?
+                .version.description
+        }
+        #expect(list.map(\.modelIdentifier) == ["MacBookPro16,1"])
+        #expect(list.first?.lastSupportedVersion == "26.7.2")
+        #expect(list.first?.note.contains("26.7.2") == true)
     }
 }
 
@@ -218,7 +265,8 @@ struct InspectDeclarationPairTests {
     func noneApplies() throws {
         let result = evaluate(notForThisDevice(1, range: "^(27[.][0-1]([.][0-9]+)*)$"))
         let finding = try #require(result.findings.first { $0.cause == "No update declaration applies" })
-        #expect(finding.detail == "None of Test Mac Updates’s 1 update declarations applies to macOS 26.7.1 (1 is for other versions or models)")
+        #expect(finding.detail == "None of Test Mac Updates’s 1 update declarations applies to macOS 26.7.1 (1 is for other versions or models). "
+                + "No declaration lists Mac14,2, so the Blueprint doesn’t cover this hardware.")
     }
 
     @Test("A predicate’s versions read as a range", arguments: [
@@ -244,5 +292,103 @@ struct InspectDeclarationPairTests {
         mac.supervised = true
         let quiet = evaluate([report("act", 12, active: true), report("cfg", 12, active: true)], member: mac)
         #expect(quiet.findings.contains { $0.cause == "Bootstrap token not escrowed" })
+    }
+}
+
+@Suite("Inspect: stuck updates and stale declaration reports")
+struct InspectStaleAndStuckTests {
+    let blueprint = "6a2f0000-1111-4000-8000-00000000c0de"
+
+    func evaluate(_ member: JamfPro.GroupMember, status: JamfPro.SoftwareUpdateStatus?, row: DeviceStatus,
+                  reports: [JamfPlatform.DeclarationReport] = [], changed: Date? = nil) -> InspectResult {
+        InspectFindings.evaluate(InspectInput(member: member, status: status, device: row, platformDeviceID: "P-1", reports: reports),
+                                 context: InspectContext(blueprintID: blueprint, blueprintName: "Test Mac Updates", target: nil,
+                                                         since: nil, blueprintChanged: changed, now: Sample.now, serverTimeZone: Sample.utc))
+    }
+
+    func prepared() -> JamfPro.SoftwareUpdateStatus {
+        Sample.status([("device.operating-system.version", "26.7.1"), ("softwareupdate.install-state", "prepared"),
+                       ("softwareupdate.pending-version.os-version", "26.7.2")], time: "2026-11-01T06:00:00")
+    }
+
+    @Test("Prepared before the deadline installs at the deadline; after it, it is stuck")
+    func stuck() {
+        var row = Sample.classify(Sample.mac(os: "26.7.1"), prepared())
+        row.pastDeadline = false
+        let before = evaluate(Sample.mac(os: "26.7.1"), status: prepared(), row: row)
+        #expect(before.findings.contains { $0.cause == "Update downloaded" && $0.detail.hasSuffix("installs at the deadline") })
+        #expect(!before.findings.contains { $0.cause == "Update stuck" })
+        row.pastDeadline = true
+        let after = evaluate(Sample.mac(os: "26.7.1"), status: prepared(), row: row)
+        let stuck = after.findings.first { $0.cause == "Update stuck" }
+        #expect(stuck?.detail.contains("not installed after its deadline (last change 4 days ago)") == true)
+    }
+
+    @Test("An offline device is never stuck")
+    func offline() {
+        let member = Sample.mac(os: "26.7.1")
+        var row = Sample.classify(member, prepared())
+        row.pastDeadline = true
+        row.category = .offline
+        #expect(!evaluate(member, status: prepared(), row: row).findings.contains { $0.cause == "Update stuck" })
+    }
+
+    @Test("Up to 48 hours in hours, longer in days")
+    func durations() {
+        #expect(InspectFindings.ago(Sample.now.addingTimeInterval(-47 * 3_600), now: Sample.now) == "47 h ago")
+        #expect(InspectFindings.ago(Sample.now.addingTimeInterval(-50 * 3_600), now: Sample.now) == "2 days ago")
+    }
+
+    func pair(_ number: Int, versions: String, lists: [String], reported: String) -> [JamfPlatform.DeclarationReport] {
+        let predicate = #"status.device.operating-system.version MATCHES "\#(versions)" AND status.softwareupdate.device-id IN {\#(lists.map { "\"\($0)\"" }.joined(separator: ", "))}"#
+        let at = Sample.date(reported)
+        return [
+            JamfPlatform.DeclarationReport(declarationIdentifier: "Blueprint_\(blueprint)_s1_c1_sys_act\(number)", type: "ACTIVATION",
+                                           status: .unsuccessful, active: false, validity: .valid,
+                                           reasons: [.init(code: "Info.Predicate", details: [.init(key: "Predicate", description: predicate)])],
+                                           lastReportTime: at),
+            JamfPlatform.DeclarationReport(declarationIdentifier: "Blueprint_\(blueprint)_s1_c1_sys_cfg\(number)", type: "CONFIGURATION",
+                                           status: .unsuccessful, active: false, reasons: [.init(code: "Error.ActivationFailed")],
+                                           lastReportTime: at),
+        ]
+    }
+
+    @Test("A declaration report from before the update started is the likely cause, not “doesn’t apply”")
+    func stale() {
+        let member = Sample.mac(os: "15.8.1", model: "MacBookAir10,1")
+        let status = Sample.status([("device.operating-system.version", "15.8.1"), ("softwareupdate.device-id", "J313AP")])
+        var row = Sample.classify(member, status)
+        row.activityFrom = Sample.date("2026-10-26T00:00:00")
+        let reports = pair(14, versions: "^(15[.][0-8]([.][0-9]+)*)$", lists: ["J313AP"], reported: "2026-10-14T19:08:00")
+        let result = evaluate(member, status: status, row: row, reports: reports)
+        #expect(result.cause == "Not evaluated since the update started")
+        #expect(result.detail.contains("2026-10-14") && result.detail.contains("2026-10-26"))
+        #expect(!result.findings.contains { $0.cause == "No update declaration applies" })
+        // the Blueprint's last change counts too
+        row.activityFrom = Sample.date("2026-10-01T00:00:00")
+        #expect(evaluate(member, status: status, row: row, reports: reports, changed: Sample.date("2026-10-20T00:00:00")).cause
+                == "Not evaluated since the update started")
+    }
+
+    @Test("A current report that excludes the device says so, checking its own device ID")
+    func current() throws {
+        let member = Sample.mac(os: "15.8.2", model: "MacBookAir10,1")
+        let status = Sample.status([("device.operating-system.version", "15.8.2"), ("softwareupdate.device-id", "J313AP")])
+        var row = Sample.classify(member, status)
+        row.activityFrom = Sample.date("2026-10-26T00:00:00")
+        let reports = pair(14, versions: "^(15[.][0-8]([.][0-1])?)$", lists: ["J313AP", "J274AP"], reported: "2026-11-05T09:00:00")
+            + pair(2, versions: "^(26[.][0-7]([.][0-9]+)*)$", lists: ["J414sAP"], reported: "2026-11-05T09:00:00")
+        let finding = try #require(evaluate(member, status: status, row: row, reports: reports).findings
+            .first { $0.cause == "No update declaration applies" })
+        #expect(finding.detail.contains("1 list J313AP (Test Mac Updates, macOS 15.0–15.8)"))
+        let none = pair(2, versions: "^(26[.][0-7]([.][0-9]+)*)$", lists: ["J414sAP"], reported: "2026-11-05T09:00:00")
+        let other = try #require(evaluate(member, status: status, row: row, reports: none).findings
+            .first { $0.cause == "No update declaration applies" })
+        #expect(other.detail.hasSuffix("No declaration lists J313AP, so the Blueprint doesn’t cover this hardware."))
+    }
+
+    @Test("The older predicate form reads too")
+    func olderPredicate() {
+        #expect(DeclarationPair.versionRange(#"x version < "27.0.1" AND x version BEGINSWITH "27." AND y"#) == "27 below 27.0.1")
     }
 }

@@ -11,11 +11,21 @@ nonisolated struct MajorRow: Sendable, Hashable, Identifiable {
     var targets: [String]
     var onTarget: Int
     var updatable: Int
-    /// The deadlines, in the devices’ local time.
+    /// Each distinct deadline once, as shown everywhere (`DeadlineZones.text`).
     var deadlines: [String]
     var pastDeadline: Int
 
     var id: String { "\(osName) \(major.map(String.init) ?? "?")" }
+
+    /// Reported moments first by time, then computed local times; each once
+    /// (to the minute: devices report the same deadline a few seconds apart).
+    static func deadlines(_ devices: [DeviceStatus]) -> [String] {
+        let reported = Set(devices.compactMap { $0.deadlineDate.map { Int($0.timeIntervalSince1970 / 60) } }).sorted()
+            .compactMap { DeadlineZones.text(local: nil, reported: Date(timeIntervalSince1970: Double($0) * 60)) }
+        let computed = Set(devices.filter { $0.deadlineDate == nil }.compactMap(\.deadlineLocal)).sorted()
+            .compactMap { DeadlineZones.text(local: $0, reported: nil) }
+        return reported + computed
+    }
 
     static func rows(_ devices: [DeviceStatus]) -> [MajorRow] {
         Dictionary(grouping: devices) { "\($0.osName)|\(OSVersion($0.currentOS)?.major.description ?? "")" }
@@ -25,7 +35,7 @@ nonisolated struct MajorRow: Sendable, Hashable, Identifiable {
                     osName: group[0].osName, major: OSVersion(group[0].currentOS)?.major, devices: group.count,
                     targets: Set(group.compactMap(\.targetVersion)).sorted { (OSVersion($0) ?? OSVersion(major: 0)) < (OSVersion($1) ?? OSVersion(major: 0)) },
                     onTarget: counts[.onTarget], updatable: counts.updatable,
-                    deadlines: Set(group.compactMap(\.deadlineLocal)).sorted(),
+                    deadlines: Self.deadlines(group),
                     pastDeadline: group.filter { $0.pastDeadline == true }.count)
             }
             .sorted { $0.osName != $1.osName ? $0.osName < $1.osName : ($0.major ?? -1) > ($1.major ?? -1) }
@@ -151,8 +161,14 @@ nonisolated struct RefreshWorkflow: Sendable {
                                          blueprintChanged: blueprint.overview.updatedDate, updateStarted: tracked.updateStarted,
                                          now: now))
         // what Jamf actually sent the device comes first, when it reports it
-        let target = TargetRules.fromDevice(rule, status: input.status, os: os, osName: osName, catalog: catalog,
+        var target = TargetRules.fromDevice(rule, status: input.status, os: os, osName: osName, catalog: catalog,
                                             platform: platform, serverTimeZone: serverTimeZone)
+        // hardware that can't run the newest major stays on the list to
+        // replace, whichever source gave its target
+        if target.unknown == nil, !target.noApplicableRelease, let catalog {
+            target.limitedByHardware = target.limitedByHardware
+                || TargetRules.cannotRunNewestMajor(catalog, platform, model: model, boardID: input.status?.deviceID)
+        }
         let base = ClassificationContext(target: nil, since: nil, serverTimeZone: serverTimeZone, now: now, staleDays: staleDays,
                                          catalog: catalog, platform: platform)
         return Classifier.classify(input, target: target, context: base)

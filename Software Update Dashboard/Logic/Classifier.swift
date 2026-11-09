@@ -116,6 +116,8 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     /// The deadline as a moment and its offset from UTC, when the device reported one.
     var deadlineDate: Date?
     var deadlineOffset: Int?
+    /// Where the target comes from, e.g. “27.2, sent by Jamf, matches the Blueprint’s rule”.
+    var targetSource: String?
     /// `softwareupdate.device-id` from the status report.
     var boardID: String?
     /// A Mac’s bootstrap token in Jamf Pro: `ESCROWED`, `NOT_ESCROWED`, `NOT_SUPPORTED`.
@@ -160,6 +162,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case targetDiffersFromRule
         case deadlineDate
         case deadlineOffset
+        case targetSource
         case boardID
         case bootstrapToken
     }
@@ -171,7 +174,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var osName: String { Classifier.osName(isComputer: isComputer, modelIdentifier: modelIdentifier) }
 
     /// The diagnoses that need someone to look (summary, Inspect’s default selection).
-    static let attentionPattern = "[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check"
+    static let attentionPattern = "^Downloaded, not installed|[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check"
 
     var needsAttention: Bool { diagnosis.range(of: Self.attentionPattern, options: .regularExpression) != nil }
 
@@ -301,6 +304,7 @@ nonisolated enum Classifier {
         status.targetVersion = target.version
         status.targetReason = target.reason
         status.targetReleased = target.released
+        status.targetSource = target.source
         if target.fromDevice {
             status.targetFromDevice = true
             status.ruleTarget = target.ruleVersion
@@ -322,6 +326,10 @@ nonisolated enum Classifier {
         status.pastDeadline = status.category == .onTarget ? false
             : target.deadlineDate.map { $0 <= base.now }
                 ?? TargetRules.isPastDeadline(target.deadlineLocal, timeZone: input.member.timeZone, now: base.now)
+        // downloaded but past the deadline: it didn't install when it should have
+        if status.pastDeadline == true, status.diagnosis.hasPrefix("Downloaded"), status.diagnosis.hasSuffix("installs at the deadline") {
+            status.diagnosis = status.diagnosis.replacingOccurrences(of: "installs at the deadline", with: "not installed after the deadline")
+        }
         status.limitedByHardware = target.limitedByHardware
         return status
     }

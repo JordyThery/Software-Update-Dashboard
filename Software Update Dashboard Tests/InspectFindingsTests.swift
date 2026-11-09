@@ -96,7 +96,7 @@ struct InspectFindingsTests {
         #expect(older.findings.contains(Finding(cause: "Hardware can’t run the next version", detail: "iPad7,5 isn’t supported by iPadOS 27")))
     }
 
-    @Test("A passcode, an error since the update started, and an update stuck")
+    @Test("A passcode, an error since the update started, and a downloaded update before its deadline")
     func statusFindings() {
         let status = Sample.status([
             ("device.operating-system.version", "26.7.1"), ("softwareupdate.install-state", "prepared"),
@@ -108,7 +108,9 @@ struct InspectFindingsTests {
         let all = result.findings.map { "\($0.cause): \($0.detail)" }
         #expect(all.contains("Passcode: Passcode present: yes; the update installs once the passcode is entered on the device, or after it’s cleared"))
         #expect(all.contains("Update error: InstallationKeybagRequired (2 failures, last 2026-11-05 09:30)"))
-        #expect(all.contains { $0.hasPrefix("Update stuck: prepared iPadOS 27.0.1 since 7 h ago") })
+        // prepared before the deadline is normal, not stuck
+        #expect(all.contains("Update downloaded: iPadOS 27.0.1 is downloaded and installs at the deadline"))
+        #expect(!all.contains { $0.hasPrefix("Update stuck") })
     }
 
     @Test("Other declarations with a problem, at most three")

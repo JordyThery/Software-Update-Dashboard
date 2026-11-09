@@ -63,6 +63,18 @@ nonisolated struct DeviceTarget: Sendable, Hashable, Codable {
     var deadlineOffset: Int?
 
     var osVersion: OSVersion? { version.flatMap(OSVersion.init) }
+
+    /// Where the target comes from, for the device detail: “27.2, sent by
+    /// Jamf, matches the Blueprint’s rule”, “26.7.2, from Apple’s data”.
+    var source: String? {
+        guard let version, unknown == nil else { return nil }
+        if fromDevice {
+            if !differsFromRule { return "\(version), sent by Jamf, matches the Blueprint’s rule" }
+            return "\(version), sent by Jamf; the Blueprint’s rule gives \(ruleVersion ?? "no version")"
+        }
+        if namedByBlueprint { return "\(version), the version the Blueprint names" }
+        return "\(version), from Apple’s data and the Blueprint’s rule"
+    }
 }
 
 /// What a Blueprint’s software update means for one device. Jamf’s
@@ -202,6 +214,16 @@ nonisolated enum TargetRules {
         }
     }
 
+    /// The model can’t run the platform’s newest major: it belongs on the
+    /// hardware to replace, measured against its own target. The same
+    /// recognition as the targets (`runs`, by the major when the release
+    /// lists don’t know the device).
+    static func cannotRunNewestMajor(_ catalog: AppleReleases.Catalog, _ platform: AppleReleases.Platform,
+                                     model: String?, boardID: String?) -> Bool {
+        guard let newest = catalog.majors(platform).first else { return false }
+        return catalog.supports(model: model, boardID: boardID, major: newest, platform) == false
+    }
+
     /// A device already on a release Apple shipped to it, old enough for
     /// the rule and newer than the rule’s pick: the rule doesn’t fit it, so
     /// its target is unknown rather than lower than what it runs. A newer
@@ -252,6 +274,7 @@ nonisolated enum TargetRules {
         }
         target.ruleVersion = rule.version
         target.ruleReason = rule.reason
+        target.limitedByHardware = rule.limitedByHardware
         target.differsFromRule = rule.version.flatMap(OSVersion.init) != version
         return target
     }

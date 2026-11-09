@@ -20,6 +20,8 @@ The unit of work is a **tracked Blueprint**: a Blueprint with a software update 
 
 - A minor-updates Blueprint sends one configuration and activation pair per version range, each with a predicate (OS family, version range, board IDs or models). Each configuration is judged with its own activation (`…_cfg12` with `…_act12`). A pair whose activation reports `Info.Predicate` is “not for this device”, so its configuration’s `Error.ActivationFailed` isn’t a failure. Every other `Error.*` is a failure, as is an invalid declaration.
 - Declarations are named by their Blueprint and the versions they are for (“‹Blueprint›, macOS 27.0–27.1”, from the predicate), never by IDs, server tokens or hashes.
+- **Stuck** only when a downloaded (prepared) update hasn’t installed after its deadline; before it, it installs at the deadline. Never for an offline device. Durations over 48 hours in days.
+- **A stale declaration report:** when the device last reported its update declarations before the update started or the Blueprint’s last change, Inspect says “Not evaluated since the update started” as the likely cause. “Doesn’t apply” comes only from a current report, with the device’s own device ID (or model) checked against the predicates’ lists.
 - **Bootstrap token:** a Mac’s bootstrap token status comes from the inventory’s `SECURITY` section (`bootstrapTokenEscrowedStatus`, `bootstrapTokenAllowed`), shown in the device detail. When the last error names the bootstrap token, it is the likely cause; a token that isn’t escrowed is listed otherwise.
 
 ### Targets per device (decided by Jordy on 2026-11-09)
@@ -39,6 +41,9 @@ Jamf’s reference (Platform API, Blueprint schema) has three software update se
 - A device is unsupported only when no release applies to its hardware at all.
 - An “Update started” date per tracked Blueprint, set by hand, overrides where reports count from; it is shown wherever it applies and can be removed.
 - Macs have no time zone in Jamf Pro: their deadline is “device local time”.
+- **Showing deadlines** (decided by Jordy on 2026-11-09): a deadline a device reports is a moment (Macs write it in UTC, e.g. 22:59 +0000 for 23:59 in Amsterdam; the offset says nothing about the device’s zone). It is shown in this Mac’s time zone, “reported by the device”; a computed one as “device local time”. Deadline per Time Zone never groups by the offset. By Major Release lists each distinct deadline once.
+- The device detail says where the target comes from: sent by Jamf (matching the Blueprint’s rule or not), the version the Blueprint names, or Apple’s data with the rule.
+- Open (dry run of 2026-11-09): Jamf counts the delay from Apple’s public catalog posting date (GDMF `PublicAssetSets`), which can be later than the release date (27.2: posted 5 Nov, released 26 Oct, so 19 Nov instead of 9 Nov). Computed deadlines still count from the release date until Jordy decides.
 - The separate software update settings component (deferrals, cadence, automatic actions, beta) is shown, not used for the target.
 
 It never changes anything in Jamf. Its allow-list permits GET and sign-in requests only, and it asks only for read permissions.

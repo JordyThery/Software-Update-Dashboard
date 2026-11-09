@@ -335,7 +335,7 @@ struct MajorsSection: View {
                         Text(row.targets.isEmpty ? "–" : row.targets.joined(separator: ", "))
                         Text("\(row.onTarget) of \(row.updatable)").monospacedDigit()
                         Text(row.deadlines.isEmpty ? "–"
-                             : row.deadlines.map(TargetRules.readable).joined(separator: ", ")
+                             : row.deadlines.joined(separator: "; ")
                                + (row.pastDeadline > 0 ? " (\(row.pastDeadline) past)" : ""))
                     }
                 }
@@ -405,11 +405,7 @@ struct DeadlineZonesSection: View {
                             Text(zone.target.map { "\(zone.label), target \($0)" } ?? zone.label)
                             Text("\(zone.deviceCount)").monospacedDigit().foregroundStyle(.secondary)
                                 .gridColumnAlignment(.trailing)
-                            if let deadline = zone.deadline {
-                                Text(deadline, format: .dateTime.day().month().hour().minute())
-                            } else {
-                                Text("\(TargetRules.readable(zone.localDeadline)), device local time").foregroundStyle(.secondary)
-                            }
+                            Text(DeadlineZones.text(local: zone.localDeadline, reported: zone.reported) ?? "–")
                             if let unusual = zone.unusual {
                                 WarningLabel(unusual).font(.callout)
                             } else {
@@ -418,7 +414,8 @@ struct DeadlineZonesSection: View {
                         }
                     }
                 }
-                Text("Times with a zone are shown in this Mac’s time zone.").font(.caption).foregroundStyle(.secondary)
+                Text("Deadlines reported by the devices are shown in this Mac’s time zone; computed ones in each device’s local time.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }

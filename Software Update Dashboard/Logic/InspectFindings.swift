@@ -37,12 +37,13 @@ nonisolated struct InspectContext: Sendable {
     var target: OSVersion?
     /// When the update started; errors before it don’t count.
     var since: Date?
+    /// When the Blueprint last changed: a declaration report from before it
+    /// says nothing about the current declarations.
+    var blueprintChanged: Date?
     var now: Date
     var serverTimeZone: TimeZone
     var staleDays = 30
     var minFreeSpaceMB = 6_000
-    /// An update busy for longer than this without a change is stuck.
-    var busyHours = 3
     /// The majors Apple’s release data knows for the platform.
     var majors: [Int] = []
     var supports: @Sendable (_ model: String?, _ boardID: String?, _ major: Int) -> Bool? = { _, _, _ in nil }
@@ -141,14 +142,29 @@ nonisolated enum InspectFindings {
             add("Declaration report not available", "\(input.reportsProblem ?? "No answer") (the API client needs declarations:read)")
         } else if mine.isEmpty {
             add("Update Blueprint not on the device", "None of its declarations are reported (scope, or the device hasn’t synced)")
+        } else if let evaluated = mine.compactMap(\.lastReportTime).max(),
+                  let start = [since, ctx.blueprintChanged].compactMap({ $0 }).max(), evaluated < start {
+            // the device's report is older than the current declarations: it says nothing about them
+            findings.insert(Finding(cause: "Not evaluated since the update started",
+                                    detail: "The device last reported its update declarations on \(day(evaluated)), before the update "
+                                        + "started (\(day(start))), so its report doesn’t cover the current declarations. It reports "
+                                        + "again after its next check-in"), at: 0)
         } else {
             let pending = applicable.flatMap(\.reports).filter { $0.status == .pending }
             if !pending.isEmpty { add("Update declarations not applied yet", "\(pending.count) still pending on the device") }
             if active.isEmpty {
                 let others = pairs.count - applicable.count
+                // the device's own ID against the predicates' lists
+                let ids = [status?.deviceID ?? row?.boardID, modelID.isEmpty ? nil : modelID].compactMap { $0 }
+                let listing = pairs.filter { pair in ids.contains { pair.lists($0) } }
+                let idText = ids.first ?? "its model"
+                let lists = listing.isEmpty
+                    ? " No declaration lists \(idText), so the Blueprint doesn’t cover this hardware."
+                    : " \(listing.count) list \(idText) (\(listing.map { $0.label(blueprint: ctx.blueprintName, osName: osName, deviceMajor: nil) }.joined(separator: "; "))), so their version condition excludes \(osName) \(os)."
                 add("No update declaration applies",
                     "None of \(ctx.blueprintName)’s \(pairs.count) update declarations applies to \(osName) \(os)"
-                        + (others > 0 ? " (\(others) \(others == 1 ? "is" : "are") for other versions or models)" : ""))
+                        + (others > 0 ? " (\(others) \(others == 1 ? "is" : "are") for other versions or models)" : "")
+                        + (pairs.contains { $0.predicate != nil } ? "." + lists : ""))
             } else if active.count > 1 {
                 add("Several update declarations active", active.map(label).joined(separator: "; ") + " all apply to \(osName) \(os)")
             }
@@ -169,12 +185,18 @@ nonisolated enum InspectFindings {
             add("Hardware can’t run the next version", "\(modelID.isEmpty ? status?.deviceID ?? "This model" : modelID) isn’t supported by \(osName) \(next)")
         }
         let updated = status?.newestUpdate.flatMap { JamfPro.serverDate($0, timeZone: ctx.serverTimeZone) }
-        if let state = status?.installState, state.isBusy, let updated {
+        // stuck only when a downloaded update didn't install after its
+        // deadline; before it, prepared is normal; never for a device offline
+        let offline = category == .offline
+            || member.lastSeen.map { ctx.now.timeIntervalSince($0) > Double(ctx.staleDays) * 86_400 } ?? false
+        if let state = status?.installState, state.isBusy, let updated, !offline {
             let pendingVersion = status?.pendingVersion?.osVersion ?? "?"
-            if ctx.now.timeIntervalSince(updated) < Double(ctx.busyHours) * 3_600 {
-                add("Update in progress", "\(state.rawValue) \(osName) \(pendingVersion), last change \(ago(updated, now: ctx.now))")
+            if state == .prepared && row?.pastDeadline == true {
+                add("Update stuck", "\(osName) \(pendingVersion) is downloaded but not installed after its deadline (last change \(ago(updated, now: ctx.now))); a restart of the device usually gets it going")
+            } else if state == .prepared {
+                add("Update downloaded", "\(osName) \(pendingVersion) is downloaded and installs at the deadline")
             } else {
-                add("Update stuck", "\(state.rawValue) \(osName) \(pendingVersion) since \(ago(updated, now: ctx.now)) without any change; a restart of the device usually gets it going")
+                add("Update in progress", "\(state.rawValue) \(osName) \(pendingVersion), last change \(ago(updated, now: ctx.now))")
             }
         }
         if category == .notStarted, status?.installState == JamfPro.SoftwareUpdateStatus.InstallState.none,
@@ -277,7 +299,9 @@ nonisolated enum InspectFindings {
         let minutes = Int((now.timeIntervalSince(date) / 60).rounded(.down))
         if minutes < 0 { return "just now" }
         if minutes < 120 { return "\(minutes) min ago" }
-        return "\(minutes / 60) h ago"
+        if minutes <= 48 * 60 { return "\(minutes / 60) h ago" }
+        let days = minutes / (24 * 60)
+        return "\(days) days ago"
     }
 
     /// Megabytes as gigabytes with one decimal, as Jamf Pro counts them (1024).
@@ -307,6 +331,11 @@ nonisolated struct DeclarationPair: Sendable, Hashable {
 
     var isActive: Bool { reports.contains { $0.active == true } }
 
+    /// Whether its predicate lists this device ID or model (`IN {"J313AP", …}`).
+    func lists(_ id: String) -> Bool {
+        predicate?.contains("\"\(id)\"") == true
+    }
+
     /// The predicate’s text, from the activation’s Info.Predicate reason.
     var predicate: String? {
         activation?.reasons.flatMap(\.details).first { $0.key?.lowercased() == "predicate" }?.description
@@ -324,7 +353,12 @@ nonisolated struct DeclarationPair: Sendable, Hashable {
     /// The versions in a predicate’s `MATCHES "^(27[.][0-1]([.][0-9]+)*)$"`:
     /// `27.0–27.1`; `18.0–18.7` for `18[.][0-6]…|18[.]7…`; `27` for a whole major.
     static func versionRange(_ predicate: String) -> String? {
-        guard let regex = predicate.firstMatch(of: #/MATCHES\s*"([^"]+)"/#)?.output.1 else { return nil }
+        guard let regex = predicate.firstMatch(of: #/MATCHES\s*"([^"]+)"/#)?.output.1 else {
+            // the older form: version BEGINSWITH "27." AND version < "27.0.1"
+            guard let major = predicate.firstMatch(of: #/BEGINSWITH\s*"([0-9]+)\./#)?.output.1 else { return nil }
+            if let below = predicate.firstMatch(of: #/version\s*<\s*"([0-9.]+)"/#)?.output.1 { return "\(major) below \(below)" }
+            return String(major)
+        }
         let text = String(regex)
         var major: Int?
         var minors: [Int] = []

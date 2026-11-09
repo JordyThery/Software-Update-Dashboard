@@ -4,92 +4,93 @@ import JTKit
 /// When a deadline falls for the devices in one time zone. A Blueprint’s
 /// deadline is each device’s local time, so devices in different zones
 /// reach it at different moments; devices with different targets have
-/// different deadlines.
+/// different deadlines. A device that reports its deadline gives the
+/// moment itself (written in UTC, so its offset says nothing about where
+/// the device is).
 nonisolated struct DeadlineZone: Sendable, Hashable, Identifiable {
     /// An IANA name; nil for devices that report no time zone.
     var zone: String?
-    /// Without a zone: the offset from UTC the device reported its deadline
-    /// with (a pending update’s target time), in seconds.
-    var offset: Int?
-    /// The deadline in the devices’ local time.
+    /// The deadline in the devices’ local time (computed from the rule).
     var localDeadline: String
-    /// The devices’ target, which tells rows without a zone or offset apart.
+    /// The deadline the devices reported, as a moment; nil when computed.
+    var reported: Date?
+    /// The devices’ target, which tells rows without a zone apart.
     var target: String?
     var deviceCount: Int
-    /// The moment the deadline falls there; nil without a zone or offset.
+    /// The moment the deadline falls: reported, or from the zone; nil
+    /// for a computed deadline without a zone.
     var deadline: Date?
     /// Why the zone stands out; nil when it doesn’t.
     var unusual: String?
 
-    var id: String { "\(zone ?? "")|\(offset.map(String.init) ?? "")|\(localDeadline)|\(target ?? "")" }
+    var id: String { "\(zone ?? "")|\(reported.map { String($0.timeIntervalSince1970) } ?? localDeadline)|\(target ?? "")" }
 
-    /// “Europe/Brussels”, “UTC+01:00 (from the device’s report)” or “No time zone”.
-    var label: String {
-        if let zone { return zone }
-        if let offset { return "\(Self.offsetText(offset)) (from the device’s report)" }
-        return "No time zone"
-    }
-
-    /// `UTC+01:00`, `UTC−05:30`, `UTC+00:00`.
-    static func offsetText(_ seconds: Int) -> String {
-        let minutes = abs(seconds) / 60
-        return String(format: "UTC%@%02d:%02d", seconds < 0 ? "−" : "+", minutes / 60, minutes % 60)
-    }
+    /// “Europe/Brussels” or “No time zone”.
+    var label: String { zone ?? "No time zone" }
 }
 
 nonisolated enum DeadlineZones {
-    /// Per zone (or reported offset) and deadline, most devices first, with
-    /// the moment the deadline falls. Devices without either are grouped by
-    /// deadline and target. A row stands out when its offset differs from
-    /// the most common one, when it isn’t a whole hour from UTC, or when it
-    /// has neither zone nor offset. Devices without a deadline are left out.
+    /// Per zone and deadline, most devices first. A reported deadline is
+    /// its own row (to the minute); a computed one is per zone and local
+    /// time, and without a zone per local time and target. A computed row
+    /// stands out when its zone’s offset differs from the most common one,
+    /// when it isn’t a whole hour from UTC, or when it has no zone.
     static func zones(devices: [DeviceStatus]) -> [DeadlineZone] {
-        let withDeadline = devices.filter { $0.deadlineLocal != nil }
+        let withDeadline = devices.filter { $0.deadlineLocal != nil || $0.deadlineDate != nil }
         guard !withDeadline.isEmpty else { return [] }
-        /// The device’s offset at its deadline: from its zone, else the one it reported.
-        func offset(_ device: DeviceStatus) -> Int? {
-            if let zone = device.timeZone.flatMap(TimeZone.init(identifier:)) {
-                return zone.secondsFromGMT(for: JamfPlatform.SoftwareUpdateBlock.deadline(device.deadlineLocal ?? "", in: zone) ?? Date())
-            }
-            return device.timeZone == nil ? device.deadlineOffset : nil
+        func offset(_ zone: String?, at local: String) -> Int? {
+            guard let zone, let timeZone = TimeZone(identifier: zone) else { return nil }
+            return timeZone.secondsFromGMT(for: JamfPlatform.SoftwareUpdateBlock.deadline(local, in: timeZone) ?? Date())
         }
-        let offsets = withDeadline.compactMap(offset)
-        let common = Dictionary(grouping: offsets) { $0 }.max { $0.value.count != $1.value.count ? $0.value.count < $1.value.count : $0.key > $1.key }?.key
+        let computed = withDeadline.filter { $0.deadlineDate == nil }
+        let common = Dictionary(grouping: computed.compactMap { offset($0.timeZone, at: $0.deadlineLocal ?? "") }) { $0 }
+            .max { $0.value.count != $1.value.count ? $0.value.count < $1.value.count : $0.key > $1.key }?.key
         let groups = Dictionary(grouping: withDeadline) { device -> String in
-            let place = device.timeZone ?? device.deadlineOffset.map { "offset \($0)" } ?? ""
-            // without a zone or offset, devices with other targets are other rows
-            let target = place.isEmpty ? device.targetVersion ?? "" : ""
-            return "\(place)|\(device.deadlineLocal ?? "")|\(target)"
+            if let moment = device.deadlineDate {
+                return "reported|\(device.timeZone ?? "")|\(Int(moment.timeIntervalSince1970 / 60))"
+            }
+            let target = device.timeZone == nil ? device.targetVersion ?? "" : ""
+            return "computed|\(device.timeZone ?? "")|\(device.deadlineLocal ?? "")|\(target)"
         }
         return groups.values.map { group -> DeadlineZone in
             let first = group[0]
             let zone = first.timeZone
-            let reportedOffset = zone == nil ? first.deadlineOffset : nil
             let local = first.deadlineLocal ?? ""
-            let seconds = offset(first)
+            if let moment = first.deadlineDate {
+                return DeadlineZone(zone: zone, localDeadline: local, reported: moment, target: zone == nil ? first.targetVersion : nil,
+                                    deviceCount: group.count, deadline: moment, unusual: nil)
+            }
             var unusual: String?
-            if zone == nil && reportedOffset == nil {
+            if zone == nil {
                 unusual = first.isComputer
                     ? "Jamf Pro has no time zone for Macs: the deadline is each Mac’s own local time"
                     : "No time zone reported"
-            } else if let zone, TimeZone(identifier: zone) == nil {
+            } else if TimeZone(identifier: zone!) == nil {
                 unusual = "Not a time zone the Mac knows"
-            } else if let seconds, seconds % 3_600 != 0 {
+            } else if let seconds = offset(zone, at: local), seconds % 3_600 != 0 {
                 unusual = "Not a whole hour from UTC"
-            } else if let seconds, let common, seconds != common {
+            } else if let seconds = offset(zone, at: local), let common, seconds != common {
                 let hours = Double(seconds - common) / 3_600
                 unusual = "\(hours > 0 ? "+" : "")\(hours.formatted(.number.precision(.fractionLength(0...1)))) h from most of the devices"
             }
-            let moment = zone.flatMap { TargetRules.deadlineDate(local, timeZone: $0) }
-                ?? reportedOffset.flatMap { offset in
-                    first.deadlineDate ?? TimeZone(secondsFromGMT: offset).flatMap { JamfPlatform.SoftwareUpdateBlock.deadline(local, in: $0) }
-                }
-            return DeadlineZone(zone: zone, offset: reportedOffset, localDeadline: local,
-                                target: zone == nil && reportedOffset == nil ? first.targetVersion : nil,
-                                deviceCount: group.count, deadline: moment, unusual: unusual)
+            return DeadlineZone(zone: zone, localDeadline: local, target: zone == nil ? first.targetVersion : nil,
+                                deviceCount: group.count, deadline: TargetRules.deadlineDate(local, timeZone: zone), unusual: unusual)
         }
         .sorted { $0.deviceCount != $1.deviceCount ? $0.deviceCount > $1.deviceCount
-                  : ($0.label, $0.localDeadline, $0.target ?? "") < ($1.label, $1.localDeadline, $1.target ?? "") }
+                  : ($0.label, $0.deadline ?? .distantFuture, $0.localDeadline, $0.target ?? "")
+                    < ($1.label, $1.deadline ?? .distantFuture, $1.localDeadline, $1.target ?? "") }
+    }
+
+    /// A deadline as it is shown everywhere: a reported moment in this
+    /// Mac’s time zone, “reported by the device”; a computed one in the
+    /// device’s local time.
+    static func text(local: String?, reported: Date?, timeZone: TimeZone = .current) -> String? {
+        if let reported {
+            var style = Date.FormatStyle(date: .abbreviated, time: .shortened)
+            style.timeZone = timeZone
+            return "\(reported.formatted(style)), reported by the device"
+        }
+        return local.map { "\(TargetRules.readable($0)), device local time" }
     }
 }
 
