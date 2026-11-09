@@ -1,6 +1,27 @@
 import Foundation
 import JTKit
 
+/// Where a device’s deadline comes from.
+nonisolated enum DeadlineSource: String, Sendable, Hashable, Codable {
+    /// The device reports it with its pending update: always wins.
+    case reported
+    /// The Blueprint names it (a specific version).
+    case blueprint
+    /// Apple’s public posting date (GDMF `PublicAssetSets`) plus the delay, as Jamf counts it.
+    case postingDate
+    /// No public posting date found: the first release date plus the delay.
+    case releaseDate
+
+    var text: String {
+        switch self {
+        case .reported: "reported by the device"
+        case .blueprint: "set in the Blueprint"
+        case .postingDate: "from Apple’s posting date"
+        case .releaseDate: "from the release date, no posting date found"
+        }
+    }
+}
+
 /// Why a device has no target. Such a device is never measured: it is
 /// shown as “Target unknown” with this reason.
 nonisolated enum TargetUnknown: String, Sendable, Hashable, Codable, CaseIterable {
@@ -34,6 +55,8 @@ nonisolated struct DeviceTarget: Sendable, Hashable, Codable {
     var activityFrom: Date?
     /// The deadline in the device’s local time, without a zone (`2026-11-23T17:00:00`).
     var deadlineLocal: String?
+    /// Where the deadline comes from.
+    var deadlineSource: DeadlineSource?
     /// Why this is the target, in plain language.
     var reason: String
     /// A newer major release exists that this model can’t run: measured
@@ -110,7 +133,7 @@ nonisolated enum TargetRules {
             let canRun = ctx.catalog?.supports(model: model, boardID: boardID, major: version.major, ctx.platform)
             let below = current.map { $0 < version } ?? true
             target = DeviceTarget(version: version.description, build: build, activityFrom: ctx.blueprintChanged,
-                                  deadlineLocal: deadline,
+                                  deadlineLocal: deadline, deadlineSource: deadline == nil ? nil : .blueprint,
                                   reason: "The Blueprint asks for \(osName) \(version)" + (deadline.map { " by \(readable($0))" } ?? ""),
                                   namedByBlueprint: true)
             if canRun == false && below {
@@ -153,8 +176,9 @@ nonisolated enum TargetRules {
         if let unknown = runsNewer(current, than: pick, catalog, ctx.platform, days: days, now: ctx.now, osName: osName) { return unknown }
         let limited = pick.version.major < newest.version.major
         return DeviceTarget(
-            version: pick.version.description, build: pick.build, released: pick.releaseDate, activityFrom: pick.releaseDate,
-            deadlineLocal: pick.releaseDate.map { deadline(released: $0, days: days, time: time) },
+            version: pick.version.description, build: catalog.build(of: pick, model: model, boardID: boardID), released: pick.releaseDate, activityFrom: pick.releaseDate,
+            deadlineLocal: basis(pick, catalog, model: model, boardID: boardID).map { deadline(released: $0.date, days: days, time: time) },
+            deadlineSource: basis(pick, catalog, model: model, boardID: boardID)?.source,
             reason: (days == 0 ? "The newest \(osName) release: \(pick.version)" : "The newest \(osName) release at least \(days) days old: \(pick.version)")
                 + (limited ? " (the newest this model can run; it can’t run \(osName) \(newest.version.major))" : ""),
             limitedByHardware: limited)
@@ -192,8 +216,9 @@ nonisolated enum TargetRules {
         }
         if let unknown = runsNewer(current, than: pick, catalog, ctx.platform, days: days, now: ctx.now, osName: osName) { return unknown }
         return DeviceTarget(
-            version: pick.version.description, build: pick.build, released: pick.releaseDate, activityFrom: pick.releaseDate,
-            deadlineLocal: pick.releaseDate.map { deadline(released: $0, days: days, time: time) },
+            version: pick.version.description, build: catalog.build(of: pick, model: model, boardID: boardID), released: pick.releaseDate, activityFrom: pick.releaseDate,
+            deadlineLocal: basis(pick, catalog, model: model, boardID: boardID).map { deadline(released: $0.date, days: days, time: time) },
+            deadlineSource: basis(pick, catalog, model: model, boardID: boardID)?.source,
             reason: days == 0 ? "The newest \(osName) \(current.major) release: \(pick.version)"
                               : "The newest \(osName) \(current.major) release at least \(days) days old: \(pick.version)",
             limitedByHardware: limited)
@@ -212,6 +237,16 @@ nonisolated enum TargetRules {
                 && runs(release, model: model, boardID: boardID, catalog, platform)
                 && (!knownOnly || catalog.supports(model: model, boardID: boardID, major: release.version.major, platform) == true)
         }
+    }
+
+    /// What a computed deadline counts from: Apple’s public posting date of
+    /// the release meant for this device, as Jamf counts it, else the first
+    /// release date (and the source says so). “Reports count from” stays at
+    /// the first release date either way.
+    static func basis(_ release: AppleReleases.Release, _ catalog: AppleReleases.Catalog, model: String?,
+                      boardID: String?) -> (date: Date, source: DeadlineSource)? {
+        if let posted = catalog.publicPosting(of: release, model: model, boardID: boardID)?.date { return (posted, .postingDate) }
+        return release.releaseDate.map { ($0, .releaseDate) }
     }
 
     /// The model can’t run the platform’s newest major: it belongs on the
@@ -262,15 +297,19 @@ nonisolated enum TargetRules {
                                   reason: "Jamf sent \(osName) \(version): the device reports it pending from a declaration",
                                   startSetByHand: rule.startSetByHand)
         target.fromDevice = true
+        // a deadline the device reports always wins
         if let moment = pending.targetDate, let offset = pending.targetOffset {
             target.deadlineDate = moment
             target.deadlineOffset = offset
             target.deadlineLocal = localText(moment, offset: offset)
+            target.deadlineSource = .reported
         } else if let local = pending.targetLocalDateTime?.replacingOccurrences(of: " ", with: "T"),
                   local.range(of: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$", options: .regularExpression) != nil {
             target.deadlineLocal = local
+            target.deadlineSource = .reported
         } else {
             target.deadlineLocal = rule.deadlineLocal
+            target.deadlineSource = rule.deadlineSource
         }
         target.ruleVersion = rule.version
         target.ruleReason = rule.reason

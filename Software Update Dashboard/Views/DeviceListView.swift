@@ -140,6 +140,9 @@ struct DeviceDetailView: View {
                 }
                 if let deadline = DeadlineZones.text(local: device.deadlineLocal, reported: device.deadlineDate) {
                     LabeledContent("Deadline", value: deadline)
+                    if let source = device.deadlineSource {
+                        Text("Deadline \(source)").foregroundStyle(.secondary)
+                    }
                     if device.pastDeadline == true { WarningLabel("Past the deadline") }
                 }
                 if let from = device.activityFrom {

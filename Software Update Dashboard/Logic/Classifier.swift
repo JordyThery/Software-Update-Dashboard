@@ -118,6 +118,8 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var deadlineOffset: Int?
     /// Where the target comes from, e.g. “27.2, sent by Jamf, matches the Blueprint’s rule”.
     var targetSource: String?
+    /// Where the deadline comes from, e.g. “from Apple’s posting date”.
+    var deadlineSource: String?
     /// `softwareupdate.device-id` from the status report.
     var boardID: String?
     /// A Mac’s bootstrap token in Jamf Pro: `ESCROWED`, `NOT_ESCROWED`, `NOT_SUPPORTED`.
@@ -163,6 +165,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case deadlineDate
         case deadlineOffset
         case targetSource
+        case deadlineSource
         case boardID
         case bootstrapToken
     }
@@ -305,6 +308,7 @@ nonisolated enum Classifier {
         status.targetReason = target.reason
         status.targetReleased = target.released
         status.targetSource = target.source
+        status.deadlineSource = target.deadlineSource?.text
         if target.fromDevice {
             status.targetFromDevice = true
             status.ruleTarget = target.ruleVersion
