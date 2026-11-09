@@ -18,36 +18,16 @@ struct GroupChoiceTests {
         #expect(mobile12.id != computer12.id)
         #expect(choice.group(computer12.id)?.name == "Test Macs")
         #expect(choice.group(mobile12.id)?.name == "Test iPads")
-        let tracked = TrackedGroup(connectionID: UUID(), group: computer12, blueprintID: "b1", blueprintName: "B")
-        #expect(tracked.isComputerGroup)
-        #expect(tracked.groupKey == computer12.id)
-        #expect(tracked.group == computer12)
+        let reference = GroupReference(computer12)
+        #expect(reference.key == computer12.id && reference.group == computer12)
     }
 
-    @Test("Saved and read back, a tracked group keeps its kind")
+    @Test("A comparison group keeps its kind when saved")
     func storage() throws {
         let defaults = UnderTest.emptiedDefaults(domain: "be.jordythery.softwareupdatedashboard.test-groups")
-        let connection = UUID()
-        TrackedGroupList.save([TrackedGroup(connectionID: connection, group: mobile12, blueprintID: "b1", blueprintName: "B"),
-                               TrackedGroup(connectionID: connection, group: computer12, blueprintID: "b1", blueprintName: "B")],
-                              to: defaults)
-        let loaded = TrackedGroupList.load(from: defaults)
-        #expect(loaded.map(\.groupKey) == [mobile12.id, computer12.id])
-        #expect(loaded.map(\.groupName) == ["Test iPads", "Test Macs"])
-        // a record saved before the key existed reads the same
-        let old = #"[{"id":"\#(UUID())","connectionID":"\#(connection)","groupID":"12","groupName":"Test Macs","isSmart":false,"isComputerGroup":true,"blueprintID":"b1","blueprintName":"B"}]"#
-        let decoded = try JSONDecoder().decode([TrackedGroup].self, from: Data(old.utf8))
-        #expect(decoded.first?.groupKey == computer12.id)
-    }
-
-    @Test("The same number of the other kind isn’t already tracked")
-    func tracked() {
-        let connections = ConnectionsModel.preview()
-        connections.demo.isOn = true
-        let model = DashboardModel(connections: connections)
-        let number = DemoSoftwareUpdate.macGroupID
-        #expect(model.isTracked(.init(kind: .computer, groupID: number), blueprintID: DemoSoftwareUpdate.macBlueprintID))
-        #expect(!model.isTracked(.init(kind: .mobileDevice, groupID: number), blueprintID: DemoSoftwareUpdate.macBlueprintID))
+        let tracked = TrackedBlueprint(connectionID: UUID(), blueprintID: "b1", blueprintName: "B", compareGroup: GroupReference(computer12))
+        TrackedBlueprintList.save([tracked], to: defaults)
+        #expect(TrackedBlueprintList.load(from: defaults).first?.compareGroup?.key == computer12.id)
     }
 
     @Test("The Blueprint’s groups come first; the rest by kind; the search filters every section")

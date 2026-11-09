@@ -1,35 +1,75 @@
 import Foundation
 import JTKit
 
-/// What a refresh of a tracked group found.
+/// One row of the dashboard’s table per platform and major release.
+nonisolated struct MajorRow: Sendable, Hashable, Identifiable {
+    var osName: String
+    /// Nil for devices whose version isn’t known.
+    var major: Int?
+    var devices: Int
+    /// The targets of its devices, lowest first (usually one).
+    var targets: [String]
+    var onTarget: Int
+    var updatable: Int
+    /// The deadlines, in the devices’ local time.
+    var deadlines: [String]
+    var pastDeadline: Int
+
+    var id: String { "\(osName) \(major.map(String.init) ?? "?")" }
+
+    static func rows(_ devices: [DeviceStatus]) -> [MajorRow] {
+        Dictionary(grouping: devices) { "\($0.osName)|\(OSVersion($0.currentOS)?.major.description ?? "")" }
+            .map { _, group in
+                let counts = CategoryCounts(group)
+                return MajorRow(
+                    osName: group[0].osName, major: OSVersion(group[0].currentOS)?.major, devices: group.count,
+                    targets: Set(group.compactMap(\.targetVersion)).sorted { (OSVersion($0) ?? OSVersion(major: 0)) < (OSVersion($1) ?? OSVersion(major: 0)) },
+                    onTarget: counts[.onTarget], updatable: counts.updatable,
+                    deadlines: Set(group.compactMap(\.deadlineLocal)).sorted(),
+                    pastDeadline: group.filter { $0.pastDeadline == true }.count)
+            }
+            .sorted { $0.osName != $1.osName ? $0.osName < $1.osName : ($0.major ?? -1) > ($1.major ?? -1) }
+    }
+}
+
+/// The comparison group’s devices the Blueprint doesn’t reach.
+nonisolated struct Coverage: Sendable, Hashable {
+    var group: GroupReference
+    var members: Int
+    var notReached: [JamfPro.GroupMember]
+}
+
+/// What a refresh of a tracked Blueprint found.
 nonisolated struct RefreshResult: Sendable {
     var date: Date
-    var group: TrackedGroup
+    var tracked: TrackedBlueprint
     var blueprintName: String
-    /// Every software update block of the Blueprint.
+    var blueprintChanged: Date?
+    /// Every software update block of the Blueprint, and its update settings.
     var blocks: [JamfPlatform.SoftwareUpdateBlock]
-    /// The block the group is measured against.
-    var block: JamfPlatform.SoftwareUpdateBlock?
-    var target: OSVersion?
-    var build: String?
-    /// The deadline in each device’s local time, without a zone.
-    var deadline: String?
-    /// When the update started: the Blueprint’s last change.
-    var since: Date?
-    var osName: String
+    var settings: [JamfPlatform.SoftwareUpdateSettings]
+    /// The Blueprint’s rule in plain language, e.g. “Minor updates, 14 days after their release”.
+    var rule: String
+    /// The Blueprint’s scope as Jamf Pro groups, and its Platform groups that aren’t one.
+    var scope: [GroupReference]
+    var unmatchedScope: Int
+    var scopeChange: ScopeChange?
     var members: [JamfPro.GroupMember]
     var devices: [DeviceStatus]
+    var majors: [MajorRow]
     var zones: [DeadlineZone]
     var replacements: [Replacement]
+    var coverage: Coverage?
     /// What couldn’t be read but didn’t stop the refresh, e.g. Apple’s release data.
     var problems: [String]
 
     var counts: CategoryCounts { CategoryCounts(devices) }
+    var pastDeadline: Int { devices.filter { $0.pastDeadline == true }.count }
 }
 
-/// A refresh: reads the Blueprint’s software update, the group’s members
-/// with their inventory and each one’s status report (all GETs, through
-/// JTKit), and sorts every device into its category.
+/// A refresh: reads the Blueprint’s software update and scope, the scope
+/// groups’ members with their inventory and each one’s status report (all
+/// GETs, through JTKit), gives every device its own target and sorts it.
 nonisolated struct RefreshWorkflow: Sendable {
     let client: JamfPlatform.Client
     let catalog: AppleReleases.Catalog?
@@ -38,30 +78,68 @@ nonisolated struct RefreshWorkflow: Sendable {
     /// Status reports read at the same time.
     var parallel = 4
 
-    func run(_ group: TrackedGroup, now: Date = Date(), progress: @Sendable (Int, Int) -> Void = { _, _ in }) async throws -> RefreshResult {
-        let (blueprint, blocks) = try await JamfPlatform.Blueprints(client: client).softwareUpdate(blueprintID: group.blueprintID)
-        let members = try await client.members(of: group.group)
-        let block = Self.block(for: members, in: blocks)
-        let platform = group.platform
-        var problems = catalog?.problems ?? ["Apple’s release data couldn’t be read: unsupported hardware and builds aren’t known."]
-        let (target, deadline) = Self.target(of: block, catalog: catalog, platform: platform)
-        if block == nil { problems.append("The Blueprint has no software update.") }
-        let build = block?.targetBuildVersion ?? target.flatMap { catalog?.build(of: $0, platform) }
+    func run(_ tracked: TrackedBlueprint, previousScope: [GroupReference]? = nil, now: Date = Date(),
+             progress: @Sendable (Int, Int) -> Void = { _, _ in }) async throws -> RefreshResult {
+        let (blueprint, blocks) = try await JamfPlatform.Blueprints(client: client).softwareUpdate(blueprintID: tracked.blueprintID)
+        var problems = catalog.map(\.problems) ?? ["Apple’s release data couldn’t be read: targets of automatic updates and unsupported hardware aren’t known."]
+        if blocks.isEmpty { problems.append("The Blueprint has no software update.") }
+
+        // the scope, read on every refresh
+        let platformGroups = try await client.platformGroups()
+        let groups = try await client.jamfProGroups()
+        let keys = GroupChoice.scope(platformGroupIDs: blueprint.scopeDeviceGroups, platformGroups: platformGroups)
+        let scope = keys.compactMap { key in groups.first { $0.id == key }.map(GroupReference.init) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        let unmatched = blueprint.scopeDeviceGroups.count - scope.count
+        if unmatched > 0 {
+            problems.append("\(unmatched) of the Blueprint’s scope groups \(unmatched == 1 ? "isn’t" : "aren’t") a Jamf Pro mobile device or computer group.")
+        }
+
+        // each device once, also when it is in several scope groups
+        var members: [JamfPro.GroupMember] = []
+        var seen = Set<String>()
+        for group in scope {
+            for member in try await client.members(of: group.group) where seen.insert(Self.key(member)).inserted {
+                members.append(member)
+            }
+        }
 
         let inputs = try await statuses(members, progress: progress)
-        let context = ClassificationContext(target: target, since: blueprint.overview.updatedDate, serverTimeZone: serverTimeZone,
-                                            now: now, staleDays: staleDays, catalog: catalog, platform: platform)
-        let devices = Classifier.classify(inputs, context: context)
-        let osName = group.isComputerGroup ? "macOS"
-            : Classifier.osName(isComputer: false, modelIdentifier: Self.mostCommonModel(members) ?? "iPad")
+        let devices = inputs.map { input in classify(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now) }
+
+        var coverage: Coverage?
+        if let compare = tracked.compareGroup {
+            let compared = try await client.members(of: compare.group)
+            coverage = Coverage(group: compare, members: compared.count,
+                                notReached: compared.filter { !seen.contains(Self.key($0)) })
+        }
         return RefreshResult(
-            date: now, group: group, blueprintName: blueprint.overview.name, blocks: blocks, block: block, target: target,
-            build: build, deadline: deadline, since: blueprint.overview.updatedDate, osName: osName, members: members,
-            devices: devices, zones: DeadlineZones.zones(deadline: deadline, devices: devices),
-            replacements: Replacement.list(devices) { model in
-                catalog?.lastSupportedVersion(model: model, boardID: model, platform)?.description
+            date: now, tracked: tracked, blueprintName: blueprint.overview.name, blueprintChanged: blueprint.overview.updatedDate,
+            blocks: blocks, settings: blueprint.softwareUpdateSettings, rule: Self.rule(blocks),
+            scope: scope, unmatchedScope: unmatched, scopeChange: ScopeChange(from: previousScope, to: scope),
+            members: members, devices: devices, majors: MajorRow.rows(devices),
+            zones: DeadlineZones.zones(devices: devices),
+            replacements: Replacement.list(devices) { model, isComputer in
+                catalog?.lastSupportedVersion(model: model, boardID: model, isComputer ? .macOS : .iOS)?.description
             },
-            problems: problems)
+            coverage: coverage, problems: problems)
+    }
+
+    /// One device against its own target.
+    func classify(_ input: DeviceInput, blocks: [JamfPlatform.SoftwareUpdateBlock], blueprint: JamfPlatform.BlueprintDetail,
+                  tracked: TrackedBlueprint, now: Date) -> DeviceStatus {
+        let member = input.member
+        let platform: AppleReleases.Platform = member.kind == .computer ? .macOS : .iOS
+        let model = member.modelIdentifier ?? input.status?.modelIdentifier
+        let osName = Classifier.osName(isComputer: member.kind == .computer, modelIdentifier: model ?? "")
+        let target = TargetRules.target(
+            os: input.status?.osVersion ?? member.osVersion, model: model, boardID: input.status?.deviceID, osName: osName,
+            context: TargetRules.Context(block: Self.block(for: osName, in: blocks), catalog: catalog, platform: platform,
+                                         blueprintChanged: blueprint.overview.updatedDate, updateStarted: tracked.updateStarted,
+                                         now: now))
+        let base = ClassificationContext(target: nil, since: nil, serverTimeZone: serverTimeZone, now: now, staleDays: staleDays,
+                                         catalog: catalog, platform: platform)
+        return Classifier.classify(input, target: target, context: base)
     }
 
     /// Each member’s status report, a few at a time, in the members’ order.
@@ -99,45 +177,31 @@ nonisolated struct RefreshWorkflow: Sendable {
         return members.indices.compactMap { inputs[$0] }
     }
 
-    /// The block the group is measured against: the one whose activation
-    /// predicate names the group’s most common OS (iPadOS, iOS, macOS), else
-    /// one without a predicate, else the first.
-    static func block(for members: [JamfPro.GroupMember], in blocks: [JamfPlatform.SoftwareUpdateBlock]) -> JamfPlatform.SoftwareUpdateBlock? {
-        let family = members.first?.kind == .computer ? "macOS"
-            : Classifier.osName(isComputer: false, modelIdentifier: mostCommonModel(members) ?? "iPad")
-        return blocks.first { $0.activationPredicate?.contains("'\(family)'") == true }
+    /// A device by kind and Jamf Pro number: a Mac and an iPad can share a number.
+    static func key(_ member: JamfPro.GroupMember) -> String { "\(member.kind.rawValue)/\(member.id)" }
+
+    /// The block for a device: the one whose activation predicate names its
+    /// OS (iPadOS, iOS, macOS), else one without a predicate, else the first.
+    static func block(for osName: String, in blocks: [JamfPlatform.SoftwareUpdateBlock]) -> JamfPlatform.SoftwareUpdateBlock? {
+        blocks.first { $0.activationPredicate?.contains("'\(osName)'") == true }
             ?? blocks.first { $0.activationPredicate == nil }
             ?? blocks.first
     }
 
-    /// The version and deadline a block asks for. An automatic block asks
-    /// for the newest release (of the newest major), by its release date
-    /// plus its days, at its time.
-    static func target(of block: JamfPlatform.SoftwareUpdateBlock?, catalog: AppleReleases.Catalog?,
-                       platform: AppleReleases.Platform) -> (OSVersion?, String?) {
-        switch block?.enforcement {
-        case .specific(let version, let deadline, _)?:
-            return (OSVersion(version), deadline)
-        case .latest(let days, let time)?, .semantic(let days, let time)?:
-            guard let latest = catalog?.latest(platform) else { return (nil, nil) }
-            return (latest.version, latest.releaseDate.map { localDeadline($0, days: days ?? 0, time: time) })
-        default:
-            return (nil, nil)
+    /// The Blueprint’s rule in plain language; several blocks joined.
+    static func rule(_ blocks: [JamfPlatform.SoftwareUpdateBlock]) -> String {
+        let rules = blocks.map { block -> String in
+            switch block.enforcement {
+            case .specific(let version, let deadline, _):
+                "Version \(version)" + (deadline.map { " by \(TargetRules.readable($0))" } ?? "")
+            case .latest(let days, _):
+                (days ?? 0) == 0 ? "The newest release, without delay" : "The newest release, \(days ?? 0) days after its release"
+            case .semantic(let days, _):
+                (days ?? 0) == 0 ? "Minor updates, without delay" : "Minor updates, \(days ?? 0) days after their release"
+            case .unknown:
+                "A software update this app doesn’t read"
+            }
         }
-    }
-
-    /// The release date plus days, at `HH:MM`, as a local date-time text.
-    static func localDeadline(_ released: Date, days: Int, time: String?) -> String {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
-        let day = calendar.date(byAdding: .day, value: days, to: released) ?? released
-        let parts = calendar.dateComponents([.year, .month, .day], from: day)
-        let clock = time.flatMap { $0.count == 5 ? $0 : nil } ?? "00:00"
-        return String(format: "%04d-%02d-%02dT%@:00", parts.year ?? 2000, parts.month ?? 1, parts.day ?? 1, clock)
-    }
-
-    static func mostCommonModel(_ members: [JamfPro.GroupMember]) -> String? {
-        let families = members.compactMap(\.modelIdentifier).map { $0.hasPrefix("iPad") ? "iPad" : $0.hasPrefix("iPhone") ? "iPhone" : $0 }
-        return Dictionary(grouping: families, by: { $0 }).max { $0.value.count < $1.value.count }?.key
+        return rules.isEmpty ? "No software update" : Array(NSOrderedSet(array: rules)).compactMap { $0 as? String }.joined(separator: "; ")
     }
 }

@@ -45,6 +45,13 @@ enum Sample {
                               }, oldestMaintainedMajor: oldestMaintainedMajor)
     }
 
+    /// One device against its own target (`TargetRules`).
+    static func classify(_ member: JamfPro.GroupMember, _ status: JamfPro.SoftwareUpdateStatus?, target: DeviceTarget,
+                         now: String = "2026-11-09T12:00:00") -> DeviceStatus {
+        Classifier.classify(DeviceInput(member: member, status: status), target: target,
+                            context: ClassificationContext(target: nil, serverTimeZone: utc, now: date(now)))
+    }
+
     static func classify(_ member: JamfPro.GroupMember, _ status: JamfPro.SoftwareUpdateStatus?,
                          problem: String? = nil, context: ClassificationContext = context()) -> DeviceStatus {
         Classifier.classify(DeviceInput(member: member, status: status, statusProblem: problem), context: context)

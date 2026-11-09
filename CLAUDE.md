@@ -21,6 +21,8 @@ A read-only Mac app that answers, for a group of devices, whether they are on th
 
 - `App/`: the app (About, Check for Updates, Settings, Connection menu, activity log, Demo Mode), `UnderTest`.
 - `Connections/`: `AppConnection` (a JTKit connection plus the Jamf Pro server's time zone), `ConnectionsModel` (saved connections, the one in use, demo mode, the read-only clients), the Connections tab.
+- `State/`: tracked Blueprints (with the move from tracked groups), the history, the dashboard model.
+- `Logic/`: the classifier, the target rules per device (`TargetRules`), the summary, Inspect, deadlines per zone.
 - `Views/`: the main window.
 - From JTKit: `ConnectionStore`, `ConnectionsSettingsTab`, `ConnectionPicker`/`ConnectionCommands`, `SettingsWindow`, `AboutWindow`, `UpdateChecker`, `ActivityLogWindow`, `DemoMode` with `DemoSoftwareUpdate`, `JamfPlatform.Client` and the 1.5.0 readers (groups and members, `softwareUpdateStatus`, Declaration Reporting, `softwareUpdateBlocks`), `AppleReleases`.
 - Every request goes through JTKit; the app only interprets. When something is needed that JTKit could share, extend JTKit instead of adding a copy here.
@@ -34,7 +36,7 @@ A read-only Mac app that answers, for a group of devices, whether they are on th
 - No code copied from other projects. JAMFGetDDMInfo is GPL and may only inform.
 - `os.Logger` messages that can hold server answers use `privacy: .private`.
 - Demo mode never reaches a real tenant or the real release-data hosts (JTKit's demo network).
-- Stored data: the connections under `connections` in UserDefaults, the one in use under `activeConnectionID`, the demo switch under `demoMode`, the secrets in the Keychain under `be.jordythery.softwareupdatedashboard.jamf`. Keep these names.
+- Stored data: the connections under `connections` in UserDefaults, the one in use under `activeConnectionID`, the demo switch under `demoMode`, the tracked Blueprints under `trackedBlueprints` (moved once from the first version’s `trackedGroups`, which is read but never removed), the history in `History/<tracked Blueprint ID>/`, the secrets in the Keychain under `be.jordythery.softwareupdatedashboard.jamf`. Keep these names.
 
 ## Watchlist
 

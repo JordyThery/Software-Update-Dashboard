@@ -1,28 +1,28 @@
 import JTKit
 import SwiftUI
 
-/// Every tracked group at a glance: how far along it is, and when it was
-/// last read.
+/// Every tracked Blueprint at a glance: how far along it is, and when it
+/// was last read.
 struct OverviewView: View {
     let model: DashboardModel
-    @Binding var isAdding: Bool
+    @Binding var sheet: BlueprintSheet?
 
     var body: some View {
         Group {
-            if model.groups.isEmpty {
+            if model.trackedBlueprints.isEmpty {
                 ContentUnavailableView {
-                    Label("No Tracked Groups", systemImage: "square.stack.3d.up")
+                    Label("No Tracked Blueprints", systemImage: "square.stack.3d.up")
                 } description: {
-                    Text("Track a Jamf Pro group with the Blueprint that enforces its software update.")
+                    Text("Track a Blueprint with a software update. Its scope says which devices count.")
                 } actions: {
-                    Button("Track a Group…") { isAdding = true }
+                    Button("Track a Blueprint…") { sheet = .track }
                         .disabled(model.connections.demoChoice.isActive)
                 }
             } else {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
-                        ForEach(model.groups) { group in
-                            GroupCard(model: model, group: group)
+                        ForEach(model.trackedBlueprints) { tracked in
+                            BlueprintCard(model: model, tracked: tracked)
                         }
                     }
                     .padding(20)
@@ -37,37 +37,37 @@ struct OverviewView: View {
                 } label: {
                     Label("Refresh All", systemImage: "arrow.clockwise")
                 }
-                .disabled(model.groups.isEmpty || !model.refreshing.isEmpty)
-                .help("Read every tracked group from Jamf again")
+                .disabled(model.trackedBlueprints.isEmpty || !model.refreshing.isEmpty)
+                .help("Read every tracked Blueprint from Jamf again")
             }
         }
         .task(id: model.connections.inUseKey) {
-            // the first look at a connection reads its groups once
-            for group in model.groups where model.results[group.id] == nil { await model.refresh(group.id) }
+            // the first look at a connection reads its Blueprints once
+            for tracked in model.trackedBlueprints where model.results[tracked.id] == nil { await model.refresh(tracked.id) }
         }
     }
 }
 
-/// One tracked group in the overview.
-struct GroupCard: View {
+/// One tracked Blueprint in the overview.
+struct BlueprintCard: View {
     let model: DashboardModel
-    let group: TrackedGroup
+    let tracked: TrackedBlueprint
 
     var body: some View {
-        let latest = model.latestCounts(group.id)
+        let latest = model.latestCounts(tracked.id)
         Button {
-            model.selection = .group(group.id)
+            model.selection = .blueprint(tracked.id)
         } label: {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
-                    Label(group.groupName, systemImage: group.isComputerGroup ? "laptopcomputer" : "ipad")
+                    Label(tracked.blueprintName, systemImage: "square.stack.3d.up")
                         .font(.headline)
                     Spacer()
-                    if model.refreshing.contains(group.id) { ProgressView().controlSize(.small) }
+                    if model.refreshing.contains(tracked.id) { ProgressView().controlSize(.small) }
                 }
-                Text(group.blueprintName)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                if let rule = latest?.rule ?? model.results[tracked.id]?.rule {
+                    Text(rule).font(.subheadline).foregroundStyle(.secondary)
+                }
                 if let latest {
                     HStack(alignment: .center, spacing: 14) {
                         Gauge(value: (latest.counts.percentOnTarget ?? 0) / 100) {
@@ -79,8 +79,8 @@ struct GroupCard: View {
                         .tint(.green)
                         VStack(alignment: .leading, spacing: 4) {
                             Text("\(latest.counts[.onTarget]) of \(latest.counts.updatable) updatable on target")
-                            if let target = latest.target {
-                                Text("Target \(target)").foregroundStyle(.secondary)
+                            if let result = model.results[tracked.id], result.pastDeadline > 0 {
+                                Text("\(result.pastDeadline) past the deadline").foregroundStyle(.secondary)
                             }
                             Text(latest.date, format: .relative(presentation: .named))
                                 .foregroundStyle(.secondary)
@@ -88,7 +88,7 @@ struct GroupCard: View {
                         .font(.callout)
                     }
                     ProgressBar(counts: latest.counts)
-                } else if let error = model.errors[group.id] {
+                } else if let error = model.errors[tracked.id] {
                     WarningLabel(error).font(.callout).lineLimit(3)
                 } else {
                     Text("Not read yet").foregroundStyle(.secondary)
@@ -100,7 +100,7 @@ struct GroupCard: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityHint("Shows the group’s dashboard")
+        .accessibilityHint("Shows the Blueprint’s dashboard")
     }
 }
 

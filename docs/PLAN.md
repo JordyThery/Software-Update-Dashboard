@@ -6,15 +6,31 @@ Decided by Jordy on 2026-11-09.
 
 A read-only Mac app that answers, for a group of devices, whether they are on the OS version their Blueprint’s software update asks for, and if not, why not.
 
-The unit of work is a **tracked group**: a Jamf Pro group (mobile devices or computers) plus the Blueprint that enforces its update. For a tracked group, the app:
+The unit of work is a **tracked Blueprint**: a Blueprint with a software update (changed from a tracked group by Jordy on 2026-11-09). Its devices are those of the Jamf Pro groups it is scoped to, mobile devices and computers together, each device counted once; the scope is read again on every refresh and its changes are kept in the history. A group can be added for comparison: its devices the Blueprint doesn’t reach (a coverage check, not counted). For a tracked Blueprint, the app:
 
 - reads the Blueprint’s software update: target version, build, deadline, and its blocks (the steps that hold a software update, each with its own activation predicate);
 - reads each device’s inventory and its declarative device management (DDM) status items, and the declaration reports;
 - sorts every device into nine categories with a plain-language diagnosis: on target, no report, unsupported, offline, no activity, other update, failed, in progress, not started;
-- keeps a history per refresh, 180 days per tracked group;
+- gives every device its own target (see below) and keeps a history per refresh, 180 days per tracked Blueprint;
 - marks unsupported hardware, with a replacement list (model, number of devices, last version it can run);
 - shows the deadline per time zone (the deadline is the device’s local time) and points out unusual zones;
-- has an overview of all tracked groups, a dashboard per group, a device list and a device detail with Inspect, and CSV and summary exports.
+- has an overview of all tracked Blueprints, a dashboard per Blueprint (with a table per platform and major release), a device list and a device detail with Inspect, and CSV and summary exports.
+
+### Targets per device (decided by Jordy on 2026-11-09)
+
+Jamf’s reference (Platform API, Blueprint schema) has three software update settings, plus Apple’s own declaration:
+
+| Setting | Target of a device | Reports count from | Deadline |
+|---|---|---|---|
+| Specific version (`MANUAL`, no delay) | that version | the Blueprint’s last change | the Blueprint’s, device local time |
+| Latest (`AUTOMATIC` `LATEST`, 0–30 days) | Apple’s newest release at least that old, across majors; the newest its model can run (listed among the hardware to replace, with a note) | Apple’s release date of the target | release date + days, at the Blueprint’s time, device local time |
+| Minor updates (`AUTOMATIC` `SEMANTIC` `minor`, 0–30 days) | the newest release of its own major at least that old | Apple’s release date of the target | release date + days, at the Blueprint’s time, device local time |
+| Apple’s declaration (custom declarations) | as a specific version, with its build | as a specific version | as a specific version |
+
+- A device is unsupported only when no release applies to its hardware at all.
+- An “Update started” date per tracked Blueprint, set by hand, overrides where reports count from; it is shown wherever it applies and can be removed.
+- Macs have no time zone in Jamf Pro: their deadline is “device local time”.
+- The separate software update settings component (deferrals, cadence, automatic actions, beta) is shown, not used for the target.
 
 It never changes anything in Jamf. Its allow-list permits GET and sign-in requests only, and it asks only for read permissions.
 

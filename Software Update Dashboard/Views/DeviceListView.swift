@@ -29,6 +29,12 @@ struct DeviceListView: View {
             TableColumn("Model", value: \.modelIdentifier)
             TableColumn("OS", value: \.currentOS)
                 .width(min: 60, ideal: 70)
+            TableColumn("Target") { device in
+                Text(device.targetVersion ?? "–")
+                    .foregroundStyle(device.limitedByHardware == true ? .orange : .primary)
+                    .help(device.targetReason ?? "")
+            }
+            .width(min: 60, ideal: 80)
             TableColumn("Category", value: \.category.title) { device in
                 StatusBadge(device.category.title, style: device.category.badgeStyle)
             }
@@ -55,7 +61,7 @@ struct DeviceListView: View {
                 Button("Inspect Devices Needing Attention") {
                     inspect(Set(InspectWorkflow.select(result.devices).map(\.id)))
                 }
-                .disabled(InspectWorkflow.select(result.devices).isEmpty || model.isInspecting(in: result.group.id))
+                .disabled(InspectWorkflow.select(result.devices).isEmpty || model.isInspecting(in: result.tracked.id))
                 .help("Look for the likely cause on every device whose diagnosis needs attention")
             }
             .padding(.horizontal, 12)
@@ -87,7 +93,7 @@ struct DeviceListView: View {
 
     private func inspect(_ ids: Set<DeviceStatus.ID>) {
         let chosen = result.devices.filter { ids.contains($0.id) }
-        Task { await model.inspect(chosen, in: result.group.id) }
+        Task { await model.inspect(chosen, in: result.tracked.id) }
     }
 }
 
@@ -113,6 +119,17 @@ struct DeviceDetailView: View {
                     if let date = device.lastContact { Text(date, format: .relative(presentation: .named)) } else { Text("Never") }
                 }
             }
+            Section("Target") {
+                LabeledContent("Target", value: device.targetVersion ?? "None")
+                if let reason = device.targetReason { Text(reason).foregroundStyle(.secondary) }
+                if let deadline = device.deadlineLocal {
+                    LabeledContent("Deadline", value: "\(TargetRules.readable(deadline)), \(device.timeZone ?? "device local time")")
+                    if device.pastDeadline == true { WarningLabel("Past the deadline") }
+                }
+                if let from = device.activityFrom {
+                    LabeledContent("Reports count from", value: from.formatted(date: .abbreviated, time: .shortened))
+                }
+            }
             Section("Software Update") {
                 LabeledContent("Install state", value: device.installState ?? "–")
                 LabeledContent("Pending version", value: device.pendingVersion ?? "–")
@@ -127,9 +144,9 @@ struct DeviceDetailView: View {
                 if let problem = device.statusProblem { WarningLabel(problem) }
             }
             Section("Inspect") {
-                if model.isInspecting(device, in: result.group.id) {
+                if model.isInspecting(device, in: result.tracked.id) {
                     ProgressView("Inspecting…").controlSize(.small)
-                } else if let inspection = model.inspection(of: device, in: result.group.id) {
+                } else if let inspection = model.inspection(of: device, in: result.tracked.id) {
                     LabeledContent("Likely cause", value: inspection.cause)
                     Text(inspection.detail).foregroundStyle(.secondary)
                     ForEach(Array(inspection.findings.dropFirst().enumerated()), id: \.offset) { _, finding in
@@ -140,10 +157,10 @@ struct DeviceDetailView: View {
                     }
                 }
                 if let error = model.inspectError { WarningLabel(error) }
-                Button(model.inspection(of: device, in: result.group.id) == nil ? "Inspect" : "Inspect Again") {
-                    Task { await model.inspect([device], in: result.group.id) }
+                Button(model.inspection(of: device, in: result.tracked.id) == nil ? "Inspect" : "Inspect Again") {
+                    Task { await model.inspect([device], in: result.tracked.id) }
                 }
-                .disabled(model.isInspecting(device, in: result.group.id))
+                .disabled(model.isInspecting(device, in: result.tracked.id))
                 .help("Reads the device’s status and declaration reports to find the likely cause")
             }
         }

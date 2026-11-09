@@ -170,13 +170,13 @@ struct LiveReadTests {
                    note: statusError.map(failure) ?? "\(reports) with a report, \(none) without")
 
         // 4. a Blueprint with a software update
-        var tracked: TrackedGroup?
+        var tracked: TrackedBlueprint?
         do {
             let blueprints = try await JamfPlatform.Blueprints(client: client).list()
             for overview in blueprints.prefix(25) {
                 let update = try await JamfPlatform.Blueprints(client: client).softwareUpdate(blueprintID: overview.id)
                 if !update.blocks.isEmpty {
-                    tracked = TrackedGroup(connectionID: UUID(), group: chosen.group, blueprintID: overview.id, blueprintName: overview.name)
+                    tracked = TrackedBlueprint(connectionID: UUID(), blueprintID: overview.id, blueprintName: overview.name)
                     // the sheet's scope section: the Blueprint's Platform groups as Jamf Pro groups (kind and number)
                     do {
                         let platformGroups = try await client.platformGroups()
@@ -198,9 +198,7 @@ struct LiveReadTests {
             if tracked == nil {
                 record(run, step("a Blueprint with a software update (blueprints:read)"), passed: true,
                            note: "none among \(min(blueprints.count, 25)) Blueprints; the refresh runs without a target")
-                tracked = blueprints.first.map {
-                    TrackedGroup(connectionID: UUID(), group: chosen.group, blueprintID: $0.id, blueprintName: $0.name)
-                }
+                tracked = blueprints.first.map { TrackedBlueprint(connectionID: UUID(), blueprintID: $0.id, blueprintName: $0.name) }
             }
         } catch {
             record(run, step("a Blueprint with a software update (blueprints:read)"), passed: false, note: failure(error))
@@ -213,11 +211,12 @@ struct LiveReadTests {
                 let result = try await RefreshWorkflow(client: client, catalog: nil, serverTimeZone: .gmt).run(tracked)
                 let counts = StatusCategory.allCases.filter { result.counts[$0] > 0 }.map { "\($0.rawValue) \(result.counts[$0])" }
                 let unreadable = result.devices.filter { $0.statusProblem != nil }.count
-                record(run, step("the app's refresh of the mobile group"), passed: unreadable == 0,
-                           note: "target \(result.target?.description ?? "unknown"); " + counts.joined(separator: ", ")
-                               + (unreadable > 0 ? "; \(unreadable) status reports unreadable" : ""))
+                let targets = Set(result.devices.compactMap(\.targetVersion)).count
+                record(run, step("the app's refresh of the Blueprint's scope"), passed: unreadable == 0,
+                           note: "\(result.scope.count) scope groups, \(result.devices.count) devices once each, \(targets) targets; "
+                               + counts.joined(separator: ", ") + (unreadable > 0 ? "; \(unreadable) status reports unreadable" : ""))
             } catch {
-                record(run, step("the app's refresh of the mobile group"), passed: false, note: failure(error))
+                record(run, step("the app's refresh of the Blueprint's scope"), passed: false, note: failure(error))
                 throw error
             }
         }

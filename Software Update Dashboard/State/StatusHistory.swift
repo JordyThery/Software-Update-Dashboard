@@ -36,18 +36,51 @@ nonisolated enum ProgressGroup: String, CaseIterable, Sendable, Identifiable {
 /// One refresh of a tracked group, as kept in its history.
 nonisolated struct HistorySnapshot: Sendable, Hashable, Codable, Identifiable {
     var date: Date
-    /// The target version at the time; nil when unknown.
+    /// What the devices were measured against: the Blueprint’s rule (e.g.
+    /// “Minor updates, 14 days after their release”) or the version it asks
+    /// for; nil when unknown. Refreshes are compared only for the same one.
     var target: String?
     var counts: CategoryCounts
     var devices: [DeviceStatus]
+    /// The Blueprint’s scope at the time, as Jamf Pro groups (nil in entries
+    /// saved before the scope was kept).
+    var scope: [GroupReference]?
 
     var id: Date { date }
 
-    init(date: Date, target: String?, devices: [DeviceStatus]) {
+    init(date: Date, target: String?, devices: [DeviceStatus], scope: [GroupReference]? = nil) {
         self.date = date
         self.target = target
         self.devices = devices
+        self.scope = scope
         counts = CategoryCounts(devices)
+    }
+}
+
+/// How the Blueprint’s scope changed between two refreshes.
+nonisolated struct ScopeChange: Sendable, Hashable {
+    var added: [GroupReference]
+    var removed: [GroupReference]
+
+    /// Nil when either refresh has no scope kept, or nothing changed.
+    init?(from previous: [GroupReference]?, to current: [GroupReference]?) {
+        guard let previous, let current else { return nil }
+        let before = Set(previous.map(\.key)), after = Set(current.map(\.key))
+        added = current.filter { !before.contains($0.key) }
+        removed = previous.filter { !after.contains($0.key) }
+        if added.isEmpty && removed.isEmpty { return nil }
+    }
+
+    /// “Scope: 1 group added (Name), 1 removed (Name)”.
+    var text: String {
+        var parts: [String] = []
+        if !added.isEmpty {
+            parts.append("\(added.count) \(added.count == 1 ? "group" : "groups") added (\(added.map(\.name).joined(separator: ", ")))")
+        }
+        if !removed.isEmpty {
+            parts.append("\(removed.count) removed (\(removed.map(\.name).joined(separator: ", ")))")
+        }
+        return "Scope: " + parts.joined(separator: ", ")
     }
 }
 
@@ -141,7 +174,7 @@ nonisolated struct StatusHistory: Sendable {
         return encoder
     }()
 
-    private static let decoder: JSONDecoder = {
+    static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let text = try decoder.singleValueContainer().decode(String.self)

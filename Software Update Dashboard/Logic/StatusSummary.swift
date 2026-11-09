@@ -42,12 +42,15 @@ nonisolated enum StatusSummary {
         return snapshot
     }
 
-    static func text(group: String, devices: [DeviceStatus], target: String?, osName: String, previous: HistorySnapshot?,
-                     staleDays: Int, date: Date = Date(), locale: Locale = .current) -> String {
+    /// - Parameters:
+    ///   - measuredAgainst: the Blueprint’s rule, e.g. “Minor updates, 14 days after their release”.
+    ///   - notes: lines after the counts, e.g. a scope change or the coverage check.
+    static func text(group: String, devices: [DeviceStatus], measuredAgainst: String?, previous: HistorySnapshot?,
+                     staleDays: Int, date: Date = Date(), locale: Locale = .current, notes: [String] = []) -> String {
         let counts = CategoryCounts(devices)
         var lines: [String] = []
         lines.append("\(group): \(date.formatted(date: .abbreviated, time: .shortened))")
-        lines.append("  Devices:    \(devices.count) (target \(osName) \(target ?? "unknown"))")
+        lines.append("  Devices:    \(devices.count) (\(measuredAgainst ?? "target unknown"))")
         for category in StatusCategory.allCases {
             var line = "    " + category.title.padding(toLength: 14, withPad: " ", startingAt: 0)
                 + String(String(repeating: " ", count: 6) + String(counts[category])).suffix(6)
@@ -65,6 +68,9 @@ nonisolated enum StatusSummary {
         if let percent = counts.percentOnTarget { progress += " (\(percent.formatted(.number.precision(.fractionLength(0...1)).locale(locale)))%)" }
         progress += "; updatable excludes unsupported, offline and no report"
         lines.append(progress)
+        let late = devices.filter { $0.pastDeadline == true }.count
+        lines.append("  Deadline:   \(late) \(late == 1 ? "device" : "devices") not on target past \(late == 1 ? "its" : "their") deadline")
+        for note in notes { lines.append("  \(note)") }
         let passcodes = devices.filter { $0.passcodePresent == true && $0.category != .offline && $0.category != .onTarget }.count
         lines.append("  Passcode:   \(passcodes) online \(passcodes == 1 ? "device" : "devices") not on target report a passcode")
         let unreadable = devices.filter { $0.statusProblem != nil }
@@ -83,7 +89,8 @@ nonisolated enum StatusSummary {
             lines.append("  Needs attention: \(attention.count) \(attention.count == 1 ? "device" : "devices")"
                          + (attention.count > 10 ? " (first 10; all in the CSV)" : ""))
             for device in attention.prefix(10) {
-                lines.append("    \(device.name)  \(device.modelIdentifier)  \(device.osName) \(device.currentOS.isEmpty ? "?" : device.currentOS)  \(device.diagnosis)")
+                lines.append("    \(device.name)  \(device.modelIdentifier)  \(device.osName) \(device.currentOS.isEmpty ? "?" : device.currentOS)"
+                             + (device.targetVersion.map { " → \($0)" } ?? "") + "  \(device.diagnosis)")
             }
         }
         return lines.joined(separator: "\n") + "\n"

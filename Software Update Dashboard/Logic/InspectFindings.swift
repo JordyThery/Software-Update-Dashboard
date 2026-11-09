@@ -44,6 +44,9 @@ nonisolated struct InspectContext: Sendable {
     /// The majors Apple’s release data knows for the platform.
     var majors: [Int] = []
     var supports: @Sendable (_ model: String?, _ boardID: String?, _ major: Int) -> Bool? = { _, _, _ in nil }
+    /// Apple’s release data: when set, the majors and support of each
+    /// device’s own platform (a Blueprint can reach iPads and Macs).
+    var catalog: AppleReleases.Catalog?
 }
 
 /// One reason a device may not update.
@@ -91,6 +94,15 @@ nonisolated enum InspectFindings {
         let isMobile = member.kind == .mobileDevice
         let category = row?.category
         let diagnosis = row?.diagnosis ?? ""
+        // the device’s own target and start, when the refresh gave it one
+        let target = row?.targetVersion.flatMap(OSVersion.init) ?? ctx.target
+        let since = row?.activityFrom ?? ctx.since
+        let platform: AppleReleases.Platform = member.kind == .computer ? .macOS : .iOS
+        let majors = ctx.catalog?.majors(platform) ?? ctx.majors
+        let supports: (String?, String?, Int) -> Bool? = { model, board, major in
+            if let catalog = ctx.catalog { return catalog.supports(model: model, boardID: board, major: major, platform) }
+            return ctx.supports(model, board, major)
+        }
 
         var findings: [Finding] = []
         func add(_ cause: String, _ detail: String) { findings.append(Finding(cause: cause, detail: detail)) }
@@ -156,9 +168,9 @@ nonisolated enum InspectFindings {
             }
         }
 
-        if let version, let target = ctx.target, target.major > version.major,
-           let next = ctx.majors.filter({ $0 > version.major }).min(),
-           ctx.supports(modelID.isEmpty ? nil : modelID, status?.deviceID, next) == false {
+        if let version, let target, target.major > version.major,
+           let next = majors.filter({ $0 > version.major }).min(),
+           supports(modelID.isEmpty ? nil : modelID, status?.deviceID, next) == false {
             add("Hardware can’t run the next version", "\(modelID.isEmpty ? status?.deviceID ?? "This model" : modelID) isn’t supported by \(osName) \(next)")
         }
         let updated = status?.newestUpdate.flatMap { JamfPro.serverDate($0, timeZone: ctx.serverTimeZone) }
@@ -192,7 +204,7 @@ nonisolated enum InspectFindings {
             add("Roaming on mobile data", "Updates are normally downloaded over Wi-Fi: check that the device has a Wi-Fi network")
         }
         if let failTime = status?.failure?.timestamp, let failAt = JamfPro.serverDate(failTime, timeZone: ctx.serverTimeZone),
-           ctx.since.map({ failAt >= $0 }) ?? true {
+           since.map({ failAt >= $0 }) ?? true {
             let reason = Classifier.shortError(status?.failure?.reason)
             let count = status?.failure?.count.map { "\($0) \($0 == 1 ? "failure" : "failures"), " } ?? ""
             let last = String(failTime.prefix(16)).replacingOccurrences(of: "T", with: " ")
@@ -207,7 +219,7 @@ nonisolated enum InspectFindings {
             add("Other declaration with a problem", "\(other.declarationIdentifier): \(why(other))\(other.validity == .invalid ? " (invalid)" : "")")
         }
 
-        return InspectResult(id: member.id, name: row?.name ?? member.name ?? "", serial: member.serialNumber ?? "",
+        return InspectResult(id: RefreshWorkflow.key(member), name: row?.name ?? member.name ?? "", serial: member.serialNumber ?? "",
                              modelIdentifier: modelID, os: os, diagnosis: diagnosis, onTarget: category == .onTarget,
                              findings: findings)
     }

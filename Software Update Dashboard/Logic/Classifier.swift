@@ -36,6 +36,9 @@ nonisolated struct ClassificationContext: Sendable {
     /// Below this major, a device that hasn’t started is pointed at its
     /// hardware (the oldest major Apple still updates); nil: never.
     var oldestMaintainedMajor: Int?
+    /// No release applies to this device’s hardware at all (the target rules
+    /// found none): it is unsupported, whatever it reports.
+    var noApplicableRelease = false
 
     init(target: OSVersion?, since: Date? = nil, serverTimeZone: TimeZone = .gmt, now: Date = Date(), staleDays: Int = 30,
          supports: @escaping @Sendable (_ model: String?, _ boardID: String?, _ major: Int) -> Bool? = { _, _, _ in nil },
@@ -61,8 +64,8 @@ nonisolated struct ClassificationContext: Sendable {
 
 /// One classified device: a row of the device list, the CSV and the history.
 nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
-    /// Jamf Pro’s ID of the device.
-    var id: String
+    /// Jamf Pro’s number of the device, unique only within its kind (`id` adds the kind).
+    var jamfID: String
     var isComputer: Bool
     var name: String
     var serial: String
@@ -92,6 +95,50 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var diagnosis: String
     /// Why the status report couldn’t be read, if it couldn’t.
     var statusProblem: String?
+    /// The device’s own target and why (nil in history saved before targets per device).
+    var targetVersion: String?
+    var targetReason: String?
+    /// Reports and errors before this didn’t count.
+    var activityFrom: Date?
+    /// The deadline in the device’s local time.
+    var deadlineLocal: String?
+    var pastDeadline: Bool?
+    /// Measured against the newest release its model can run: a newer major exists it can’t.
+    var limitedByHardware: Bool?
+
+    /// The device by kind and number: a Mac and an iPad can share a number.
+    var id: String { "\(isComputer ? "computer" : "mobileDevice")/\(jamfID)" }
+
+    enum CodingKeys: String, CodingKey {
+        case jamfID = "id"
+        case isComputer
+        case name
+        case serial
+        case model
+        case modelIdentifier
+        case inventoryOS
+        case reportedOS
+        case installState
+        case pendingVersion
+        case failureCount
+        case error
+        case errorTime
+        case errorSinceUpdate
+        case passcodePresent
+        case lastContact
+        case statusUpdated
+        case timeZone
+        case managementID
+        case category
+        case diagnosis
+        case statusProblem
+        case targetVersion
+        case targetReason
+        case activityFrom
+        case deadlineLocal
+        case pastDeadline
+        case limitedByHardware
+    }
 
     /// The version the device reports, else the one in its inventory.
     var currentOS: String { reportedOS ?? inventoryOS ?? "" }
@@ -105,14 +152,17 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var needsAttention: Bool { diagnosis.range(of: Self.attentionPattern, options: .regularExpression) != nil }
 
     /// The CSV’s columns, in order.
-    static let csvColumns = ["jamf_pro_id", "name", "serial", "model", "model_id", "inventory_os", "reported_os",
-                             "install_state", "pending_version", "category", "diagnosis", "error", "error_time",
-                             "error_since_update", "passcode_present", "last_contact", "status_updated", "time_zone"]
+    static let csvColumns = ["jamf_pro_id", "kind", "name", "serial", "model", "model_id", "inventory_os", "reported_os",
+                             "target", "deadline_local", "past_deadline", "install_state", "pending_version", "category",
+                             "diagnosis", "error", "error_time", "error_since_update", "passcode_present", "last_contact",
+                             "status_updated", "time_zone"]
 
     var csvLine: String {
         func date(_ value: Date?) -> String { value.map { $0.formatted(.iso8601) } ?? "" }
         func flag(_ value: Bool?) -> String { value.map { $0 ? "yes" : "no" } ?? "" }
-        return CSV.line([id, name, serial, model, modelIdentifier, inventoryOS ?? "", reportedOS ?? "", installState ?? "",
+        return CSV.line([jamfID, isComputer ? "computer" : "mobile device", name, serial, model, modelIdentifier,
+                         inventoryOS ?? "", reportedOS ?? "", targetVersion ?? "", deadlineLocal ?? "", flag(pastDeadline),
+                         installState ?? "",
                          pendingVersion ?? "", category.rawValue, diagnosis, error, errorTime ?? "", flag(errorSinceUpdate),
                          passcodePresent.map { $0 ? "true" : "false" } ?? "", date(lastContact), date(statusUpdated),
                          timeZone ?? ""])
@@ -155,6 +205,7 @@ nonisolated enum Classifier {
         let category: StatusCategory
         if let target, let os, !(os < target) { category = .onTarget }
         else if itemCount == 0 && ddmOS == nil { category = stale ? .offline : .noReport }
+        else if ctx.noApplicableRelease { category = .unsupported }
         else if unsupportedHardware, let os, let target, os.major < target.major { category = .unsupported }
         else if stale { category = .offline }
         else if !fresh { category = .noActivity }
@@ -178,6 +229,8 @@ nonisolated enum Classifier {
         let diagnosis: String
         switch true {
         case category == .onTarget: diagnosis = "On target"
+        case category == .unsupported && target == nil:
+            diagnosis = "No \(osName) release this hardware can run"
         case category == .unsupported:
             diagnosis = "Hardware can’t run \(osName) \(target?.major ?? 0) (stays on its last supported version)"
         case category == .offline: diagnosis = "Offline: no contact for more than \(ctx.staleDays) days"
@@ -201,13 +254,33 @@ nonisolated enum Classifier {
         }
 
         return DeviceStatus(
-            id: member.id, isComputer: member.kind == .computer, name: member.name ?? "", serial: member.serialNumber ?? "",
+            jamfID: member.id, isComputer: member.kind == .computer, name: member.name ?? "", serial: member.serialNumber ?? "",
             model: member.model ?? "", modelIdentifier: modelID ?? status?.modelIdentifier ?? status?.deviceID ?? "",
             inventoryOS: member.osVersion, reportedOS: ddmOS, installState: state?.rawValue, pendingVersion: pending,
             failureCount: status?.failure?.count, error: error, errorTime: failTime,
             errorSinceUpdate: failTime == nil ? nil : failedSince, passcodePresent: status?.passcodePresent ?? member.passcodePresent,
             lastContact: member.lastSeen, statusUpdated: updated, timeZone: member.timeZone, managementID: member.managementID,
             category: category, diagnosis: diagnosis, statusProblem: input.statusProblem)
+    }
+
+    /// One device measured against its own target (`TargetRules`): its
+    /// target, the start of its activity, and its deadline.
+    static func classify(_ input: DeviceInput, target: DeviceTarget, context base: ClassificationContext) -> DeviceStatus {
+        var ctx = base
+        ctx.target = target.osVersion
+        ctx.since = target.activityFrom
+        ctx.noApplicableRelease = target.noApplicableRelease
+        // the target rules already chose a release this hardware can run
+        ctx.supports = { _, _, _ in nil }
+        var status = classify(input, context: ctx)
+        status.targetVersion = target.version
+        status.targetReason = target.reason
+        status.activityFrom = target.activityFrom
+        status.deadlineLocal = target.deadlineLocal
+        status.pastDeadline = status.category == .onTarget ? false
+            : TargetRules.isPastDeadline(target.deadlineLocal, timeZone: input.member.timeZone, now: base.now)
+        status.limitedByHardware = target.limitedByHardware
+        return status
     }
 
     /// iPadOS for an iPad, iOS for an iPhone, macOS for a Mac.

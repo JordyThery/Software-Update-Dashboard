@@ -5,7 +5,7 @@ import JTKit
 
 private func row(_ id: String, _ category: StatusCategory, _ diagnosis: String, passcode: Bool? = nil,
                  problem: String? = nil) -> DeviceStatus {
-    DeviceStatus(id: id, isComputer: false, name: "Test iPad \(id)", serial: "ZZTEST\(id)", model: "iPad Air",
+    DeviceStatus(jamfID: id, isComputer: false, name: "Test iPad \(id)", serial: "ZZTEST\(id)", model: "iPad Air",
                  modelIdentifier: "iPad13,18", inventoryOS: "26.7.1", reportedOS: nil, installState: nil, pendingVersion: nil,
                  failureCount: nil, error: "", errorTime: nil, errorSinceUpdate: nil, passcodePresent: passcode,
                  lastContact: nil, statusUpdated: nil, timeZone: nil, managementID: nil, category: category,
@@ -24,10 +24,11 @@ struct StatusSummaryTests {
     func text() {
         let previous = HistorySnapshot(date: Sample.date("2026-11-04T21:00:00"), target: "27.0.1",
                                        devices: [row("1", .onTarget, "On target"), row("3", .inProgress, "x"), row("4", .offline, "y")])
-        let text = StatusSummary.text(group: "Field iPads", devices: rows, target: "27.0.1", osName: "iPadOS",
+        let text = StatusSummary.text(group: "Field iPads", devices: rows, measuredAgainst: "Version 27.0.1",
                                       previous: StatusSummary.previous(previous, target: "27.0.1"), staleDays: 30, date: Sample.now,
                                       locale: Locale(identifier: "en_US_POSIX"))
-        #expect(text.contains("  Devices:    4 (target iPadOS 27.0.1)\n"))
+        #expect(text.contains("  Devices:    4 (Version 27.0.1)\n"))
+        #expect(text.contains("  Deadline:   0 devices not on target past their deadline\n"))
         #expect(text.contains("    On target          2  (+1)\n"))
         #expect(text.contains("    In progress        1\n"))
         #expect(text.contains("    Offline            1  (no contact for more than 30 days)\n"))
@@ -49,7 +50,8 @@ struct StatusSummaryTests {
     @Test("Devices whose status couldn’t be read are pointed out")
     func unreadable() {
         let text = StatusSummary.text(group: "G", devices: [row("1", .noReport, "Update status couldn’t be read", problem: "403")],
-                                      target: "27.0.1", osName: "iPadOS", previous: nil, staleDays: 30)
+                                      measuredAgainst: "Version 27.0.1", previous: nil, staleDays: 30, notes: ["Scope: 1 group added (A)"])
+        #expect(text.contains("  Scope: 1 group added (A)\n"))
         #expect(text.contains("!! The update status couldn’t be read for 1 device; they count as no report."))
     }
 

@@ -33,7 +33,7 @@ struct SoftwareUpdateDashboardApp: App {
             ConnectionCommands(store: connections.saved, roles: [connections.role()]) {
                 DemoModeToggle(demo: connections.demo)
             }
-            GroupCommands()
+            BlueprintCommands()
         }
 
         // JTKit's Settings window: Connections and Updates (no General tab:

@@ -1,13 +1,13 @@
 import JTKit
 import SwiftUI
 
-/// The main window: the overview and the tracked groups in the sidebar, the
-/// selected one in the detail, and the connection in use in the toolbar.
+/// The main window: the overview and the tracked Blueprints in the sidebar,
+/// the selected one in the detail, and the connection in use in the toolbar.
 struct ContentView: View {
     let connections: ConnectionsModel
     @State private var model: DashboardModel
-    @State private var isAdding = false
-    @State private var page: GroupView.Page = .dashboard
+    @State private var sheet: BlueprintSheet?
+    @State private var page: BlueprintView.Page = .dashboard
     /// Set by the menu or the toolbar: true for the CSV, false for the summary.
     @State private var exportRequest: Bool?
 
@@ -18,22 +18,15 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(model: model, isAdding: $isAdding)
+            SidebarView(model: model, sheet: $sheet)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         } detail: {
             if connections.connectionInUse == nil {
                 NoConnectionView(demo: connections.demo)
+            } else if case .blueprint(let id)? = model.selection, let tracked = model.tracked(id) {
+                BlueprintView(model: model, tracked: tracked, page: $page, exportRequest: $exportRequest, sheet: $sheet)
             } else {
-                switch model.selection {
-                case .group(let id)?:
-                    if let group = model.group(id) {
-                        GroupView(model: model, group: group, page: $page, exportRequest: $exportRequest)
-                    } else {
-                        OverviewView(model: model, isAdding: $isAdding)
-                    }
-                default:
-                    OverviewView(model: model, isAdding: $isAdding)
-                }
+                OverviewView(model: model, sheet: $sheet)
             }
         }
         .toolbar {
@@ -41,44 +34,63 @@ struct ContentView: View {
                 ConnectionPicker(store: connections.saved, role: connections.role())
             }
         }
-        .sheet(isPresented: $isAdding) {
-            AddGroupSheet(model: model)
+        .sheet(item: $sheet) { sheet in
+            switch sheet {
+            case .track: AddBlueprintSheet(model: model)
+            case .compare(let id): CompareGroupSheet(model: model, trackedID: id)
+            case .updateStarted(let id): UpdateStartedSheet(model: model, trackedID: id)
+            }
         }
         .onChange(of: connections.inUseKey) {
             model.connectionChanged()
         }
-        .focusedSceneValue(\.groupFocus, GroupFocus(
-            model: model,
-            page: isGroupSelected ? $page : nil,
-            isAdding: $isAdding,
-            export: isGroupSelected ? { exportRequest = $0 } : nil))
+        .focusedSceneValue(\.blueprintFocus, BlueprintFocus(
+            model: model, page: selectedID != nil ? $page : nil, sheet: $sheet,
+            export: selectedID != nil ? { exportRequest = $0 } : nil))
     }
 
-    private var isGroupSelected: Bool {
-        if case .group? = model.selection { return true }
-        return false
+    private var selectedID: UUID? {
+        if case .blueprint(let id)? = model.selection { return id }
+        return nil
     }
 }
 
-/// The overview and the tracked groups.
+/// The sheets of the main window.
+enum BlueprintSheet: Identifiable, Hashable {
+    case track
+    case compare(UUID)
+    case updateStarted(UUID)
+
+    var id: String {
+        switch self {
+        case .track: "track"
+        case .compare(let id): "compare \(id)"
+        case .updateStarted(let id): "started \(id)"
+        }
+    }
+}
+
+/// The overview and the tracked Blueprints.
 struct SidebarView: View {
     @Bindable var model: DashboardModel
-    @Binding var isAdding: Bool
+    @Binding var sheet: BlueprintSheet?
 
     var body: some View {
         List(selection: $model.selection) {
             Label("Overview", systemImage: "square.grid.2x2")
                 .tag(DashboardModel.Selection.overview)
-            Section("Tracked Groups") {
-                ForEach(model.groups) { group in
-                    Label(group.groupName, systemImage: group.isComputerGroup ? "laptopcomputer" : "ipad")
-                        .badge(model.latestCounts(group.id).map { Text($0.counts.percentText) })
-                        .tag(DashboardModel.Selection.group(group.id))
+            Section("Tracked Blueprints") {
+                ForEach(model.trackedBlueprints) { tracked in
+                    Label(tracked.blueprintName, systemImage: "square.stack.3d.up")
+                        .badge(model.latestCounts(tracked.id).map { Text($0.counts.percentText) })
+                        .tag(DashboardModel.Selection.blueprint(tracked.id))
                         .contextMenu {
-                            Button("Refresh") { Task { await model.refresh(group.id) } }
+                            Button("Refresh") { Task { await model.refresh(tracked.id) } }
+                            Button("Compare with a Group…") { sheet = .compare(tracked.id) }
+                            Button("Set Update Start…") { sheet = .updateStarted(tracked.id) }
                             if !model.connections.demoChoice.isActive {
                                 Divider()
-                                Button("Stop Tracking", role: .destructive) { model.remove(group.id) }
+                                Button("Stop Tracking", role: .destructive) { model.remove(tracked.id) }
                             }
                         }
                 }
@@ -87,12 +99,12 @@ struct SidebarView: View {
         .toolbar {
             ToolbarItem {
                 Button {
-                    isAdding = true
+                    sheet = .track
                 } label: {
-                    Label("Track a Group…", systemImage: "plus")
+                    Label("Track a Blueprint…", systemImage: "plus")
                 }
                 .disabled(model.connectionID == nil || model.connections.demoChoice.isActive)
-                .help(model.connections.demoChoice.isActive ? "Demo Mode has its own sample groups." : "Track a Jamf Pro group and its update Blueprint")
+                .help(model.connections.demoChoice.isActive ? "Demo Mode has its own sample Blueprints." : "Track a Blueprint with a software update")
             }
         }
     }

@@ -30,7 +30,7 @@ nonisolated struct InspectWorkflow: Sendable {
                 let member = members[index]
                 next += 1
                 group.addTask {
-                    let input = await inspectInput(member, row: rowsByID[member.id])
+                    let input = await inspectInput(member, row: rowsByID[RefreshWorkflow.key(member)])
                     return (index, InspectFindings.evaluate(input, context: context))
                 }
             }
