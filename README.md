@@ -1,4 +1,15 @@
+<p align="center">
+  <img src="docs/icon.png" width="128" alt="Software Update Dashboard app icon">
+</p>
+
 # Software Update Dashboard
+
+*Which devices are on the update their Blueprint asks for, and why the others aren’t yet.*
+
+[![Latest release](https://img.shields.io/github/v/release/JordyThery/Software-Update-Dashboard?label=release)](https://github.com/JordyThery/Software-Update-Dashboard/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/JordyThery/Software-Update-Dashboard/total)](https://github.com/JordyThery/Software-Update-Dashboard/releases)
+![macOS 15+](https://img.shields.io/badge/macOS-15%2B-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 A read-only Mac app that shows, for the devices a Blueprint is scoped to, whether they are on the OS version its software update asks for, and if not, why not.
 
@@ -20,6 +31,10 @@ A read-only Mac app that shows, for the devices a Blueprint is scoped to, whethe
 
 - macOS 15 or later.
 - A Jamf Platform API integration with read permissions only: `blueprints:read`, `devices:read`, `device-groups:read` and `declarations:read`.
+
+## Installation
+
+Download the latest build from [Releases](../../releases), unzip, and move **Software Update Dashboard.app** to your Applications folder. The app is signed with a Developer ID and notarized by Apple. Once a day the app asks GitHub whether a newer version exists; turn this off with **Check for updates daily** in **Settings › Updates**, or check now with **Software Update Dashboard › Check for Updates…**.
 
 ## Read only
 
