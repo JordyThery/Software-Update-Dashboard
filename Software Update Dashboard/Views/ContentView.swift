@@ -34,7 +34,7 @@ struct ContentView: View {
             }
             .safeAreaInset(edge: .top) {
                 if let copy = model.unreadableTrackedCopy, !connections.demoChoice.isActive {
-                    UnreadableListBanner(copy: copy)
+                    UnreadableListBanner(model: model, copy: copy)
                 }
             }
         }
@@ -145,18 +145,39 @@ struct SidebarView: View {
 /// The saved tracked Blueprints couldn’t be read: they were copied, and
 /// nothing is saved over them.
 struct UnreadableListBanner: View {
+    let model: DashboardModel
     let copy: String
+    @State private var confirmsNewList = false
+    @State private var exportError: String?
 
     var body: some View {
-        Label {
-            Text("The saved list of tracked Blueprints couldn’t be read. It was kept as the setting “\(copy)”, and changes to the list aren’t saved until it can be read again.")
-                .fixedSize(horizontal: false, vertical: true)
-        } icon: {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+        HStack(alignment: .firstTextBaseline) {
+            Label {
+                Text("The saved list of tracked Blueprints couldn’t be read. It was kept as the setting “\(copy)”, and changes to the list aren’t saved until you start a new list.")
+                    .fixedSize(horizontal: false, vertical: true)
+                if let exportError { Text(exportError).foregroundStyle(.secondary) }
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            }
+            Spacer()
+            Button("Show Copy in Finder") {
+                do {
+                    NSWorkspace.shared.activateFileViewerSelecting([try model.exportUnreadableCopy()])
+                } catch {
+                    exportError = error.localizedDescription
+                }
+            }
+            Button("Start a New List…") { confirmsNewList = true }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bar)
+        .confirmationDialog("Start a new list of tracked Blueprints?", isPresented: $confirmsNewList, titleVisibility: .visible) {
+            Button("Start a New List") { model.startNewTrackedList() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The list that couldn’t be read stays as the setting “\(copy)”; nothing is deleted. Histories on this Mac are kept.")
+        }
     }
 }
 

@@ -120,6 +120,9 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var targetSource: String?
     /// Where the deadline comes from, e.g. “from Apple’s posting date”.
     var deadlineSource: String?
+    /// A deadline the device reported before the Blueprint’s last change: shown, not used.
+    var staleReportedDeadline: Date?
+    var staleSince: Date?
     /// `softwareupdate.device-id` from the status report.
     var boardID: String?
     /// A Mac’s bootstrap token in Jamf Pro: `ESCROWED`, `NOT_ESCROWED`, `NOT_SUPPORTED`.
@@ -166,6 +169,8 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case deadlineOffset
         case targetSource
         case deadlineSource
+        case staleReportedDeadline
+        case staleSince
         case boardID
         case bootstrapToken
     }
@@ -183,7 +188,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
 
     /// The CSV’s columns, in order.
     static let csvColumns = ["jamf_pro_id", "kind", "name", "serial", "model", "model_id", "inventory_os", "reported_os",
-                             "target", "deadline_local", "past_deadline", "install_state", "pending_version", "category",
+                             "target", "deadline", "deadline_source", "past_deadline", "install_state", "pending_version", "category",
                              "diagnosis", "error", "error_time", "error_since_update", "passcode_present", "last_contact",
                              "status_updated", "time_zone"]
 
@@ -191,7 +196,9 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         func date(_ value: Date?) -> String { value.map { $0.formatted(.iso8601) } ?? "" }
         func flag(_ value: Bool?) -> String { value.map { $0 ? "yes" : "no" } ?? "" }
         return CSV.line([jamfID, isComputer ? "computer" : "mobile device", name, serial, model, modelIdentifier,
-                         inventoryOS ?? "", reportedOS ?? "", targetVersion ?? "", deadlineLocal ?? "", flag(pastDeadline),
+                         inventoryOS ?? "", reportedOS ?? "", targetVersion ?? "",
+                         // a reported deadline as a moment in UTC (with its Z), a computed one in the device's local time
+                         deadlineDate.map(date) ?? deadlineLocal ?? "", deadlineSource ?? "", flag(pastDeadline),
                          installState ?? "",
                          pendingVersion ?? "", category.rawValue, diagnosis, error, errorTime ?? "", flag(errorSinceUpdate),
                          passcodePresent.map { $0 ? "true" : "false" } ?? "", date(lastContact), date(statusUpdated),
@@ -309,6 +316,8 @@ nonisolated enum Classifier {
         status.targetReleased = target.released
         status.targetSource = target.source
         status.deadlineSource = target.deadlineSource?.text
+        status.staleReportedDeadline = target.staleReportedDeadline
+        status.staleSince = target.staleSince
         if target.fromDevice {
             status.targetFromDevice = true
             status.ruleTarget = target.ruleVersion

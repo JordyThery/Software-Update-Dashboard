@@ -185,13 +185,21 @@ nonisolated enum InspectFindings {
             add("Hardware can’t run the next version", "\(modelID.isEmpty ? status?.deviceID ?? "This model" : modelID) isn’t supported by \(osName) \(next)")
         }
         let updated = status?.newestUpdate.flatMap { JamfPro.serverDate($0, timeZone: ctx.serverTimeZone) }
+        // the device still holds a deadline from before the Blueprint changed
+        if let stale = row?.staleReportedDeadline {
+            let since = row?.staleSince.map { " (\(day($0)))" } ?? ""
+            let current = DeadlineZones.text(local: row?.deadlineLocal, reported: nil).map { "; the Blueprint’s deadline is \($0)" } ?? ""
+            add("Declaration not refreshed since the Blueprint changed",
+                "The device still reports the deadline \(day(stale)) from before the Blueprint’s last change\(since)\(current). "
+                    + "It takes the current declaration at its next check-in")
+        }
         // stuck only when a downloaded update didn't install after its
         // deadline; before it, prepared is normal; never for a device offline
         let offline = category == .offline
             || member.lastSeen.map { ctx.now.timeIntervalSince($0) > Double(ctx.staleDays) * 86_400 } ?? false
         if let state = status?.installState, state.isBusy, let updated, !offline {
             let pendingVersion = status?.pendingVersion?.osVersion ?? "?"
-            if state == .prepared && row?.pastDeadline == true {
+            if state == .prepared && row?.pastDeadline == true && row?.staleReportedDeadline == nil {
                 add("Update stuck", "\(osName) \(pendingVersion) is downloaded but not installed after its deadline (last change \(ago(updated, now: ctx.now))); a restart of the device usually gets it going")
             } else if state == .prepared {
                 add("Update downloaded", "\(osName) \(pendingVersion) is downloaded and installs at the deadline")

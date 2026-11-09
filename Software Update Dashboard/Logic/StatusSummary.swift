@@ -22,6 +22,9 @@ nonisolated struct CategoryCounts: Sendable, Hashable, Codable {
     subscript(_ category: StatusCategory) -> Int { category == .targetUnknown ? targetUnknown : counts[category] ?? 0 }
     /// The measured devices.
     var total: Int { counts.values.reduce(0, +) }
+    /// Whether a refresh with these counts belongs in the history: not when
+    /// every device’s target was unknown (a snapshot of zero devices).
+    var isWorthSaving: Bool { total > 0 || targetUnknown == 0 }
     /// Every device but the unsupported, offline and no-report ones.
     var updatable: Int { total - StatusCategory.allCases.filter(\.isExcludedFromUpdatable).map { self[$0] }.reduce(0, +) }
     /// The share of updatable devices on target, rounded to 0.1; nil without any.

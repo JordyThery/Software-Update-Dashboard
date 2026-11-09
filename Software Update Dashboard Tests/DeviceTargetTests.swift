@@ -10,7 +10,7 @@ struct DeviceTargetTests {
     // as in Apple's own data: X86LEGACYAP is listed for an old major only,
     // J152FAP (a T2 Intel Mac) for 26; 26.6 has no device list
     static let gdmf = #"""
-    {"AssetSets":{"macOS":[
+    {"PublicAssetSets":{"macOS":[
       {"ProductVersion":"26.7.2","Build":"25G332","PostingDate":"2026-10-26","SupportedDevices":["J152FAP","J314sAP"]},
       {"ProductVersion":"26.7.1","Build":"25G241","PostingDate":"2026-09-28","SupportedDevices":["J152FAP","J314sAP"]},
       {"ProductVersion":"12.7.9","Build":"21H900","PostingDate":"2025-01-01","SupportedDevices":["X86LEGACYAP","J152FAP"]}]}}
@@ -50,7 +50,7 @@ struct DeviceTargetTests {
     func runsNewer() {
         // 26.7.1 is 42 days old; the rule (only 26.6 for this "model") can't fit it
         let catalog = try! AppleReleases.Catalog(sofaMacOS: Data(Self.sofaMacOS.utf8), gdmf: Data(#"""
-        {"AssetSets":{"macOS":[
+        {"PublicAssetSets":{"macOS":[
           {"ProductVersion":"26.7.2","PostingDate":"2026-10-26","SupportedDevices":["J314sAP"]},
           {"ProductVersion":"26.7.1","PostingDate":"2026-09-28","SupportedDevices":["J314sAP"]}]}}
         """#.utf8))
@@ -443,20 +443,81 @@ struct PostingDeadlineTests {
         #expect(target.deadlineSource?.text == "from the release date, no posting date found")
     }
 
-    @Test("A deadline the device reports always wins; a specific version’s is the Blueprint’s")
-    func reportedWins() {
-        let rule = Self.rule(os: "27.0.1")
-        let status = Sample.status([("device.operating-system.version", "27.0.1"),
-                                    ("softwareupdate.pending-version.os-version", "27.2"),
-                                    ("softwareupdate.pending-version.target-local-date-time", "2026-11-09 22:59:06 +0000"),
-                                    ("softwareupdate.install-reason.reason", "declaration")], time: "2026-11-03T07:00:00")
-        let sent = TargetRules.fromDevice(rule, status: status, os: "27.0.1", osName: "macOS", catalog: Self.catalog,
-                                          platform: .macOS, serverTimeZone: Sample.utc)
-        #expect(sent.deadlineSource == .reported && sent.deadlineDate == Sample.date("2026-11-09T22:59:06"))
-        let device = Sample.classify(Sample.mac(os: "27.0.1", model: "MacBookPro18,3"), status, target: sent)
+    static func pending(updated: String, deadline: String = "2026-11-09 22:59:06 +0000") -> JamfPro.SoftwareUpdateStatus {
+        Sample.status([("device.operating-system.version", "27.0.1"), ("softwareupdate.install-state", "prepared"),
+                       ("softwareupdate.pending-version.os-version", "27.2"),
+                       ("softwareupdate.pending-version.target-local-date-time", deadline),
+                       ("softwareupdate.install-reason.reason", "declaration")], time: updated)
+    }
+
+    static func sent(_ status: JamfPro.SoftwareUpdateStatus, changed: Date? = nil) -> DeviceTarget {
+        TargetRules.fromDevice(Self.rule(os: "27.0.1"), status: status, os: "27.0.1", osName: "macOS", catalog: Self.catalog,
+                               platform: .macOS, serverTimeZone: Sample.utc, model: "MacBookPro18,3", boardID: "J314sAP",
+                               blueprintChanged: changed)
+    }
+
+    @Test("A deadline from a current report wins; a specific version’s is the Blueprint’s")
+    func currentReportWins() {
+        // reported on 7 Nov: after the public posting (5 Nov) and the Blueprint's change (6 Nov)
+        let target = Self.sent(Self.pending(updated: "2026-11-07T08:00:00", deadline: "2026-11-19 22:59:06 +0000"),
+                               changed: Sample.date("2026-11-06T09:00:00"))
+        #expect(target.deadlineSource == .reported && target.deadlineDate == Sample.date("2026-11-19T22:59:06"))
+        #expect(target.staleReportedDeadline == nil)
+        let device = Sample.classify(Sample.mac(os: "27.0.1", model: "MacBookPro18,3"), Self.pending(updated: "2026-11-07T08:00:00"),
+                                     target: target)
         #expect(device.deadlineSource == "reported by the device")
         let named = Self.rule(os: "27.0.1", .specific(targetOSVersion: "27.2", targetLocalDateTime: "2026-11-20T17:00:00", detailsURL: nil))
         #expect(named.deadlineSource == .blueprint)
         #expect(Sample.classify(Sample.mac(os: "27.0.1"), nil, target: Self.rule(os: "27.0.1")).deadlineSource == "from Apple’s posting date")
+    }
+
+    @Test("The live case: 9 Nov reported before a 6 Nov change, the rule gives 19 Nov: not late, not stuck")
+    func staleReportLoses() throws {
+        let status = Self.pending(updated: "2026-11-03T07:11:00")
+        let target = Self.sent(status, changed: Sample.date("2026-11-06T09:00:00"))
+        #expect(target.fromDevice && target.version == "27.2")
+        #expect(target.deadlineLocal == "2026-11-19T23:59:00" && target.deadlineSource == .postingDate && target.deadlineDate == nil)
+        #expect(target.staleReportedDeadline == Sample.date("2026-11-09T22:59:06"))
+        #expect(target.staleSince == Sample.date("2026-11-06T09:00:00"))
+        // on 10 Nov, after the stale 9 Nov but before 19 Nov
+        let member = Sample.mac(os: "27.0.1", model: "MacBookPro18,3")
+        let device = Sample.classify(member, status, target: target, now: "2026-11-10T08:00:00")
+        #expect(device.pastDeadline == false)
+        #expect(!device.diagnosis.contains("after the deadline"))
+        #expect(device.staleReportedDeadline != nil)
+        let inspected = InspectFindings.evaluate(
+            InspectInput(member: member, status: status, device: device, platformDeviceID: "P-1", reports: []),
+            context: InspectContext(blueprintID: "6a2f0000-1111-4000-8000-00000000c0de", target: nil, since: nil,
+                                    now: Sample.date("2026-11-10T08:00:00"), serverTimeZone: Sample.utc))
+        #expect(!inspected.findings.contains { $0.cause == "Update stuck" })
+        let finding = try #require(inspected.findings.first { $0.cause == "Declaration not refreshed since the Blueprint changed" })
+        #expect(finding.detail.contains("2026-11-09") && finding.detail.contains("2026-11-06"))
+        // the posting alone makes a report stale too
+        #expect(Self.sent(status).staleReportedDeadline != nil)
+    }
+
+    @Test("A release becomes a target only once Apple offers it publicly, the basis its deadline counts from")
+    func eligibility() {
+        // 1 Nov, newest release 3 days old: 27.2 is first seen 26 Oct but only posted publicly on 5 Nov
+        let latest = JamfPlatform.SoftwareUpdateBlock.Enforcement.latest(enforceAfterDays: 3, deploymentTime: "23:59")
+        let early = Self.rule(os: "27.0", now: "2026-11-01T12:00:00", latest)
+        #expect(early.version == "27.0.1")
+        #expect(Self.rule(os: "27.0", now: "2026-11-09T12:00:00", latest).version == "27.2")
+        // GDMF lists a newer version only outside the public catalog: not offered yet
+        let catalog = try! AppleReleases.Catalog(sofaMacOS: Data(Self.sofaMacOS.utf8), gdmf: Data(#"""
+        {"PublicAssetSets":{"macOS":[{"ProductVersion":"27.2","Build":"26B123","PostingDate":"2026-11-05","SupportedDevices":["J314sAP"]}]},
+         "AssetSets":{"macOS":[{"ProductVersion":"27.3","Build":"26C100","PostingDate":"2026-11-01","SupportedDevices":["J314sAP"]},
+                               {"ProductVersion":"27.0.1","Build":"26A434","PostingDate":"2026-09-28","SupportedDevices":["J314sAP"]}]}}
+        """#.utf8))
+        let release = { (text: String) in catalog.release(OSVersion(text)!, .macOS)! }
+        #expect(!TargetRules.isOffered(release("27.3"), catalog, model: "MacBookPro18,3", boardID: "J314sAP"))
+        #expect(TargetRules.isOffered(release("27.0.1"), catalog))
+        #expect(TargetRules.isOffered(release("27.2"), catalog, model: "MacBookPro18,3", boardID: "J314sAP"))
+        // a version newer than every public one is never the target, however old its first date
+        let minor = JamfPlatform.SoftwareUpdateBlock.Enforcement.semantic(minorEnforceAfterDays: 0, deploymentTime: nil)
+        let target = TargetRules.target(os: "27.0.1", model: "MacBookPro18,3", boardID: "J314sAP", osName: "macOS", context: .init(
+            block: TargetRulesTests.block(minor), catalog: catalog, platform: .macOS, blueprintChanged: nil, updateStarted: nil,
+            now: Sample.date("2026-11-20T12:00:00")))
+        #expect(target.version == "27.2")
     }
 }

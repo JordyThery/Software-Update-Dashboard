@@ -120,6 +120,35 @@ final class DashboardModel {
         generation += 1
     }
 
+    /// The unreadable list’s copy as a file (a property list holding the
+    /// setting under its dated name), so it can be shown in Finder; written
+    /// once, never overwritten.
+    func exportUnreadableCopy(to folder: URL? = nil) throws -> URL {
+        guard let key = unreadableTrackedCopy, let value = connections.defaults.object(forKey: key) else {
+            throw RefreshError("There is no copy of an unreadable list.")
+        }
+        let folder = try folder ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                                          appropriateFor: nil, create: true)
+            .appending(path: "Unreadable Copies", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appending(path: "\(key).plist")
+        if !FileManager.default.fileExists(atPath: file.path) {
+            let data = try PropertyListSerialization.data(fromPropertyList: [key: value], format: .xml, options: 0)
+            try data.write(to: file, options: .withoutOverwriting)
+        }
+        return file
+    }
+
+    /// Starts again with an empty list: the unreadable value is removed from
+    /// `trackedBlueprints`, its dated copy stays, and changes are saved again.
+    func startNewTrackedList() {
+        guard unreadableTrackedCopy != nil else { return }
+        connections.defaults.removeObject(forKey: TrackedBlueprintList.key)
+        unreadableTrackedCopy = nil
+        saved = []
+        generation += 1
+    }
+
     /// Changes to the tracked Blueprints can’t be saved: the saved list couldn’t be read.
     var canChangeTracked: Bool { isDemo || unreadableTrackedCopy == nil }
 
@@ -167,10 +196,13 @@ final class DashboardModel {
             let catalog = await appleReleases()
             let previous = history?.latest(for: id)
             let workflow = RefreshWorkflow(client: client, catalog: catalog, serverTimeZone: connections.serverTimeZone)
-            let result = try await workflow.run(tracked, previousScope: previous?.scope) { done, total in
+            var result = try await workflow.run(tracked, previousScope: previous?.scope) { done, total in
                 Task { @MainActor in self.progress[id] = (done, total) }
             }
-            if let history {
+            if !result.counts.isWorthSaving {
+                // nothing was measured: a snapshot of zero devices would only drop the chart
+                result.problems.append("No device has a target, so this refresh isn’t saved in the history.")
+            } else if let history {
                 if isDemo && previous == nil { seedDemoHistory(result, in: history) }
                 try? history.save(HistorySnapshot(date: result.date, target: result.rule, devices: result.devices, scope: result.scope),
                                   for: id)

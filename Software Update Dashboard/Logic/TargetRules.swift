@@ -84,6 +84,12 @@ nonisolated struct DeviceTarget: Sendable, Hashable, Codable {
     var deadlineDate: Date?
     /// That offset from UTC, in seconds.
     var deadlineOffset: Int?
+    /// A deadline the device reported before the Blueprint’s last change (or
+    /// before Apple’s public posting of the version): kept to show, never
+    /// used; the rule’s deadline counts.
+    var staleReportedDeadline: Date?
+    /// The change it predates: the later of the Blueprint’s last change and the posting.
+    var staleSince: Date?
 
     var osVersion: OSVersion? { version.flatMap(OSVersion.init) }
 
@@ -165,7 +171,7 @@ nonisolated enum TargetRules {
             return DeviceTarget(reason: "Apple’s release data couldn’t be read, so the newest release isn’t known",
                                 unknown: .appleDataUnreachable)
         }
-        let eligible = releases(catalog, ctx.platform, days: days, now: ctx.now)
+        let eligible = releases(catalog, ctx.platform, days: days, now: ctx.now, model: model, boardID: boardID)
         guard let newest = eligible.first else {
             return DeviceTarget(reason: "Apple’s release data has no \(osName) release" + (days == 0 ? "" : " at least \(days) days old"),
                                 unknown: .noReleaseForPlatform)
@@ -232,7 +238,7 @@ nonisolated enum TargetRules {
     /// majors Apple’s data says the model runs (for “the newest it can run”).
     static func newestRelease(_ catalog: AppleReleases.Catalog, _ platform: AppleReleases.Platform, model: String?, boardID: String?,
                               days: Int = 0, now: Date = .distantFuture, major: Int? = nil, knownOnly: Bool = false) -> AppleReleases.Release? {
-        releases(catalog, platform, days: days, now: now).first { release in
+        releases(catalog, platform, days: days, now: now, model: model, boardID: boardID).first { release in
             (major == nil || release.version.major == major)
                 && runs(release, model: model, boardID: boardID, catalog, platform)
                 && (!knownOnly || catalog.supports(model: model, boardID: boardID, major: release.version.major, platform) == true)
@@ -279,7 +285,8 @@ nonisolated enum TargetRules {
     /// runs, and the report is from after the update started; otherwise
     /// the rule’s target stands. When the two differ, both are kept.
     static func fromDevice(_ rule: DeviceTarget, status: JamfPro.SoftwareUpdateStatus?, os: String?, osName: String,
-                           catalog: AppleReleases.Catalog?, platform: AppleReleases.Platform, serverTimeZone: TimeZone) -> DeviceTarget {
+                           catalog: AppleReleases.Catalog?, platform: AppleReleases.Platform, serverTimeZone: TimeZone,
+                           model: String? = nil, boardID: String? = nil, blueprintChanged: Date? = nil) -> DeviceTarget {
         guard let status, let pending = status.pendingVersion, let version = pending.osVersion.flatMap(OSVersion.init),
               status.installReasons.contains(where: { $0.caseInsensitiveCompare("declaration") == .orderedSame }),
               let current = os.flatMap(OSVersion.init), version > current else { return rule }
@@ -297,8 +304,20 @@ nonisolated enum TargetRules {
                                   reason: "Jamf sent \(osName) \(version): the device reports it pending from a declaration",
                                   startSetByHand: rule.startSetByHand)
         target.fromDevice = true
-        // a deadline the device reports always wins
-        if let moment = pending.targetDate, let offset = pending.targetOffset {
+        // a deadline the device reports wins only when the report is newer
+        // than the Blueprint's last change and Apple's public posting of the
+        // version: before them, the device hasn't taken the current declaration
+        let posted = release.flatMap { catalog?.publicPosting(of: $0, model: model, boardID: boardID)?.date }
+        let reportedAt = pending.updated.flatMap { JamfPro.serverDate($0, timeZone: serverTimeZone) }
+        let changes = [blueprintChanged, posted].compactMap { $0 }
+        let reportIsCurrent = changes.isEmpty || reportedAt.map { at in changes.allSatisfy { at > $0 } } == true
+        if !reportIsCurrent {
+            target.deadlineLocal = rule.deadlineLocal
+            target.deadlineSource = rule.deadlineSource
+            target.staleReportedDeadline = pending.targetDate
+                ?? pending.targetLocalDateTime.flatMap { JamfPlatform.SoftwareUpdateBlock.deadline($0.replacingOccurrences(of: " ", with: "T"), in: .gmt) }
+            target.staleSince = changes.max()
+        } else if let moment = pending.targetDate, let offset = pending.targetOffset {
             target.deadlineDate = moment
             target.deadlineOffset = offset
             target.deadlineLocal = localText(moment, offset: offset)
@@ -338,11 +357,33 @@ nonisolated enum TargetRules {
 
     /// The platform’s releases at least `days` old, newest first (no Rapid
     /// Security Responses).
-    static func releases(_ catalog: AppleReleases.Catalog, _ platform: AppleReleases.Platform, days: Int, now: Date) -> [AppleReleases.Release] {
+    static func releases(_ catalog: AppleReleases.Catalog, _ platform: AppleReleases.Platform, days: Int, now: Date,
+                         model: String? = nil, boardID: String? = nil) -> [AppleReleases.Release] {
         catalog.releases
             .filter { $0.platform == platform && $0.version.extra == nil }
-            .filter { release in release.releaseDate.map { $0.addingTimeInterval(Double(days) * 86_400) <= now } ?? false }
+            .filter { release in
+                isOffered(release, catalog, model: model, boardID: boardID, now: now)
+                    && release.releaseDate.map { $0.addingTimeInterval(Double(days) * 86_400) <= now } ?? false
+            }
             .sorted { $0.version > $1.version }
+    }
+
+    /// Whether Apple offers a release publicly, the basis its deadline
+    /// counts from: it has a public posting (GDMF `PublicAssetSets`) for the
+    /// device, or GDMF doesn’t list it at all (then its release date counts),
+    /// or GDMF lists it only outside the public catalog but a newer release
+    /// of its major is public (Apple’s public catalog keeps current versions
+    /// only). A release first seen outside the public catalog and newer than
+    /// every public one isn’t offered yet, so it can’t be a target, and its
+    /// deadline can’t fall back to a date before Apple offered it.
+    static func isOffered(_ release: AppleReleases.Release, _ catalog: AppleReleases.Catalog,
+                          model: String? = nil, boardID: String? = nil, now: Date = .distantFuture) -> Bool {
+        if let posted = catalog.publicPosting(of: release, model: model, boardID: boardID)?.date { return posted <= now }
+        guard !release.postings.isEmpty else { return true }
+        let newestPublic = catalog.releases
+            .filter { $0.platform == release.platform && $0.version.major == release.version.major && $0.postings.contains(where: \.isPublic) }
+            .map(\.version).max()
+        return newestPublic.map { release.version < $0 } ?? false
     }
 
     /// Apple’s release day plus `days`, at `HH:MM`, in the device’s local

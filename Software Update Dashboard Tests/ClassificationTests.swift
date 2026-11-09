@@ -196,7 +196,7 @@ struct ClassificationTests {
         let fields = device.csvLine
         #expect(fields.hasPrefix(#"1,mobile device,Test iPad 1,ZZTEST1,iPad Air,"iPad13,18",26.7.1,26.7.1,"#))
         #expect(CSV.line(["a,b", #"say "hi""#, "plain"]) == #""a,b","say ""hi""",plain"#)
-        #expect(DeviceStatus.csvColumns.count == 22)
+        #expect(DeviceStatus.csvColumns.count == 23)
         #expect(device.id == "mobileDevice/1" && device.jamfID == "1")
     }
 }

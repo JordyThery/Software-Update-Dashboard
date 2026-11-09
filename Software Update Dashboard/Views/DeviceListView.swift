@@ -143,6 +143,10 @@ struct DeviceDetailView: View {
                     if let source = device.deadlineSource {
                         Text("Deadline \(source)").foregroundStyle(.secondary)
                     }
+                    if let stale = device.staleReportedDeadline {
+                        LabeledContent("Device reports", value: DeadlineZones.text(local: nil, reported: stale)?
+                            .replacingOccurrences(of: "reported by the device", with: "reported before the Blueprint’s last change") ?? "")
+                    }
                     if device.pastDeadline == true { WarningLabel("Past the deadline") }
                 }
                 if let from = device.activityFrom {

@@ -28,6 +28,21 @@ struct ExportTests {
         #expect(device.csvLine.contains(#","'=cmd|' /C calc'!A0","#))
     }
 
+    @Test("A reported deadline is written as a moment with its time zone, and every deadline with its source")
+    func deadlineColumns() {
+        var device = Sample.classify(Sample.mac(), nil)
+        device.deadlineDate = Sample.date("2026-11-19T22:59:06")
+        device.deadlineLocal = "2026-11-19T22:59:06"
+        device.deadlineSource = "reported by the device"
+        #expect(device.csvLine.contains(",2026-11-19T22:59:06Z,reported by the device,"))
+        let header = DeviceStatus.csvColumns
+        #expect(header.firstIndex(of: "deadline_source") == header.firstIndex(of: "deadline").map { $0 + 1 })
+        device.deadlineDate = nil
+        device.deadlineLocal = "2026-11-19T23:59:00"
+        device.deadlineSource = "from Apple’s posting date"
+        #expect(device.csvLine.contains(",2026-11-19T23:59:00,from Apple’s posting date,"))
+    }
+
     @Test("A release date is a day, without a time, the same everywhere")
     func releaseDay() {
         let day = DeviceDetailView.releaseDay(Sample.date("2026-10-26T00:00:00"))
@@ -64,6 +79,40 @@ struct StoredDataTests {
         #expect(model.unreadableTrackedCopy == copy && !model.canChangeTracked)
         model.add(TrackedBlueprint(connectionID: UUID(), blueprintID: "bp-1", blueprintName: "Test Blueprint"))
         #expect(defaults.data(forKey: TrackedBlueprintList.key) == Data("not a list".utf8))
+    }
+
+    @Test("An unreadable list: its copy can be shown in Finder, and a new list started without losing the copy")
+    @MainActor
+    func wayOut() throws {
+        let defaults = defaults()
+        defaults.set(Data("not a list".utf8), forKey: TrackedBlueprintList.key)
+        let model = DashboardModel(connections: ConnectionsModel.preview(defaults: defaults),
+                                   history: StatusHistory(folder: FileManager.default.temporaryDirectory.appending(path: "sud-way-\(UUID().uuidString)")))
+        let copy = try #require(model.unreadableTrackedCopy)
+        let folder = FileManager.default.temporaryDirectory.appending(path: "sud-copies-\(UUID().uuidString)")
+        let file = try model.exportUnreadableCopy(to: folder)
+        #expect(file.lastPathComponent == "\(copy).plist")
+        let written = try #require(NSDictionary(contentsOf: file) as? [String: Any])
+        #expect(written[copy] as? Data == Data("not a list".utf8))
+        // asked again: the same file, not overwritten
+        #expect(try model.exportUnreadableCopy(to: folder) == file)
+
+        model.startNewTrackedList()
+        #expect(model.unreadableTrackedCopy == nil && model.canChangeTracked)
+        #expect(defaults.object(forKey: TrackedBlueprintList.key) == nil)
+        #expect(defaults.data(forKey: copy) == Data("not a list".utf8))
+        let connection = try #require(model.connections.connectionInUse?.id ?? Optional(UUID()))
+        model.add(TrackedBlueprint(connectionID: connection, blueprintID: "bp-1", blueprintName: "Test Blueprint"))
+        #expect(defaults.data(forKey: TrackedBlueprintList.key) != nil)
+    }
+
+    @Test("A refresh in which no device has a target isn’t worth a snapshot; one with nobody in scope is")
+    func notSaved() {
+        let unknown = Sample.classify(Sample.mac("1", os: "28.0"), nil,
+                                      target: DeviceTarget(reason: "The device runs a beta", unknown: .betaOfNewerMajor))
+        #expect(!CategoryCounts([unknown]).isWorthSaving)
+        #expect(CategoryCounts([unknown, Sample.classify(Sample.mac("2"), nil)]).isWorthSaving)
+        #expect(CategoryCounts([]).isWorthSaving)
     }
 
     @Test("A value that isn’t data is unreadable too, not “nothing saved”")

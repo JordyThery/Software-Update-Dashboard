@@ -162,7 +162,8 @@ nonisolated struct RefreshWorkflow: Sendable {
                                          now: now))
         // what Jamf actually sent the device comes first, when it reports it
         var target = TargetRules.fromDevice(rule, status: input.status, os: os, osName: osName, catalog: catalog,
-                                            platform: platform, serverTimeZone: serverTimeZone)
+                                            platform: platform, serverTimeZone: serverTimeZone, model: model,
+                                            boardID: input.status?.deviceID, blueprintChanged: blueprint.overview.updatedDate)
         // hardware that can't run the newest major stays on the list to
         // replace, whichever source gave its target
         if target.unknown == nil, !target.noApplicableRelease, let catalog {
