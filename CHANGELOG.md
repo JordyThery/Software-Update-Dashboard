@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2 (not released yet)
+## 0.2.0 — 2026-11-10
 
 - **Blueprint health:** each of the Blueprint’s software update declarations by name, one row per version range, with how many devices report it applied, pending, awaiting sync, failed or invalid, and the most common reason. Declarations that apply to no device in scope are summed up in one line. The dashboard says how many devices are on a version the Blueprint’s update doesn’t cover yet.
 - **Clearer causes in the device list:** a version the Blueprint’s current declarations don’t cover yet; a device that hasn’t fetched Jamf’s current declarations yet, with when it last reported; a failed or invalid update declaration.

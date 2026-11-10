@@ -167,7 +167,11 @@ Before the release: one read of the production role, and JTKit tagged after Jord
 | J | Export Report as PDF, one Blueprint or all (nice to have). |
 | K | Find a device by serial number or name across all tracked Blueprints (nice to have). |
 
-Also in 0.3 (decided by Jordy on 2026-11-10, after the 0.2 hand check): a device with update failures since the update started and nothing in progress counts as Failed, not Not started.
+Also in 0.3 (decided by Jordy on 2026-11-10, after the 0.2 hand checks):
+
+- A device with update failures since the update started and nothing in progress counts as Failed, not Not started.
+- Deadline per Time Zone still shows one device on the live tenant as “target 27.2.1, 9 Nov 23:59” without the earlier-step label: find that device, the pending version and deadline it reports and why it isn’t recognized as an earlier step, then label it.
+- A device on target lists no update errors from before it installed the target under Also Found.
 
 Order: A, B with C and M, L, D, G, I, J, K (as planned for 0.2 before the renumbering). Each with tests and a check in Demo Mode; one read of the production role before the release.
 
