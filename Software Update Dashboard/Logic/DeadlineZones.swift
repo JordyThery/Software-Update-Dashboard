@@ -44,7 +44,17 @@ nonisolated enum DeadlineZones {
     /// common one, when it isn’t a whole hour from UTC, when its moment is
     /// hours off the most common one for its target, or when it has no zone.
     static func zones(devices: [DeviceStatus], here: TimeZone = .current) -> [DeadlineZone] {
-        let withDeadline = devices.filter { $0.deadlineLocal != nil || $0.deadlineDate != nil }
+        // a device past its earlier step's own deadline is counted at that step and its deadline
+        let shown = devices.map { device -> DeviceStatus in
+            guard device.earlierStepLapsed == true, let step = device.earlierStepVersion,
+                  device.earlierStepDeadline != nil || device.earlierStepLocal != nil else { return device }
+            var stepped = device
+            stepped.targetVersion = "\(step), earlier step"
+            stepped.deadlineDate = device.earlierStepDeadline
+            stepped.deadlineLocal = device.earlierStepLocal ?? device.earlierStepDeadline.map { TargetRules.localText($0, offset: 0) }
+            return stepped
+        }
+        let withDeadline = shown.filter { $0.deadlineLocal != nil || $0.deadlineDate != nil }
         guard !withDeadline.isEmpty else { return [] }
         func offset(_ zone: String?, at local: String) -> Int? {
             guard let zone, let timeZone = TimeZone(identifier: zone) else { return nil }
@@ -98,7 +108,8 @@ nonisolated enum DeadlineZones {
                 unusual = hoursText(Double(seconds - common))
             }
             return DeadlineZone(zone: zone, localDeadline: local, reported: zone == nil ? at : nil,
-                                target: zone == nil ? first.targetVersion : nil, deviceCount: group.count,
+                                target: zone == nil || first.targetVersion?.hasSuffix("earlier step") == true ? first.targetVersion : nil,
+                                deviceCount: group.count,
                                 deadline: at, unusual: unusual)
         }
         .sorted { $0.deviceCount != $1.deviceCount ? $0.deviceCount > $1.deviceCount

@@ -152,33 +152,54 @@ nonisolated struct RefreshWorkflow: Sendable {
             }
         }
 
-        let inputs = try await statuses(members, progress: progress)
-        // the Blueprint's declarations, as the devices list them: each read once, for every device
-        let declarations = await declarationReports(tracked.blueprintID, inputs: inputs)
+        var inputs = try await statuses(members, progress: progress)
+        // the Blueprint's update declarations, as the devices list them: each read once, for every device
+        let identifiers = BlueprintHealth.identifiers(blueprintID: tracked.blueprintID, statuses: inputs.map(\.status), blocks: blocks)
+        let declarations = try await declarationReports(identifiers, inputs: &inputs)
         var deviceIDs: [String: String] = [:]
         for input in inputs {
             if let platformID = input.platformDeviceID?.lowercased() { deviceIDs[platformID] = Self.key(input.member) }
         }
         let tied = BlueprintHealth.byDevice(declarations.reports, deviceIDs: deviceIDs)
+        let current = BlueprintHealth.catalogue(declarations.reports, blocks: blocks, blueprintName: blueprint.overview.name)
         var devices = inputs.map { input in
-            classify(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now,
-                     awaitingSync: BlueprintHealth.isAwaitingSync(tied.reports[Self.key(input.member)] ?? []))
+            let osName = Classifier.osName(isComputer: input.member.kind == .computer,
+                                           modelIdentifier: input.member.modelIdentifier ?? input.status?.modelIdentifier ?? "")
+            return classify(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now,
+                            awaitingSync: BlueprintHealth.isAwaitingSync(tied.reports[Self.key(input.member)] ?? [],
+                                                                         osName: osName, current: current))
         }
         var health: BlueprintHealth?
-        if declarations.problem == nil {
-            let built = BlueprintHealth.make(byDevice: tied.reports, devices: devices, blueprintName: blueprint.overview.name,
-                                             blueprintID: tracked.blueprintID, unmatchedDevices: tied.unmatched,
-                                             devicesWithoutPlatformID: inputs.filter { $0.platformDeviceID == nil }.count)
+        if let problem = declarations.problem {
+            problems.append(problem)
+        } else {
+            let built = BlueprintHealth.make(byDevice: tied.reports, devices: devices, current: current,
+                                             blueprintName: blueprint.overview.name, blueprintID: tracked.blueprintID,
+                                             unmatchedDevices: tied.unmatched,
+                                             devicesWithoutPlatformID: identifiers.isEmpty ? 0 : inputs.filter { $0.platformDeviceID == nil }.count)
             // the cause where nothing else explains it: the list says it
             for index in devices.indices {
-                guard let ranges = built.notCovered[devices[index].id],
-                      BlueprintHealth.explainedCategories.contains(devices[index].category) else { continue }
-                devices[index].notCoveredBy = ranges
-                devices[index].diagnosis = BlueprintHealth.notCoveredDiagnosis(devices[index])
+                devices[index].declarationsChecked = true
+                guard let found = built.coverage[devices[index].id] else {
+                    // a failed or invalid update declaration of its own OS explains a device that hasn't started
+                    if BlueprintHealth.explainedCategories.contains(devices[index].category),
+                       let problem = BlueprintHealth.declarationProblem(tied.reports[devices[index].id] ?? [], osName: devices[index].osName,
+                                                                        current: current, names: [tracked.blueprintID.lowercased(): blueprint.overview.name]) {
+                        devices[index].diagnosis = problem
+                    }
+                    continue
+                }
+                switch found {
+                case .notCovered(let ranges): devices[index].notCoveredBy = ranges
+                case .notFetched(let last):
+                    devices[index].notFetched = true
+                    devices[index].notFetchedSince = last
+                }
+                if BlueprintHealth.explainedCategories.contains(devices[index].category) {
+                    devices[index].diagnosis = BlueprintHealth.diagnosis(found, device: devices[index])
+                }
             }
             health = built
-        } else if let problem = declarations.problem {
-            problems.append("The Blueprint’s declaration reports couldn’t be read: \(problem)")
         }
 
         var coverage: Coverage?
@@ -201,12 +222,31 @@ nonisolated struct RefreshWorkflow: Sendable {
             coverage: coverage, problems: problems, health: health)
     }
 
-    /// Each of the Blueprint’s declarations the devices list, read once
-    /// (its devices’ reports), a few at a time. A refusal stops the reading
-    /// and is returned as the problem; a declaration nothing reported gives none.
-    func declarationReports(_ blueprintID: String,
-                            inputs: [DeviceInput]) async -> (reports: [JamfPlatform.DeclarationReport], problem: String?) {
-        let identifiers = BlueprintHealth.identifiers(blueprintID: blueprintID, statuses: inputs.map(\.status))
+    /// Each of the Blueprint’s update declarations the devices list, read
+    /// once (its devices’ reports), a few at a time, and the Platform device
+    /// list, read once, to tie each report to a device by serial number. A
+    /// refusal or a failed read stops the reading and is returned as the
+    /// problem (never as “serial not found”); a declaration nothing reported
+    /// gives none. A stop is thrown, so a stopped refresh is never saved.
+    func declarationReports(_ identifiers: [String],
+                            inputs: inout [DeviceInput]) async throws -> (reports: [JamfPlatform.DeclarationReport], problem: String?) {
+        guard !identifiers.isEmpty else { return ([], nil) }
+        let platformDevices: [JamfPlatform.Device]
+        do {
+            platformDevices = try await client.devices()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return ([], "The Platform device list couldn’t be read, so the Blueprint’s declaration reports can’t be tied to devices: "
+                        + error.localizedDescription)
+        }
+        var bySerial: [String: String] = [:]
+        for device in platformDevices {
+            if let serial = device.serialNumber?.uppercased(), !serial.isEmpty { bySerial[serial] = device.id }
+        }
+        for index in inputs.indices {
+            inputs[index].platformDeviceID = inputs[index].member.serialNumber.flatMap { bySerial[$0.uppercased()] }
+        }
         do {
             var reports: [JamfPlatform.DeclarationReport] = []
             try await withThrowingTaskGroup(of: [JamfPlatform.DeclarationReport].self) { group in
@@ -225,9 +265,9 @@ nonisolated struct RefreshWorkflow: Sendable {
             }
             return (reports, nil)
         } catch is CancellationError {
-            return ([], "Stopped")
+            throw CancellationError()
         } catch {
-            return ([], error.localizedDescription)
+            return ([], "The Blueprint’s declaration reports couldn’t be read: \(error.localizedDescription)")
         }
     }
 
@@ -289,7 +329,7 @@ nonisolated struct RefreshWorkflow: Sendable {
                     }
                     do {
                         let status = try await client.softwareUpdateStatus(managementID: managementID, kind: member.kind)
-                        return (index, DeviceInput(member: member, status: status, platformDeviceID: await platformID(member)))
+                        return (index, DeviceInput(member: member, status: status))
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch {
@@ -305,14 +345,6 @@ nonisolated struct RefreshWorkflow: Sendable {
             }
         }
         return members.indices.compactMap { inputs[$0] }
-    }
-
-    /// The device’s Platform API ID, found by its serial number, to tie its
-    /// declaration reports to it; nil when it isn’t found or the lookup fails
-    /// (its reports are then left out, and counted).
-    func platformID(_ member: JamfPro.GroupMember) async -> String? {
-        guard let serial = member.serialNumber, !serial.isEmpty else { return nil }
-        return try? await client.device(serial: serial)?.id
     }
 
     /// A device by kind and Jamf Pro number: a Mac and an iPad can share a number.

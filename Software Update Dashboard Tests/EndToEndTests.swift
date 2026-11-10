@@ -47,7 +47,8 @@ struct EndToEndTests {
             ("Field iPad 11", .notStarted, "Online, update not started (no error)"),
             // the demo device reported installing days ago and checks in since
             ("Field iPad 12", .inProgress, "Installing 27.1 for more than 4 hours; the device checks in but hasn’t reported a new status"),
-            ("Field iPad 13", .notStarted, "Online, update not started (no error)"),
+            // its update declaration failed (the iPad isn't supervised): the list says it
+            ("Field iPad 13", .notStarted, "Update declaration failed: Error.ConfigurationFailed: Software update enforcement needs a supervised device."),
         ]
         #expect(result.devices.count == expected.count)
         for (name, category, diagnosis) in expected {

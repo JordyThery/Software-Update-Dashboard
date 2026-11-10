@@ -260,6 +260,8 @@ final class DashboardModel {
         do {
             guard let client = try connections.client() else { throw RefreshError("No connection in use.") }
             let catalog = await appleReleases()
+            // stopped while Apple's data was read: a stop, not unreachable data
+            try Task.checkCancellation()
             let previous = history?.latest(for: id)
             let workflow = RefreshWorkflow(client: client, catalog: catalog, serverTimeZone: connections.serverTimeZone)
             var result = try await workflow.run(tracked, previousScope: previous?.scope) { done, total in
@@ -340,7 +342,8 @@ final class DashboardModel {
             let catalog = await appleReleases()
             let context = InspectContext(blueprintID: result.tracked.blueprintID, blueprintName: result.blueprintName,
                                          target: nil, since: result.blueprintChanged, blueprintChanged: result.blueprintChanged,
-                                         now: Date(), serverTimeZone: connections.serverTimeZone, catalog: catalog)
+                                         now: Date(), serverTimeZone: connections.serverTimeZone, catalog: catalog,
+                                         current: result.health?.current)
             let members = result.members.filter { ids.contains(RefreshWorkflow.key($0)) }
             for inspection in try await InspectWorkflow(client: client).run(members, rows: result.devices, context: context) {
                 inspections[DeviceKey(tracked: id, device: inspection.id)] = inspection

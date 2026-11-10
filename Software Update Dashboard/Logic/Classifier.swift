@@ -156,6 +156,13 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     /// The Blueprint’s version ranges for this hardware, none of which
     /// covers the version the device runs (“macOS 27.0 to 27.0.1”).
     var notCoveredBy: String?
+    /// One of the Blueprint’s current declarations covers its version, but
+    /// the device hasn’t fetched it; its own report is from `notFetchedSince`.
+    var notFetched: Bool?
+    var notFetchedSince: Date?
+    /// The refresh measured the device against the Blueprint’s current
+    /// declarations (Blueprint health could be read).
+    var declarationsChecked: Bool?
 
     /// The device by kind and number: a Mac and an iPad can share a number.
     var id: String { "\(isComputer ? "computer" : "mobileDevice")/\(jamfID)" }
@@ -215,6 +222,9 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case fileVault
         case batteryHealth
         case notCoveredBy
+        case notFetched
+        case notFetchedSince
+        case declarationsChecked
     }
 
     /// The newer of the version the device reports and the one in its
@@ -240,7 +250,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var osName: String { Classifier.osName(isComputer: isComputer, modelIdentifier: modelIdentifier) }
 
     /// The diagnoses that need someone to look (summary, Inspect’s default selection).
-    static let attentionPattern = "^Downloaded.*not installed after|downloaded but not installed after|[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check|^Installing .*for more than|^Jamf’s update doesn’t cover"
+    static let attentionPattern = "^Downloaded.*not installed after|downloaded but not installed after|[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check|^Installing .*for more than|^Jamf’s update doesn’t cover|^Hasn’t fetched Jamf’s|^Update declaration (failed|invalid)"
 
     var needsAttention: Bool { diagnosis.range(of: Self.attentionPattern, options: .regularExpression) != nil }
 

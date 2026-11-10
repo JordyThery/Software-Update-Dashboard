@@ -235,7 +235,7 @@ struct DeviceDetailView: View {
                 }
                 if let problem = device.statusProblem { WarningLabel(problem) }
                 Button("Show All Status Items…") { showsStatusItems = true }
-                    .help("Reads every item of the device’s status report from Jamf now; nothing is kept")
+                    .help("Reads every item of the device’s status report from Jamf Pro now; the items aren’t saved")
             }
             Section("Inspect") {
                 if model.isInspecting(device, in: result.tracked.id) {
@@ -257,12 +257,15 @@ struct DeviceDetailView: View {
                             }
                         }
                     }
-                    if !inspection.declarations.isEmpty {
-                        Text("The Blueprint’s Declarations (\(inspection.declarations.count))")
+                    if !inspection.declarations.isEmpty || inspection.otherDeclarations > 0 {
+                        Text("The Blueprint’s Declarations for \(device.osName)")
                             .font(.subheadline).foregroundStyle(.secondary)
                         // names are unique (BlueprintHealth.uniqueNames): never the row numbers the list above uses
                         ForEach(inspection.declarations, id: \.name) { line in
                             LabeledContent(line.name) { Text(line.state).multilineTextAlignment(.trailing) }
+                        }
+                        if let others = BlueprintHealth.othersLine(inspection.otherDeclarations, inScope: false) {
+                            Text(others).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -280,13 +283,8 @@ struct DeviceDetailView: View {
         }
     }
 
-    /// “3, last 9 Nov 2026 at 10:00”: the failure count and when it last
-    /// failed, in this Mac’s time; nil without either.
     private var failureText: String? {
-        let when = device.errorTime.flatMap { JamfPro.serverDate($0, timeZone: model.connections.serverTimeZone) }
-            .map { "last \($0.formatted(date: .abbreviated, time: .shortened))" }
-        let parts = [device.failureCount.map(String.init), when].compactMap { $0 }
-        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+        DeviceDetailText.failures(count: device.failureCount, time: device.errorTime, serverTimeZone: model.connections.serverTimeZone)
     }
 
     /// Apple dates a release by its day: “26 Oct 2026”, without a time,

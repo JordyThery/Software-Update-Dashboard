@@ -34,9 +34,11 @@ struct LateStepAndEdgeCaseTests {
         #expect(inspected.findings.contains { $0.cause == "Update stuck" })
         #expect(inspected.findings.contains { $0.cause == "Earlier step past its deadline" })
         #expect(!inspected.findings.contains { $0.cause == "Earlier step of this Blueprint" })
-        // By Major Release and Deadline per Time Zone show the current target and deadline only
+        // By Major Release shows the current target; Deadline per Time Zone the step it is late for, with that step's deadline
         #expect(MajorRow.rows([device]).first?.targets == ["26.7.3"])
-        #expect(DeadlineZones.zones(devices: [device]).allSatisfy { $0.localDeadline == "2026-11-23T23:59:00" })
+        let zones = DeadlineZones.zones(devices: [device])
+        #expect(zones.map(\.target) == ["26.7.2, earlier step"])
+        #expect(zones.first?.deadline == device.earlierStepDeadline)
     }
 
     @Test("Downloading or failed days after the step’s deadline: late as well")

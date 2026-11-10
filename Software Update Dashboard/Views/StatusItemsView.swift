@@ -2,9 +2,10 @@ import AppKit
 import JTKit
 import SwiftUI
 
-/// Every item of one device’s status report, read from Jamf when the sheet
-/// opens, with a filter and Copy. Nothing of it is kept: closing the sheet
-/// forgets it, and the history never holds it.
+/// Every item of one device’s status report, read from Jamf Pro when the
+/// sheet opens, with a filter and Copy. The items aren’t saved: closing the
+/// sheet forgets them and the history never holds them (the request’s answer
+/// stays in the in-memory activity log, like every other, until the app quits).
 struct StatusItemsView: View {
     let model: DashboardModel
     let trackedID: UUID
@@ -26,7 +27,7 @@ struct StatusItemsView: View {
             // a sheet shows no window title: say whose report this is
             VStack(alignment: .leading, spacing: 2) {
                 Text("Status Items of \(device.name.isEmpty ? device.serial : device.name)").font(.headline)
-                Text("Read from Jamf now; not kept in the history").font(.caption).foregroundStyle(.secondary)
+                Text("Read from Jamf Pro now; the items aren’t saved").font(.caption).foregroundStyle(.secondary)
             }
             .padding(12)
             Divider()

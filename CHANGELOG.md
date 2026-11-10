@@ -2,11 +2,13 @@
 
 ## 0.2 (not released yet)
 
-- **Blueprint health:** each of the Blueprint’s update declarations by name, with how many devices report it applied, pending, awaiting sync, failed or invalid, and the most common reason. The dashboard says how many devices are on a version the Blueprint’s update doesn’t cover yet, and the device list gives that as their diagnosis.
-- **Inspect** lists all of the Blueprint’s declarations for the device, with how each one stands.
+- **Blueprint health:** each of the Blueprint’s software update declarations by name, one row per version range, with how many devices report it applied, pending, awaiting sync, failed or invalid, and the most common reason. Declarations that apply to no device in scope are summed up in one line. The dashboard says how many devices are on a version the Blueprint’s update doesn’t cover yet.
+- **Clearer causes in the device list:** a version the Blueprint’s current declarations don’t cover yet; a device that hasn’t fetched Jamf’s current declarations yet, with when it last reported; a failed or invalid update declaration.
+- **Inspect** lists the Blueprint’s current declarations for the device’s own platform, each named by its own versions, with how each one stands; the others are summed up in one line. An update error since the update started comes first.
 - **Device details:** Rapid Security Response, beta program, why the pending update started, the number and time of failures, FileVault and battery health. The useful ones are also in the device list’s CSV.
-- **All status items of a device,** read from Jamf when asked, with a filter and Copy. They aren’t kept.
-- **An earlier step of the Blueprint** is recognized also after Apple has replaced it in its public catalog, for example 27.2 due 19 Nov while the Blueprint now asks for 27.2.1: the device is measured against 27.2.1 and its deadline, with 27.2 shown as the step it installs first.
+- **All status items of a device,** read from Jamf Pro when asked, with a filter and Copy. They aren’t saved.
+- **An earlier step of the Blueprint** is recognized also after Apple has replaced it in its public catalog, for example 27.2 due November 19 while the Blueprint now asks for 27.2.1: the device is measured against 27.2.1 and its deadline, with 27.2 shown as the step it installs first. Deadline per Time Zone lists a device past such a step’s deadline under that step.
+- **A stopped refresh** is never saved in the history.
 
 ## 0.1.1 — 2026-11-10
 

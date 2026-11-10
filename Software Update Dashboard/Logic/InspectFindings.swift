@@ -50,6 +50,9 @@ nonisolated struct InspectContext: Sendable {
     /// Apple’s release data: when set, the majors and support of each
     /// device’s own platform (a Blueprint can reach iPads and Macs).
     var catalog: AppleReleases.Catalog?
+    /// The Blueprint’s current update declarations (Blueprint health); nil
+    /// when the refresh couldn’t read them: then the device’s own report is used.
+    var current: [BlueprintHealth.Current]?
 }
 
 /// One reason a device may not update.
@@ -77,8 +80,12 @@ nonisolated struct InspectResult: Sendable, Hashable, Identifiable {
     var diagnosis: String
     var onTarget: Bool
     var findings: [Finding]
-    /// Each of the Blueprint’s declarations on this device by name, with how it stands.
+    /// The Blueprint’s current declarations for the device’s own platform
+    /// by name, with how each stands on the device.
     var declarations: [DeclarationLine] = []
+    /// The others, which don’t apply to this device (other platforms, other
+    /// versions or hardware): one line.
+    var otherDeclarations = 0
 
     /// The likely cause: the first finding that isn’t from before the update started.
     var likely: Finding? { findings.first { $0.earlier != true } }
@@ -154,8 +161,9 @@ nonisolated enum InspectFindings {
         let pairs = DeclarationPair.pairs(mine)
         let applicable = pairs.filter { !$0.isNotForThisDevice }
         let active = pairs.filter(\.isActive)
+        // each declaration by its own platform: an iPadOS range is never named macOS
         func label(_ pair: DeclarationPair) -> String {
-            pair.label(blueprint: ctx.blueprintName, osName: osName, deviceMajor: version?.major)
+            pair.label(blueprint: ctx.blueprintName, osName: pair.family ?? osName, deviceMajor: version?.major)
         }
         let updated = status?.newestUpdate.flatMap { JamfPro.serverDate($0, timeZone: ctx.serverTimeZone) }
         if input.platformDeviceID == nil && reports == nil {
@@ -183,8 +191,19 @@ nonisolated enum InspectFindings {
                 add("New declaration not fetched yet",
                     "Jamf sent \(label(waiting)); the device hasn’t fetched it yet (awaiting sync). It fetches it at its next check-in")
             }
-            // a device on target needs no declaration to apply
-            if active.isEmpty && category != .onTarget {
+            // the refresh measured the device against the Blueprint's current declarations: that counts
+            if row?.declarationsChecked == true {
+                if let ranges = row?.notCoveredBy, let version {
+                    add("Jamf’s update doesn’t cover \(osName) \(version) yet",
+                        "The Blueprint’s current update declarations for this hardware cover \(ranges), not \(version), so none "
+                            + "applies. Jamf sets these ranges and can widen them; until it does, the device gets no update from this Blueprint")
+                } else if row?.notFetched == true, !findings.contains(where: { $0.cause == "New declaration not fetched yet" }) {
+                    let last = row?.notFetchedSince.map { " The device last reported its declarations on \(day($0))." } ?? ""
+                    add("Hasn’t fetched Jamf’s current declarations yet",
+                        "One of the Blueprint’s current update declarations covers \(osName) \(os), but the device hasn’t fetched it."
+                            + last + " It fetches it at its next check-in")
+                }
+            } else if active.isEmpty && category != .onTarget {
                 // the device's own ID against the predicates' lists
                 let ids = [status?.deviceID ?? row?.boardID, modelID.isEmpty ? nil : modelID].compactMap { $0 }
                 let listing = own.filter { pair in ids.contains { pair.lists($0) } }
@@ -380,12 +399,66 @@ nonisolated enum InspectFindings {
                                     detail: "\(errorBefore.reason) (\(errorBefore.when), before the update started)", earlier: true))
         }
 
-        // every one of the Blueprint's declarations on this device, by name
+        // an update error since the update started ranks above what the declarations say
+        if let error = findings.firstIndex(where: { $0.cause == "Update error" }),
+           let declarations = findings.firstIndex(where: { finding in
+               ["Jamf’s update doesn’t cover", "Hasn’t fetched Jamf’s", "No update declaration applies", "Not evaluated since"]
+                   .contains { finding.cause.hasPrefix($0) }
+           }), declarations < error {
+            findings.insert(findings.remove(at: error), at: declarations)
+        }
+
+        // the Blueprint's declarations for this device's own platform, by name; the rest in one line
         let names = [ctx.blueprintID.lowercased(): ctx.blueprintName]
-        let lines = pairs.map { DeclarationLine(name: label($0), state: $0.state(names: names)) }
+        let listed = Self.declarationLines(current: ctx.current, mine: pairs, osName: osName, version: version,
+                                           ids: [status?.deviceID ?? row?.boardID, modelID.isEmpty ? nil : modelID].compactMap { $0 },
+                                           names: names, label: label)
         return InspectResult(id: RefreshWorkflow.key(member), name: row?.name ?? member.name ?? "", serial: member.serialNumber ?? "",
                              modelIdentifier: modelID, os: os, diagnosis: diagnosis, onTarget: category == .onTarget,
-                             findings: findings, declarations: BlueprintHealth.uniqueNames(lines))
+                             findings: findings, declarations: listed.lines, otherDeclarations: listed.others)
+    }
+
+    /// The lines of Inspect’s declaration list: the Blueprint’s current
+    /// declarations (from the refresh) for the device’s own platform, each
+    /// with how it stands on the device (“Not fetched yet” without a report
+    /// of it); those that don’t apply to it are counted instead. Pairs for the
+    /// same range (one per hardware group) are one line. Without the current
+    /// declarations, the device’s own report is listed the same way.
+    static func declarationLines(current: [BlueprintHealth.Current]?, mine: [DeclarationPair], osName: String, version: OSVersion?,
+                                 ids: [String], names: [String: String],
+                                 label: (DeclarationPair) -> String) -> (lines: [DeclarationLine], others: Int) {
+        var lines: [DeclarationLine] = []
+        var others = 0
+        guard let current else {
+            for pair in mine {
+                let state = pair.state(names: names)
+                if (pair.family.map { $0 != osName } ?? false) || state == "Not for this device" { others += 1 } else {
+                    lines.append(DeclarationLine(name: label(pair), state: state))
+                }
+            }
+            return (BlueprintHealth.uniqueNames(lines), others)
+        }
+        var order: [String] = []
+        var byName: [String: [BlueprintHealth.Current]] = [:]
+        for declaration in current {
+            if byName[declaration.name] == nil { order.append(declaration.name) }
+            byName[declaration.name, default: []].append(declaration)
+        }
+        for name in order {
+            let group = byName[name] ?? []
+            let states = group.flatMap { declaration in mine.filter { $0.key == declaration.key }.map { $0.state(names: names) } }
+            let applies = version.map { version in group.contains { $0.applies(osName: osName, ids: ids, version: version) != false } } ?? true
+            if group.allSatisfy({ ($0.family.map { $0 != osName }) ?? false }) {
+                others += 1
+            } else if let state = BlueprintHealth.deviceState(states) {
+                if state == "Not for this device" { others += 1 } else { lines.append(DeclarationLine(name: name, state: state)) }
+            } else if applies {
+                lines.append(DeclarationLine(name: name, state: "Not fetched yet"))
+            } else {
+                others += 1
+            }
+        }
+        return (lines, others)
     }
 
     // MARK: Helpers
@@ -489,9 +562,13 @@ nonisolated struct DeclarationPair: Sendable, Hashable {
     }
 
     /// The OS family the predicate asks for (`operating-system.family == "macOS"`); nil without one.
-    var family: String? {
-        // both forms: status.device.operating-system.family == "macOS" and @status(device.operating-system.family) == 'macOS'
-        predicate?.firstMatch(of: #/operating-system\.family\)?\s*==\s*["']([^"']+)["']/#).map { String($0.output.1) }
+    var family: String? { predicate.flatMap(Self.family(in:)) }
+
+    /// The OS family a predicate asks for; nil without one. Both forms:
+    /// `status.device.operating-system.family == "macOS"` and
+    /// `@status(device.operating-system.family) == 'macOS'`.
+    static func family(in predicate: String) -> String? {
+        predicate.firstMatch(of: #/operating-system\.family\)?\s*==\s*["']([^"']+)["']/#).map { String($0.output.1) }
     }
 
     /// The newest version the predicate’s version condition takes; nil without one.
@@ -627,6 +704,17 @@ nonisolated enum DeviceDetailText {
         case nil: "Not reported"
         default: status ?? "Not reported"
         }
+    }
+
+    /// “3, last 9 Nov 2026 at 10:00”: the failure count and when it last
+    /// failed, in this Mac’s time. With no failures, no date: “0”. Nil
+    /// without either.
+    static func failures(count: Int?, time: String?, serverTimeZone: TimeZone) -> String? {
+        if count == 0 { return "0" }
+        let when = time.flatMap { JamfPro.serverDate($0, timeZone: serverTimeZone) }
+            .map { "last \($0.formatted(date: .abbreviated, time: .shortened))" }
+        let parts = [count.map(String.init), when].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
     /// A beta program as the device names it; nil when it is in none.

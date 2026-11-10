@@ -498,7 +498,7 @@ struct BlueprintHealthSection: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Blueprint Health").font(.headline)
             if let health = result.health {
-                if health.declarations.isEmpty {
+                if health.declarations.isEmpty && health.inapplicable == 0 {
                     Text("No device reports one of the Blueprint’s declarations yet.").foregroundStyle(.secondary)
                 } else {
                     Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 6) {
@@ -529,6 +529,9 @@ struct BlueprintHealthSection: View {
                             .accessibilityElement(children: .combine)
                         }
                     }
+                }
+                if let others = BlueprintHealth.othersLine(health.inapplicable, inScope: true) {
+                    Text(others + " (other platforms, other versions or hardware).").font(.callout).foregroundStyle(.secondary)
                 }
                 if health.unmatchedDevices > 0 || health.devicesWithoutPlatformID > 0 {
                     Text(Self.unmatchedNote(health)).font(.caption).foregroundStyle(.secondary)
