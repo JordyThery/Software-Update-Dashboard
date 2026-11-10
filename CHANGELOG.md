@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-11-10
 
 - **Readiness** on the dashboard: how many devices can’t get an enforced update as they are: iPhones and iPads enrolled with User Enrollment, Macs that aren’t supervised, devices on an OS too old for update declarations (iOS and iPadOS 16 or earlier, macOS 13 or earlier), devices without declarative device management, and devices that never reported. Each number shows those devices in the list.
 - **Help** (Help › Software Update Dashboard Help, ⌘?): how each category is decided, where a device’s target and deadline come from, what an earlier step of the Blueprint is, what Readiness counts and what Inspect does. Known Problems describes reasons an update doesn’t install, each with a link to Apple’s own page about it, and Inspect links to the problem it finds.

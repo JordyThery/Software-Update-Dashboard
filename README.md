@@ -21,7 +21,7 @@ A read-only Mac app that shows, for the devices a Blueprint is scoped to, whethe
 - **A target per device:** a specific version, the newest release, or the newest minor release of the device’s own major, from Apple’s release data. A release is the target from the day Apple posts it publicly; the Blueprint’s delay only sets the deadline, in the device’s local time. A table per platform and major release on the dashboard. An “Update started” date can be set by hand.
 - **Nine categories with a diagnosis** for every device: on target, in progress, other update, failed, not started, no activity, offline, no report, and hardware that can’t run the target. The diagnosis says in plain language what stands in the way, such as a passcode, a download problem or a deadline still to come. A device whose target can’t be determined (for example a beta of a newer major) is shown as “Target unknown” with the reason, and isn’t counted.
 - **Blueprint health:** each of the Blueprint’s software update declarations by name, one row per version range, with how many devices report it applied, pending, awaiting sync, failed or invalid, and the most common reason. The device list says when a device is on a version the Blueprint’s update doesn’t cover yet, or hasn’t fetched Jamf’s current declarations.
-- **Readiness:** how many devices can’t get an enforced update as they are: iPhones and iPads enrolled with User Enrollment, Macs that aren’t supervised, devices without declarative device management, and devices that never reported. Each number opens those devices in the list.
+- **Readiness:** how many devices can’t get an enforced update as they are: iPhones and iPads enrolled with User Enrollment, Macs that aren’t supervised, devices on an OS too old for update declarations, devices without declarative device management, and devices that never reported. Each number opens those devices in the list.
 - **Earlier steps:** when Apple posts a newer version during an update, a device still installing the version the Blueprint asked for before is measured against the newer one and its deadline, with the earlier version shown as the step it installs first.
 - **Inspect:** the likely cause for a device, from its inventory, status report and declaration reports, with the Blueprint’s declarations for the device’s own platform. Where the cause is a known problem, Inspect links to it in Help.
 - **Help** (Help › Software Update Dashboard Help, ⌘?): how each category is decided, where targets and deadlines come from, what Readiness counts and what Inspect does, and Known Problems, each with a link to Apple’s own page about it.
@@ -60,7 +60,7 @@ Software Update Dashboard never changes anything in Jamf. It sends only GET requ
 ## Where data is stored
 
 - Connections in the app’s settings; client secrets in the Keychain. Automatic refresh, the menu bar item and the notification choices are in the app’s settings too.
-- The history of each tracked Blueprint in the app’s container, kept for 180 days. When Apple’s release data can’t be read, a refresh stops and the previous one is kept.
+- The history of each tracked Blueprint in the app’s container: counts for 180 days, full refreshes for 7 days and then the newest of each day. When Apple’s release data can’t be read, a refresh stops and the previous one is kept.
 - The activity log (Window › Activity Log) in memory only.
 
 ## Building from source
