@@ -134,7 +134,25 @@ Keep awake, the automatic refresh scheduler, notifications, the help window, the
 
 Done on branch `release-1.6.0` (JTKit) on 2026-11-10, not tagged; see JTKit’s CHANGELOG. Added by Jordy on 2026-11-10: the identifiers of a device’s declarations from its `management.declarations` status item (`SoftwareUpdateStatus.declarationIdentifiers`), and a UI test check that a Save panel shows the test’s own folder before it saves.
 
-### Step 2: 0.2
+### Step 2: release 0.2
+
+Renumbered by Jordy on 2026-11-10: what branch `0.2` holds is release 0.2, built with JTKit 1.6.0 (JTKit is tagged only once SUD uses every new reader, and only after Jordy approves): Blueprint health (F), device details (H), all status items of a device (E), and the fixes below. The other features move to 0.3 (step 3).
+
+- **F, Blueprint health:** read per declaration, never per device. The identifiers are those of this Blueprint among the declarations the devices list in their status reports (`management.declarations`), so no extra request finds them; a declaration no device has received isn’t listed. Each is read once per refresh (`declarations/{id}/devices`). A report is tied to a device through the Platform device ID SUD finds by serial number; a report that can’t be tied is left out and counted in a note. Names come from the predicate (versions, OS family) or the step, never IDs. A device whose Blueprint ranges for its hardware all end below its version, while its target is newer, is “Jamf’s update doesn’t cover ‹OS› ‹version› yet” in the list (when it is not started or has no activity), counted on the dashboard and in the summary. Not kept in the history.
+- **H, device details:** Rapid Security Response (status report, else inventory), beta program, install reason, failure count and time, FileVault (`DISK_ENCRYPTION`), battery health (status report, else inventory); in the CSV as six new columns at the end.
+- **E, all status items:** read when asked from the device detail, every value type, with a filter and Copy; not saved.
+- **This Blueprint’s earlier step after Apple replaced it** (the 0.2 note): Apple’s public catalog can drop the earlier version’s posting once it posts the newer one. A reported deadline also counts as the step’s when it falls on a day the rule could have given that version while it was the rule’s target (from its release, or posting, to the next version’s posting), at the Blueprint’s time of day; a declaration report awaiting sync supports a version the rule targeted in that window.
+
+**Round 2** (decided by Jordy on 2026-11-10, after an independent review and a hand check on the live tenant):
+
+- The Platform device list is read once per refresh (JTKit `devices()`, paged) and matched by serial number; a failed read is an error, never “serial not found”. Only the Blueprint’s software update declarations count (by step and component in the identifier), and awaiting sync only for the device’s own OS. Apple’s posting date of the earlier step (from its other list) comes before the window; with the device’s zone known the full clock time counts. A stopped refresh is never saved.
+- “Jamf’s update doesn’t cover …” only when the Blueprint’s current declarations don’t cover the version; when one does but the device’s report is older, “Hasn’t fetched Jamf’s current declarations yet (last reported …)”. An update error since the update started ranks above both. A failed or invalid update declaration of the device’s own OS is the list diagnosis of a device that hasn’t started.
+- Inspect lists the current declarations for the device’s own platform, each named by its own platform and versions, with the rest in one line. Blueprint health merges pairs with the same range into one row and collapses rows that apply to no device in scope into one line.
+- “Failures: 0” shows no date. Deadline per Time Zone lists a device past its earlier step’s deadline under that step.
+
+Before the release: one read of the production role, and JTKit tagged after Jordy approves.
+
+### Step 3: 0.3
 
 | | Feature |
 |---|---|
@@ -145,28 +163,11 @@ Done on branch `release-1.6.0` (JTKit) on 2026-11-10, not tagged; see JTKit’s 
 | L | Menu bar item: the share on target with a colored dot, the tracked Blueprints, Refresh All, Open Window. |
 | D | Notifications per tracked Blueprint: the share on target reaches or drops below a level; devices newly failed or stuck. Only changes between two refreshes notify. |
 | G | Readiness: devices not supervised, without declarative device management, or that never reported; each number opens those devices. |
-| H | Device details: Rapid Security Response, beta enrollment, install reason, failure count and time, FileVault, battery health; the useful ones in the CSV. |
-| F | Blueprint health: each declaration by name (never IDs) with how many devices report it successful, pending, awaiting sync, failed or invalid, and the most common reason; devices whose version no declaration covers. Read per declaration, not per device. Inspect shows all of the Blueprint’s declarations for one device. |
-| E | All status items of a device, read on request, with a filter and Copy; not kept in the history. |
 | I | Help › Software Update Dashboard Help: how each category is decided, and Known Problems, only problems with a public source (Apple’s or Jamf’s documentation), each linked in the list, e.g. the bootstrap token and Apple’s network access; Inspect links to them. In the app’s own words. |
 | J | Export Report as PDF, one Blueprint or all (nice to have). |
 | K | Find a device by serial number or name across all tracked Blueprints (nice to have). |
 
-Order: step 0 (released as 0.1.1), step 1, then A, B with C and M, L, D, G, H, F, E, I, J, K.
-
-**F, H and E first** (decided by Jordy on 2026-11-10, on branch `0.2`, together with JTKit 1.6.0, so JTKit is tagged only once SUD uses every new reader):
-
-- **F, Blueprint health:** read per declaration, never per device. The identifiers are those of this Blueprint among the declarations the devices list in their status reports (`management.declarations`), so no extra request finds them; a declaration no device has received isn’t listed. Each is read once per refresh (`declarations/{id}/devices`). A report is tied to a device through the Platform device ID SUD finds by serial number; a report that can’t be tied is left out and counted in a note. Names come from the predicate (versions, OS family) or the step, never IDs. A device whose Blueprint ranges for its hardware all end below its version, while its target is newer, is “Jamf’s update doesn’t cover ‹OS› ‹version› yet” in the list (when it is not started or has no activity), counted on the dashboard and in the summary. Not kept in the history.
-- **H, device details:** Rapid Security Response (status report, else inventory), beta program, install reason, failure count and time, FileVault (`DISK_ENCRYPTION`), battery health (status report, else inventory); in the CSV as six new columns at the end.
-- **E, all status items:** read when asked from the device detail, every value type, with a filter and Copy; never kept.
-- **This Blueprint’s earlier step after Apple replaced it** (the 0.2 note): Apple’s public catalog can drop the earlier version’s posting once it posts the newer one. A reported deadline also counts as the step’s when it falls on a day the rule could have given that version while it was the rule’s target (from its release, or posting, to the next version’s posting), at the Blueprint’s time of day; a declaration report awaiting sync supports a version the rule targeted in that window.
-
-**Round 2** (decided by Jordy on 2026-11-10, after an independent review and a hand check on the live tenant):
-
-- The Platform device list is read once per refresh (JTKit `devices()`, paged) and matched by serial number; a failed read is an error, never “serial not found”. Only the Blueprint’s software update declarations count (by step and component in the identifier), and awaiting sync only for the device’s own OS. Apple’s posting date of the earlier step (from its other list) comes before the window; with the device’s zone known the full clock time counts. A stopped refresh is never saved.
-- “Jamf’s update doesn’t cover …” only when the Blueprint’s current declarations don’t cover the version; when one does but the device’s report is older, “Hasn’t fetched Jamf’s current declarations yet (last reported …)”. An update error since the update started ranks above both. A failed or invalid update declaration of the device’s own OS is the list diagnosis of a device that hasn’t started.
-- Inspect lists the current declarations for the device’s own platform, each named by its own platform and versions, with the rest in one line. Blueprint health merges pairs with the same range into one row and collapses rows that apply to no device in scope into one line.
-- “Failures: 0” shows no date. Deadline per Time Zone lists a device past its earlier step’s deadline under that step. Each with tests and a check in Demo Mode; one read of the production role before the release; JTKit is tagged only after Jordy approves.
+Order: A, B with C and M, L, D, G, I, J, K (as planned for 0.2 before the renumbering). Each with tests and a check in Demo Mode; one read of the production role before the release.
 
 ### Later
 
