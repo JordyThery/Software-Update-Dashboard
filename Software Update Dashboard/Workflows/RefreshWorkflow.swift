@@ -11,31 +11,51 @@ nonisolated struct MajorRow: Sendable, Hashable, Identifiable {
     var targets: [String]
     var onTarget: Int
     var updatable: Int
-    /// Each distinct deadline once, as shown everywhere (`DeadlineZones.text`).
+    /// The Blueprint’s deadlines, each once, as shown everywhere
+    /// (`DeadlineZones.text`); the reported ones only when none is computed.
     var deadlines: [String]
+    /// Reported deadlines that differ from those, each once, and how many devices report them.
+    var otherDeadlines: [String] = []
+    var otherDeadlineDevices = 0
     var pastDeadline: Int
 
     var id: String { "\(osName) \(major.map(String.init) ?? "?")" }
 
-    /// Reported moments first by time, then computed local times; each once
-    /// (to the minute: devices report the same deadline a few seconds apart).
+    /// The deadlines shown for a row: the Blueprint’s (computed local times),
+    /// each once; a reported moment that is one of them in some zone counts
+    /// as it. Reported moments that differ are counted apart (`others`),
+    /// each once (to the minute: devices report the same deadline a few
+    /// seconds apart). Without a computed deadline, the reported ones show.
+    static func deadlineColumn(_ devices: [DeviceStatus]) -> (shown: [String], others: [String], otherDevices: Int) {
+        let computedLocal = Set(devices.filter { $0.deadlineDate == nil }.compactMap(\.deadlineLocal)).sorted()
+        let reportedDevices = devices.filter { $0.deadlineDate != nil }
+        func moments(_ group: [DeviceStatus]) -> [String] {
+            Set(group.compactMap { $0.deadlineDate.map { Int($0.timeIntervalSince1970 / 60) } }).sorted()
+                .compactMap { DeadlineZones.text(local: nil, reported: Date(timeIntervalSince1970: Double($0) * 60)) }
+        }
+        guard !computedLocal.isEmpty else { return (moments(reportedDevices), [], 0) }
+        let different = reportedDevices.filter { device in
+            !computedLocal.contains { TargetRules.sameDeadline(reported: device.deadlineDate, reportedLocal: nil, expected: $0) }
+        }
+        return (computedLocal.compactMap { DeadlineZones.text(local: $0, reported: nil) }, moments(different), different.count)
+    }
+
+    /// Every deadline of a row, each once: the shown ones and the others.
     static func deadlines(_ devices: [DeviceStatus]) -> [String] {
-        let reported = Set(devices.compactMap { $0.deadlineDate.map { Int($0.timeIntervalSince1970 / 60) } }).sorted()
-            .compactMap { DeadlineZones.text(local: nil, reported: Date(timeIntervalSince1970: Double($0) * 60)) }
-        let computed = Set(devices.filter { $0.deadlineDate == nil }.compactMap(\.deadlineLocal)).sorted()
-            .compactMap { DeadlineZones.text(local: $0, reported: nil) }
-        return reported + computed
+        let column = deadlineColumn(devices)
+        return column.shown + column.others
     }
 
     static func rows(_ devices: [DeviceStatus]) -> [MajorRow] {
         Dictionary(grouping: devices) { "\($0.osName)|\(OSVersion($0.currentOS)?.major.description ?? "")" }
             .map { _, group in
                 let counts = CategoryCounts(group)
+                let column = Self.deadlineColumn(group)
                 return MajorRow(
                     osName: group[0].osName, major: OSVersion(group[0].currentOS)?.major, devices: group.count,
                     targets: Set(group.compactMap(\.targetVersion)).sorted { (OSVersion($0) ?? OSVersion(major: 0)) < (OSVersion($1) ?? OSVersion(major: 0)) },
                     onTarget: counts[.onTarget], updatable: counts.updatable,
-                    deadlines: Self.deadlines(group),
+                    deadlines: column.shown, otherDeadlines: column.others, otherDeadlineDevices: column.otherDevices,
                     pastDeadline: group.filter { $0.pastDeadline == true }.count)
             }
             .sorted { $0.osName != $1.osName ? $0.osName < $1.osName : ($0.major ?? -1) > ($1.major ?? -1) }
@@ -60,6 +80,8 @@ nonisolated struct RefreshResult: Sendable {
     var settings: [JamfPlatform.SoftwareUpdateSettings]
     /// The Blueprint’s rule in plain language, e.g. “Minor updates, 14 days after their release”.
     var rule: String
+    /// The same by its values (`RefreshWorkflow.ruleKey`), to compare refreshes.
+    var ruleKey: String?
     /// The Blueprint’s scope as Jamf Pro groups, and its Platform groups that aren’t one.
     var scope: [GroupReference]
     var unmatchedScope: Int
@@ -135,7 +157,7 @@ nonisolated struct RefreshWorkflow: Sendable {
         }
         return RefreshResult(
             date: now, tracked: tracked, blueprintName: blueprint.overview.name, blueprintChanged: blueprint.overview.updatedDate,
-            blocks: blocks, settings: blueprint.softwareUpdateSettings, rule: Self.rule(blocks),
+            blocks: blocks, settings: blueprint.softwareUpdateSettings, rule: Self.rule(blocks), ruleKey: Self.ruleKey(blocks),
             scope: scope, unmatchedScope: unmatched, scopeChange: ScopeChange(from: previousScope, to: scope),
             members: members, devices: devices, majors: MajorRow.rows(devices),
             zones: DeadlineZones.zones(devices: devices),
@@ -154,16 +176,24 @@ nonisolated struct RefreshWorkflow: Sendable {
         let platform: AppleReleases.Platform = member.kind == .computer ? .macOS : .iOS
         let model = member.modelIdentifier ?? input.status?.modelIdentifier
         let osName = Classifier.osName(isComputer: member.kind == .computer, modelIdentifier: model ?? "")
-        let os = input.status?.osVersion ?? member.osVersion
+        // the newer of what the device reports and its inventory: a device
+        // that installed may not have sent a new status report yet
+        let os = Classifier.newer(input.status?.osVersion, member.osVersion)
+        let block = Self.block(for: osName, in: blocks)
         let rule = TargetRules.target(
             os: os, model: model, boardID: input.status?.deviceID, osName: osName,
-            context: TargetRules.Context(block: Self.block(for: osName, in: blocks), catalog: catalog, platform: platform,
+            context: TargetRules.Context(block: block, catalog: catalog, platform: platform,
                                          blueprintChanged: blueprint.overview.updatedDate, updateStarted: tracked.updateStarted,
                                          now: now))
         // what Jamf actually sent the device comes first, when it reports it
         var target = TargetRules.fromDevice(rule, status: input.status, os: os, osName: osName, catalog: catalog,
                                             platform: platform, serverTimeZone: serverTimeZone, model: model,
-                                            boardID: input.status?.deviceID, blueprintChanged: blueprint.overview.updatedDate)
+                                            boardID: input.status?.deviceID, blueprintChanged: blueprint.overview.updatedDate,
+                                            earlierStepDeadline: { [catalog] version in
+                                                TargetRules.ruleDeadline(for: version, block: block, catalog: catalog, platform: platform,
+                                                                         model: model, boardID: input.status?.deviceID)
+                                            },
+                                            timeZone: member.timeZone, now: now)
         // hardware that can't run the newest major stays on the list to
         // replace, whichever source gave its target
         if target.unknown == nil, !target.noApplicableRelease, let catalog {
@@ -220,6 +250,20 @@ nonisolated struct RefreshWorkflow: Sendable {
         blocks.first { $0.activationPredicate?.range(of: "==\\s*'\(osName)'", options: .regularExpression) != nil }
             ?? blocks.first { $0.activationPredicate == nil }
             ?? blocks.first
+    }
+
+    /// The Blueprint’s rule by its values, to compare refreshes: unlike its
+    /// text, it doesn’t change with this Mac’s region or clock format.
+    static func ruleKey(_ blocks: [JamfPlatform.SoftwareUpdateBlock]) -> String {
+        let keys = blocks.map { block -> String in
+            switch block.enforcement {
+            case .specific(let version, let deadline, _): "specific|\(version)|\(block.targetBuildVersion ?? "")|\(deadline ?? "")"
+            case .latest(let days, let time): "latest|\(days ?? 0)|\(time ?? "")"
+            case .semantic(let days, let time): "minor|\(days ?? 0)|\(time ?? "")"
+            case .unknown(let kind): "unknown|\(kind ?? "")"
+            }
+        }
+        return Array(NSOrderedSet(array: keys)).compactMap { $0 as? String }.joined(separator: ";")
     }
 
     /// The Blueprint’s rule in plain language; several blocks joined.

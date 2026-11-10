@@ -45,7 +45,8 @@ struct EndToEndTests {
             ("Field iPad 09", .unsupported, "Hardware can’t run iPadOS 27 (stays on its last supported version)"),
             ("Field iPad 10", .noActivity, "No report since the update started (switched off or not synced yet)"),
             ("Field iPad 11", .notStarted, "Online, update not started (no error)"),
-            ("Field iPad 12", .inProgress, "Installing now"),
+            // the demo device reported installing days ago and checks in since
+            ("Field iPad 12", .inProgress, "Installing 27.1 for more than 4 hours; the device checks in but hasn’t reported a new status"),
         ]
         #expect(result.devices.count == expected.count)
         for (name, category, diagnosis) in expected {
@@ -98,14 +99,13 @@ struct EndToEndTests {
         let brussels = try #require(zones["Europe/Brussels"]?.deadline)
         let tokyo = try #require(zones["Asia/Tokyo"]?.deadline)
         #expect(brussels.timeIntervalSince(tokyo) == 8 * 3_600)
-        // Macs have no zone in Jamf Pro: a Mac with a pending update reports
-        // its deadline as a moment, the others keep their own local time
+        // Macs have no zone in Jamf Pro: every Mac row is placed by its moment,
+        // reported or computed in this Mac's zone, one row per target and moment
         let (_, macs) = try await refreshed(Self.macs)
-        #expect(macs.zones.allSatisfy { $0.zone == nil && $0.label == "No time zone" })
-        let reported = macs.zones.filter { $0.reported != nil }
-        #expect(!reported.isEmpty && reported.allSatisfy { $0.deadline == $0.reported })
-        let local = macs.zones.filter { $0.reported == nil }
-        #expect(!local.isEmpty && local.allSatisfy { $0.unusual?.hasPrefix("Jamf Pro has no time zone for Macs") == true && $0.target != nil })
+        #expect(macs.zones.allSatisfy { $0.zone == nil && $0.label == "No time zone" && $0.target != nil })
+        #expect(macs.zones.allSatisfy { $0.reported != nil && $0.deadline == $0.reported })
+        #expect(macs.zones.contains { $0.unusual == DeadlineZones.macNote })
+        #expect(Set(macs.zones.map { "\($0.target ?? "")|\($0.deadline?.timeIntervalSince1970 ?? 0)" }).count == macs.zones.count)
     }
 
     @Test("Unsupported hardware is listed with the last version it can run")

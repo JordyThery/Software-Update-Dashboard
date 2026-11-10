@@ -131,6 +131,12 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var boardID: String?
     /// A Mac’s bootstrap token in Jamf Pro: `ESCROWED`, `NOT_ESCROWED`, `NOT_SUPPORTED`.
     var bootstrapToken: String?
+    /// This Blueprint’s earlier step, still pending: shown, not counted (`DeviceTarget`).
+    var earlierStepVersion: String?
+    var earlierStepDeadline: Date?
+    var earlierStepLocal: String?
+    /// The step’s own deadline has passed: it is the target again, late.
+    var earlierStepLapsed: Bool?
 
     /// The device by kind and number: a Mac and an iPad can share a number.
     var id: String { "\(isComputer ? "computer" : "mobileDevice")/\(jamfID)" }
@@ -179,16 +185,36 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case staleReason
         case boardID
         case bootstrapToken
+        case earlierStepVersion
+        case earlierStepDeadline
+        case earlierStepLocal
+        case earlierStepLapsed
     }
 
-    /// The version the device reports, else the one in its inventory.
-    var currentOS: String { reportedOS ?? inventoryOS ?? "" }
+    /// The newer of the version the device reports and the one in its
+    /// inventory: a device that installed may not have reported it yet.
+    var currentOS: String { Classifier.newer(reportedOS, inventoryOS) ?? "" }
+
+    /// The deadline as a moment: reported, or the local deadline in the
+    /// device’s zone (this Mac’s for a device without one, as Macs).
+    var deadlineMoment: Date? {
+        deadlineDate ?? TargetRules.deadlineDate(deadlineLocal, timeZone: timeZone ?? TimeZone.current.identifier)
+    }
+
+    /// Past the deadline by more than an install gets (`installGrace`): a
+    /// downloaded update that still hasn’t installed is stuck. Without a
+    /// moment to measure from, past is past. A late earlier step is past
+    /// its own deadline by the grace already.
+    func pastDeadlineByGrace(now: Date) -> Bool {
+        if earlierStepLapsed == true { return true }
+        return pastDeadline == true && (deadlineMoment.map { now >= $0.addingTimeInterval(TargetRules.installGrace) } ?? true)
+    }
 
     /// iPadOS, iOS or macOS.
     var osName: String { Classifier.osName(isComputer: isComputer, modelIdentifier: modelIdentifier) }
 
     /// The diagnoses that need someone to look (summary, Inspect’s default selection).
-    static let attentionPattern = "^Downloaded, not installed|[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check"
+    static let attentionPattern = "^Downloaded.*not installed after|downloaded but not installed after|[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check|^Installing .*for more than"
 
     var needsAttention: Bool { diagnosis.range(of: Self.attentionPattern, options: .regularExpression) != nil }
 
@@ -228,22 +254,32 @@ nonisolated enum Classifier {
         let status = input.status
         let target = ctx.target
         let ddmOS = status?.osVersion
-        let state = status?.installState
         let pending = status?.pendingVersion?.osVersion
+        // the newer of what the device reports and its inventory
+        let osText = newer(ddmOS, member.osVersion) ?? ""
+        let os = OSVersion(osText)
+        // an install state for a version the device already runs is left over
+        // from that install: not busy, not failed
+        let pendingIsNewer = pending.flatMap(OSVersion.init).map { version in os.map { version > $0 } ?? true } ?? true
+        let state = pendingIsNewer ? status?.installState : nil
         let failTime = status?.failure?.timestamp
         let failAt = failTime.flatMap { JamfPro.serverDate($0, timeZone: ctx.serverTimeZone) }
         let failedSince = failAt.map { at in ctx.since.map { at >= $0 } ?? true } ?? false
         let updated = status?.newestUpdate.flatMap { JamfPro.serverDate($0, timeZone: ctx.serverTimeZone) }
         let fresh = ctx.since.map { since in updated.map { $0 >= since } ?? false } ?? true
         let ours = pending.flatMap(OSVersion.init).map { version in target.map { !(version < $0) } ?? true } ?? true
-        let osText = ddmOS ?? member.osVersion ?? ""
-        let os = OSVersion(osText)
         let modelID = member.modelIdentifier.flatMap { $0.isEmpty ? nil : $0 }
         let unsupportedHardware = target.map { ctx.supports(modelID ?? status?.modelIdentifier, status?.deviceID, $0.major) == false } ?? false
         let busy = state?.isBusy ?? false
         let isFailed = state == .failed
         let itemCount = status?.itemCount ?? 0
         let stale = member.lastSeen.map { ctx.now.timeIntervalSince($0) > Double(ctx.staleDays) * 86_400 } ?? true
+        // installing for hours: with contact since, the device checks in
+        // but sends no new status; without, it may be asleep
+        let installingLong = state == .installing && updated.map { ctx.now.timeIntervalSince($0) > TargetRules.longInstall } == true
+        let contactSince = member.lastSeen.map { seen in
+            updated.map { seen >= $0.addingTimeInterval(TargetRules.laterContact) } ?? false
+        } ?? false
 
         let category: StatusCategory
         if let target, let os, !(os < target) { category = .onTarget }
@@ -280,6 +316,10 @@ nonisolated enum Classifier {
         case category == .noActivity: diagnosis = "No report since the update started (switched off or not synced yet)"
         case category == .noReport && input.statusProblem != nil: diagnosis = "Update status couldn’t be read"
         case category == .noReport: diagnosis = "No update status available"
+        case state == .installing && installingLong && contactSince:
+            diagnosis = "Installing \(pending.map { "\($0) " } ?? "")for more than \(Int(TargetRules.longInstall / 3_600)) hours; "
+                + "the device checks in but hasn’t reported a new status"
+        case state == .installing && installingLong: diagnosis = "Installing\(via), no contact since it started"
         case state == .installing: diagnosis = "Installing now\(via)"
         case state == .prepared && !blocker.isEmpty: diagnosis = "Downloaded\(via), install blocked by \(blocker)"
         case state == .prepared: diagnosis = "Downloaded\(via), installs at the deadline"
@@ -293,7 +333,9 @@ nonisolated enum Classifier {
         case !errorNow.isEmpty: diagnosis = "Other error: \(errorNow)"
         case os != nil && ctx.oldestMaintainedMajor.map { os!.major < $0 } == true:
             diagnosis = "On \(osName) \(os!.major): check if the hardware supports a newer \(osName)"
-        default: diagnosis = "Online, update not started (no error)"
+        // an error from before the update started doesn't count, but is there
+        default: diagnosis = error.isEmpty ? "Online, update not started (no error)"
+            : "Online, update not started (no error since the update started)"
         }
 
         return DeviceStatus(
@@ -326,6 +368,17 @@ nonisolated enum Classifier {
         status.staleReportedLocal = target.staleReportedLocal
         status.staleSince = target.staleSince
         status.staleReason = target.staleReason
+        status.earlierStepVersion = target.earlierStepVersion
+        status.earlierStepDeadline = target.earlierStepDeadline
+        status.earlierStepLocal = target.earlierStepLocal
+        status.earlierStepLapsed = target.earlierStepLapsed ? true : nil
+        if let step = target.earlierStepVersion, status.category == .otherUpdate,
+           let range = status.diagnosis.range(of: " (intermediate version \(step))") {
+            // the intermediate version is this Blueprint's own earlier step
+            status.diagnosis.replaceSubrange(range, with: " \(step) first (an earlier step of this Blueprint"
+                                                 + (target.earlierStepLapsed ? ", past its deadline)" : ")"))
+            status.diagnosis = status.diagnosis.replacingOccurrences(of: "Installing now ", with: "Installing ")
+        }
         if target.fromDevice {
             status.targetFromDevice = true
             status.ruleTarget = target.ruleVersion
@@ -345,14 +398,32 @@ nonisolated enum Classifier {
         status.deadlineDate = target.deadlineDate
         status.deadlineOffset = target.deadlineOffset
         status.pastDeadline = status.category == .onTarget ? false
+            // a late earlier step: past that step's deadline, whatever the Blueprint's current one
+            : target.earlierStepLapsed ? true
             : target.deadlineDate.map { $0 <= base.now }
                 ?? TargetRules.isPastDeadline(target.deadlineLocal, timeZone: input.member.timeZone, now: base.now)
-        // downloaded but past the deadline: it didn't install when it should have
-        if status.pastDeadline == true, status.diagnosis.hasPrefix("Downloaded"), status.diagnosis.hasSuffix("installs at the deadline") {
-            status.diagnosis = status.diagnosis.replacingOccurrences(of: "installs at the deadline", with: "not installed after the deadline")
+        // downloaded and past the deadline by more than an install takes:
+        // it didn't install when it should have; just past it, it installs now
+        if target.earlierStepLapsed, let step = target.earlierStepVersion, status.diagnosis.hasPrefix("Downloaded") {
+            // this Blueprint's earlier step, downloaded and left past its own deadline
+            status.diagnosis = "\(step) downloaded but not installed after its deadline"
+        } else if status.pastDeadline == true, status.diagnosis.hasPrefix("Downloaded"), status.diagnosis.hasSuffix("installs at the deadline") {
+            status.diagnosis = status.diagnosis.replacingOccurrences(
+                of: "installs at the deadline",
+                with: status.pastDeadlineByGrace(now: base.now) ? "not installed after the deadline" : "installs now (the deadline has just passed)")
         }
         status.limitedByHardware = target.limitedByHardware
         return status
+    }
+
+    /// The newer of two versions; the one that reads when the other doesn’t.
+    static func newer(_ first: String?, _ second: String?) -> String? {
+        switch (first.flatMap(OSVersion.init), second.flatMap(OSVersion.init)) {
+        case let (one?, two?): return one < two ? second : first
+        case (_?, nil): return first
+        case (nil, _?): return second
+        case (nil, nil): return first ?? second
+        }
     }
 
     /// iPadOS for an iPad, iOS for an iPhone, macOS for a Mac.

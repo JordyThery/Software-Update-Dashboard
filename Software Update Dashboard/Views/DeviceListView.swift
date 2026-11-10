@@ -34,9 +34,19 @@ struct DeviceListView: View {
             TableColumn("OS", value: \.currentOS)
                 .width(min: 60, ideal: 70)
             TableColumn("Target") { device in
-                Text(device.targetVersion ?? (device.category == .targetUnknown ? "Unknown" : "–"))
-                    .foregroundStyle(device.limitedByHardware == true ? .orange : .primary)
-                    .help(device.targetReason ?? "")
+                let limited = device.limitedByHardware == true
+                HStack(spacing: 3) {
+                    Text(device.targetVersion ?? (device.category == .targetUnknown ? "Unknown" : "–"))
+                    // not by color alone: a symbol, a help tag and the spoken label say it too
+                    if limited {
+                        Image(systemName: "exclamationmark.triangle").imageScale(.small).accessibilityHidden(true)
+                    }
+                }
+                .foregroundStyle(limited ? .orange : .primary)
+                .help([limited ? DeviceDetailText.hardwareLimit(device) : nil, device.targetReason].compactMap { $0 }.joined(separator: "\n"))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(device.targetVersion ?? (device.category == .targetUnknown ? "Unknown" : "None"))
+                .accessibilityValue(limited ? DeviceDetailText.hardwareLimit(device) : "")
             }
             .width(min: 60, ideal: 80)
             TableColumn("Category", value: \.category.title) { device in
@@ -149,6 +159,22 @@ struct DeviceDetailView: View {
                                ?? (device.category == .targetUnknown ? "Unknown" : "None"))
                 // one line: where the target comes from, or why there is none
                 if let line = device.targetSource ?? device.targetReason { Text(line).foregroundStyle(.secondary) }
+                if device.limitedByHardware == true { WarningLabel(DeviceDetailText.hardwareLimit(device)) }
+                // this Blueprint's earlier step, still pending: shown, not counted
+                if let step = device.earlierStepVersion {
+                    let late = device.earlierStepLapsed == true
+                    LabeledContent("Installs first", value: step)
+                    Text("An earlier step of this Blueprint, sent before Apple posted \(device.targetVersion ?? "the target")")
+                        .foregroundStyle(.secondary)
+                    if let text = DeadlineZones.text(local: device.earlierStepLocal, reported: device.earlierStepDeadline) {
+                        LabeledContent("Its deadline", value: text)
+                        if late {
+                            WarningLabel("Not installed by its deadline: the device counts as past its deadline")
+                        } else {
+                            Text("Not counted: the Blueprint’s current deadline counts").foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 if device.targetFromDevice == true, device.targetDiffersFromRule == true {
                     LabeledContent("Blueprint’s rule gives", value: device.ruleTarget ?? "No version")
                     if let rule = device.ruleReason { Text(rule).foregroundStyle(.secondary) }
@@ -196,7 +222,7 @@ struct DeviceDetailView: View {
                         Text(inspection.cause).font(.headline)
                         Text(inspection.detail).foregroundStyle(.secondary)
                     }
-                    let others = Array(inspection.findings.dropFirst())
+                    let others = inspection.alsoFound
                     if !others.isEmpty {
                         Text(others.count == 1 ? "Also Found" : "Also Found (\(others.count))")
                             .font(.subheadline).foregroundStyle(.secondary)

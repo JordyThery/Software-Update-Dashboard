@@ -48,8 +48,8 @@ nonisolated struct CategoryCounts: Sendable, Hashable, Codable {
 /// one, the progress figure, the diagnoses and who needs attention.
 nonisolated enum StatusSummary {
     /// The previous refresh to compare with: only one for the same target.
-    static func previous(_ snapshot: HistorySnapshot?, target: String?) -> HistorySnapshot? {
-        guard let snapshot, snapshot.target == target else { return nil }
+    static func previous(_ snapshot: HistorySnapshot?, target: String?, ruleKey: String? = nil) -> HistorySnapshot? {
+        guard let snapshot, snapshot.measures(target: target, ruleKey: ruleKey) else { return nil }
         return snapshot
     }
 

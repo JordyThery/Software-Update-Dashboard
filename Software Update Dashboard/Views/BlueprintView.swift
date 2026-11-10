@@ -378,9 +378,22 @@ struct MajorsSection: View {
                         Text("\(row.devices)").monospacedDigit()
                         Text(row.targets.isEmpty ? "–" : row.targets.joined(separator: ", "))
                         Text("\(row.onTarget) of \(row.updatable)").monospacedDigit()
-                        Text(row.deadlines.isEmpty ? "–"
-                             : row.deadlines.joined(separator: "; ")
-                               + (row.pastDeadline > 0 ? " (\(row.pastDeadline) past)" : ""))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.deadlines.isEmpty ? "–" : row.deadlines.joined(separator: "; "))
+                            if row.otherDeadlineDevices > 0 {
+                                Text("\(Plural.count(row.otherDeadlineDevices, "device")) \(row.otherDeadlineDevices == 1 ? "reports" : "report") another deadline")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .help(row.otherDeadlines.joined(separator: "\n"))
+                                    .accessibilityHint(row.otherDeadlines.joined(separator: "; "))
+                            }
+                            // for the whole row, whichever deadline each device has
+                            if row.pastDeadline > 0 {
+                                Text("\(Plural.count(row.pastDeadline, "device")) past \(row.pastDeadline == 1 ? "its" : "their") deadline")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
             }
@@ -427,6 +440,8 @@ struct HistoryChart: View {
                             let count = group.count(in: snapshot.counts)
                             AreaMark(x: .value("Refresh", snapshot.date), y: .value("Devices", count))
                                 .foregroundStyle(by: .value("Group", group.rawValue))
+                                // counts hold until the next refresh: steps, not slopes between refreshes
+                                .interpolationMethod(.stepEnd)
                                 .lineStyle(StrokeStyle(lineWidth: 1))
                                 .accessibilityLabel("\(group.rawValue), \(snapshot.date.formatted(date: .abbreviated, time: .shortened))")
                                 .accessibilityValue(Plural.count(count, "device"))
@@ -449,6 +464,7 @@ struct HistoryChart: View {
                 }
                 .chartForegroundStyleScale(domain: ProgressGroup.allCases.map(\.rawValue),
                                            range: ProgressGroup.allCases.map(\.color))
+                .chartYAxisLabel("Devices")
                 .frame(height: 180)
                 if !marks.isEmpty {
                     Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 4) {
@@ -484,13 +500,17 @@ struct DeadlineZonesSection: View {
                             Text("\(zone.deviceCount)").monospacedDigit().foregroundStyle(.secondary)
                                 .gridColumnAlignment(.trailing)
                             Text(DeadlineZones.text(local: zone.localDeadline, reported: zone.reported) ?? "–")
-                            if let unusual = zone.unusual {
+                            // the Mac note is said once, under the table
+                            if let unusual = zone.unusual, unusual != DeadlineZones.macNote {
                                 WarningLabel(unusual).font(.callout)
                             } else {
                                 Text("")
                             }
                         }
                     }
+                }
+                if result.zones.contains(where: { $0.unusual == DeadlineZones.macNote }) {
+                    WarningLabel(DeadlineZones.macNote).font(.callout)
                 }
                 Text("Deadlines reported by the devices are shown in this Mac’s time zone; computed ones in each device’s local time.")
                     .font(.caption).foregroundStyle(.secondary)

@@ -267,7 +267,8 @@ final class DashboardModel {
             // nothing measured (the banner says so): a snapshot of zero devices would only drop the chart
             if result.counts.isWorthSaving, let history {
                 if isDemo && previous == nil { seedDemoHistory(result, in: history) }
-                try? history.save(HistorySnapshot(date: result.date, target: result.rule, devices: result.devices, scope: result.scope),
+                try? history.save(HistorySnapshot(date: result.date, target: result.rule, ruleKey: result.ruleKey, devices: result.devices,
+                                                  scope: result.scope),
                                   for: id)
             }
             results[id] = result
@@ -358,7 +359,7 @@ final class DashboardModel {
 
     func summary(_ id: UUID) -> String? {
         guard let result = results[id] else { return nil }
-        let previous = StatusSummary.previous(history?.latest(for: id, before: result.date), target: result.rule)
+        let previous = StatusSummary.previous(history?.latest(for: id, before: result.date), target: result.rule, ruleKey: result.ruleKey)
         var notes: [String] = []
         if let change = result.scopeChange { notes.append(change.text) }
         if let coverage = result.coverage {

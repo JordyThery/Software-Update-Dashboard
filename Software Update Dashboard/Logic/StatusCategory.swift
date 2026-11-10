@@ -44,7 +44,7 @@ nonisolated enum StatusCategory: String, CaseIterable, Sendable, Codable, Identi
     /// What the count means, after it in the summary.
     func note(staleDays: Int) -> String? {
         switch self {
-        case .otherUpdate: "(e.g. via an intermediate version)"
+        case .otherUpdate: "(e.g. an earlier step of this Blueprint)"
         case .unsupported: "(hardware can’t run the target)"
         case .noActivity: "(no report since the update started)"
         case .offline: "(no contact for more than \(staleDays) days)"

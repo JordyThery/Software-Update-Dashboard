@@ -23,7 +23,7 @@ A read-only Mac app that shows, for the devices a Blueprint is scoped to, whethe
 - **Inspect:** the likely cause for a device, from its inventory, status report and declaration reports.
 - **History** of every refresh, per tracked Blueprint.
 - **Unsupported hardware** with a replacement list: the model, how many devices, and the last version it can run.
-- **Deadlines per time zone:** the deadline is each device’s local time, and unusual time zones are pointed out.
+- **Deadlines per time zone:** the deadline is each device’s local time, and unusual time zones are pointed out. Jamf Pro has no time zone for Macs, so a Mac’s computed deadline is measured in this Mac’s time zone. A downloaded update counts as stuck 4 hours after its deadline, and an install as long after 4 hours; status times are read in the connection’s Jamf Pro server time zone, so set that zone correctly.
 - **Exports:** the device list as CSV, and a summary.
 - **Demo Mode:** sample iPads and Macs in the middle of an update, without a Jamf tenant. Blueprint › Demo Situation shows what happens when Apple’s release data can’t be read or the saved list of tracked Blueprints can’t be read.
 
