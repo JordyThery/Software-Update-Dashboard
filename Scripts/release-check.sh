@@ -28,6 +28,18 @@ SIGNIN_TEST="Software Update Dashboard Tests/LiveSignInTests"
 # Apple's release data first (public hosts only), then the production reads.
 LIVE_TESTS=("Software Update Dashboard Tests/LiveReadTests/appleReleaseData()"
             "Software Update Dashboard Tests/LiveReadTests/mobileGroupEndToEnd()")
+# Only for Scripts/snapshot.sh (a development tool, never a release check):
+# its one read-only live step, added only when that script runs this one
+# for exactly that partial run. Anything else with SUD_SNAPSHOT set stops.
+if [[ -n "${SUD_SNAPSHOT:-}" ]]; then
+    if [[ "$SUD_SNAPSHOT" == 1 && "${SUD_SNAPSHOT_SCRIPT:-}" == "${0:A:h}/snapshot.sh" \
+          && "$*" == "--local-jtkit --include-production --only takeSnapshot()" ]]; then
+        LIVE_TESTS+=("Software Update Dashboard Tests/LiveSnapshot/takeSnapshot()")
+    else
+        print -u2 "SUD_SNAPSHOT is for Scripts/snapshot.sh only, never a release check"
+        exit 2
+    fi
+fi
 CLEANUP_TEST="Software Update Dashboard Tests/LiveCleanupTests"
 ROLES=(jamfpro-production)
 READ_ONLY_ROLES=(jamfpro-production)
