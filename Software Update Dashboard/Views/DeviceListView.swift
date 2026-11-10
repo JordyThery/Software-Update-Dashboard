@@ -6,6 +6,8 @@ import SwiftUI
 struct DeviceListView: View {
     let model: DashboardModel
     let result: RefreshResult
+    /// Set from a readiness count on the dashboard: only those devices.
+    @Binding var readiness: ReadinessCheck?
     @State private var selection: Set<DeviceStatus.ID> = []
     @State private var category: StatusCategory?
     @State private var search = ""
@@ -15,6 +17,7 @@ struct DeviceListView: View {
     private var devices: [DeviceStatus] {
         result.devices
             .filter { category == nil || $0.category == category }
+            .filter { readiness?.applies(to: $0) ?? true }
             .filter { device in
                 search.isEmpty || [device.name, device.serial, device.modelIdentifier, device.diagnosis]
                     .contains { $0.localizedCaseInsensitiveContains(search) }
@@ -57,9 +60,13 @@ struct DeviceListView: View {
                 .width(min: 200, ideal: 320)
         }
         .contextMenu(forSelectionType: DeviceStatus.ID.self) { ids in
+            Button("Open in Jamf Pro") { model.open(pages(ids)) }
+                .disabled(pages(ids).isEmpty)
             Button("Inspect") { inspect(ids) }
                 .disabled(ids.isEmpty)
         }
+        .focusedSceneValue(\.deviceSelection, DeviceSelection(model: model, trackedID: result.tracked.id,
+                                                              devices: result.devices.filter { selected.contains($0.id) }))
         .searchable(text: $search, prompt: "Name, serial, model or diagnosis")
         .safeAreaInset(edge: .top, spacing: 0) {
             HStack(spacing: 12) {
@@ -71,12 +78,21 @@ struct DeviceListView: View {
                     }
                 }
                 .fixedSize()
+                if let readiness {
+                    Button {
+                        self.readiness = nil
+                    } label: {
+                        Label("\(readiness.title) (\(ReadinessCheck.count(readiness, in: result.devices)))", systemImage: "xmark.circle.fill")
+                    }
+                    .help("Show every device again")
+                    .accessibilityLabel("Remove filter: \(readiness.title)")
+                }
                 Spacer()
-                Button("Inspect Devices Needing Attention") {
+                Button("Inspect Devices to Check") {
                     inspect(Set(InspectWorkflow.select(result.devices).map(\.id)))
                 }
                 .disabled(InspectWorkflow.select(result.devices).isEmpty || model.isInspecting(in: result.tracked.id))
-                .help("Look for the likely cause on every device whose diagnosis needs attention")
+                .help("Look for the likely cause on every device to check: those whose diagnosis needs someone to look at it")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -99,7 +115,10 @@ struct DeviceListView: View {
         .onChange(of: result.tracked.id) {
             // another Blueprint’s devices: nothing of the one before stays selected
             selection = []
+            showRequestedDevice()
         }
+        .onAppear(perform: showRequestedDevice)
+        .onChange(of: model.deviceToShow) { showRequestedDevice() }
         .toolbar {
             ToolbarItem {
                 Button {
@@ -115,6 +134,21 @@ struct DeviceListView: View {
     /// The selection, without devices that aren’t in this refresh.
     private var selected: Set<DeviceStatus.ID> {
         selection.intersection(result.devices.map(\.id))
+    }
+
+    /// Find a Device asked for one of these devices: every filter off, the device selected.
+    private func showRequestedDevice() {
+        guard let wanted = model.deviceToShow, wanted.tracked == result.tracked.id else { return }
+        model.deviceToShow = nil
+        category = nil
+        readiness = nil
+        search = ""
+        selection = [wanted.device]
+        showsDetail = true
+    }
+
+    private func pages(_ ids: Set<DeviceStatus.ID>) -> [URL] {
+        model.pages(of: result.devices.filter { ids.contains($0.id) })
     }
 
     private func inspect(_ ids: Set<DeviceStatus.ID>) {
@@ -143,6 +177,13 @@ struct DeviceDetailView: View {
             }
             Section("Device") {
                 LabeledContent("Serial number", value: device.serial)
+                if let page = model.pages(of: [device]).first {
+                    Button("Open in Jamf Pro") { model.open([page]) }
+                        .help("Opens the device’s page in Jamf Pro in your browser, read-only")
+                } else {
+                    LabeledContent("Jamf Pro") { Text("No web address").foregroundStyle(.secondary) }
+                        .help(JamfProPages.noAddress)
+                }
                 LabeledContent("Model", value: device.model.isEmpty ? device.modelIdentifier : "\(device.model) (\(device.modelIdentifier))")
                 LabeledContent("\(device.osName) reported", value: device.reportedOS ?? "–")
                 LabeledContent("In inventory", value: device.inventoryOS ?? "–")
@@ -190,6 +231,14 @@ struct DeviceDetailView: View {
                         }
                     }
                 }
+                // the target pending with this Blueprint's earlier step's deadline: shown, not counted
+                if let step = device.carriedStepVersion,
+                   let text = DeadlineZones.text(local: device.carriedDeadlineLocal, reported: device.carriedDeadline) {
+                    LabeledContent("Device reports", value: text)
+                    Text("The deadline of \(step), an earlier step of this Blueprint, kept when Jamf moved it to \(device.targetVersion ?? "the target"). "
+                         + "Not counted: the Blueprint’s current deadline counts")
+                        .foregroundStyle(.secondary)
+                }
                 if device.targetFromDevice == true, device.targetDiffersFromRule == true {
                     LabeledContent("Blueprint’s rule gives", value: device.ruleTarget ?? "No version")
                     if let rule = device.ruleReason { Text(rule).foregroundStyle(.secondary) }
@@ -217,7 +266,7 @@ struct DeviceDetailView: View {
             }
             Section("Software Update") {
                 LabeledContent("Install state", value: DeviceDetailText.installState(device.installState))
-                LabeledContent("Pending version", value: device.pendingVersion ?? "–")
+                LabeledContent("Pending version", value: DeviceDetailText.pendingVersion(device))
                 if device.installReason != nil {
                     LabeledContent("Started by", value: DeviceDetailText.installReason(device.installReason))
                 }
@@ -245,6 +294,9 @@ struct DeviceDetailView: View {
                         Text("Likely cause").font(.subheadline).foregroundStyle(.secondary)
                         Text(inspection.cause).font(.headline)
                         Text(inspection.detail).foregroundStyle(.secondary)
+                        if !inspection.onTarget, let problem = HelpContent.problem(forCause: inspection.cause, detail: inspection.detail) {
+                            KnownProblemLink(problem: problem)
+                        }
                     }
                     let others = inspection.alsoFound
                     if !others.isEmpty {
@@ -254,6 +306,9 @@ struct DeviceDetailView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(finding.cause)
                                 Text(finding.detail).foregroundStyle(.secondary)
+                                if let problem = HelpContent.problem(forCause: finding.cause, detail: finding.detail, likely: false) {
+                                    KnownProblemLink(problem: problem)
+                                }
                             }
                         }
                     }

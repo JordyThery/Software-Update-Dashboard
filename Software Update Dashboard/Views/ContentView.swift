@@ -1,21 +1,27 @@
 import JTKit
+import UniformTypeIdentifiers
 import SwiftUI
 
 /// The main window: the overview and the tracked Blueprints in the sidebar,
 /// the selected one in the detail, and the connection in use in the toolbar.
 struct ContentView: View {
     let connections: ConnectionsModel
-    @State private var model: DashboardModel
+    let model: DashboardModel
+    let automation: AutoRefresh
     @State private var sheet: BlueprintSheet?
     @State private var page: BlueprintView.Page = .dashboard
     /// Set by the menu or the toolbar: true for the CSV, false for the summary.
     @State private var exportRequest: Bool?
+    /// Export Report as PDF, ready for the Save panel, and its file name.
+    @State private var pdfReport: PDFReportDocument?
+    @State private var pdfName = ""
     /// The tracked Blueprint whose Stop Tracking waits for confirmation.
     @State private var stopTracking: UUID?
 
-    init(connections: ConnectionsModel) {
+    init(connections: ConnectionsModel, model: DashboardModel, automation: AutoRefresh) {
         self.connections = connections
-        _model = State(initialValue: DashboardModel(connections: connections))
+        self.model = model
+        self.automation = automation
     }
 
     var body: some View {
@@ -27,9 +33,10 @@ struct ContentView: View {
                 if connections.connectionInUse == nil {
                     NoConnectionView(demo: connections.demo)
                 } else if case .blueprint(let id)? = model.selection, let tracked = model.tracked(id) {
-                    BlueprintView(model: model, tracked: tracked, page: $page, exportRequest: $exportRequest, sheet: $sheet)
+                    BlueprintView(model: model, tracked: tracked, page: $page, exportRequest: $exportRequest, sheet: $sheet,
+                                  exportPDF: exportPDF)
                 } else {
-                    OverviewView(model: model, sheet: $sheet)
+                    OverviewView(model: model, automation: automation, sheet: $sheet)
                 }
             }
             .safeAreaInset(edge: .top) {
@@ -42,12 +49,23 @@ struct ContentView: View {
             ToolbarItem(placement: .navigation) {
                 ConnectionPicker(store: connections.saved, role: connections.role())
             }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    sheet = .findDevice
+                } label: {
+                    Label("Find a Device", systemImage: "magnifyingglass")
+                }
+                .help("Find a device by serial number or name in every tracked Blueprint (⇧⌘F)")
+                .disabled(model.trackedBlueprints.isEmpty)
+            }
         }
         .sheet(item: $sheet) { sheet in
             switch sheet {
             case .track: AddBlueprintSheet(model: model)
             case .compare(let id): CompareGroupSheet(model: model, trackedID: id)
             case .updateStarted(let id): UpdateStartedSheet(model: model, trackedID: id)
+            case .notifications(let id): NotificationSheet(model: model, trackedID: id)
+            case .findDevice: FindDeviceSheet(model: model)
             }
         }
         .confirmationDialog(stopTrackingTitle, isPresented: Binding(get: { stopTracking != nil }, set: { if !$0 { stopTracking = nil } }),
@@ -60,12 +78,44 @@ struct ContentView: View {
         } message: {
             Text(stopTrackingMessage)
         }
-        .onChange(of: connections.inUseKey) {
-            model.connectionChanged()
+        .confirmationDialog("Open \(Plural.count(model.pagesToConfirm?.count ?? 0, "Device")) in Jamf Pro?",
+                            isPresented: Binding(get: { model.pagesToConfirm != nil }, set: { if !$0 { model.pagesToConfirm = nil } }),
+                            titleVisibility: .visible) {
+            Button("Open \(model.pagesToConfirm?.count ?? 0) Pages") { model.open(model.pagesToConfirm ?? [], confirmed: true) }
+            Button("Cancel", role: .cancel) { model.pagesToConfirm = nil }
+        } message: {
+            Text("Each device opens in its own browser tab.")
+        }
+        .alert("Demo Mode Opens Nothing", isPresented: Binding(get: { model.demoPages != nil }, set: { if !$0 { model.demoPages = nil } })) {
+            Button("OK") { model.demoPages = nil }
+        } message: {
+            Text(Self.demoPagesText(model.demoPages ?? []))
+        }
+        // Find a Device opens a device: its Blueprint's device list
+        .onChange(of: model.deviceToShow) {
+            if model.deviceToShow != nil { page = .devices }
         }
         .focusedSceneValue(\.blueprintFocus, BlueprintFocus(
             model: model, page: selectedID != nil ? $page : nil, sheet: $sheet,
-            export: selectedID != nil ? { exportRequest = $0 } : nil, stopTracking: $stopTracking))
+            export: selectedID != nil ? { exportRequest = $0 } : nil, exportPDF: exportPDF, stopTracking: $stopTracking))
+        .fileExporter(isPresented: Binding(get: { pdfReport != nil }, set: { if !$0 { pdfReport = nil } }),
+                      document: pdfReport, contentType: .pdf, defaultFilename: pdfName) { _ in
+            pdfReport = nil
+        }
+    }
+
+    /// What Demo Mode says instead of opening pages: the first few, and how many more.
+    static func demoPagesText(_ urls: [URL]) -> String {
+        let shown = urls.prefix(3).map(\.absoluteString)
+        let more = urls.count > shown.count ? "\nand \(urls.count - shown.count) more" : ""
+        return "With a real connection, this opens in your browser:\n" + shown.joined(separator: "\n") + more
+    }
+
+    /// Makes the report (all tracked Blueprints, or the one on screen) and opens the Save panel.
+    private func exportPDF(all: Bool) {
+        let id = all ? nil : selectedID
+        pdfName = model.reportName(id)
+        pdfReport = PDFReportDocument(data: model.reportPDF(id.map { [$0] }))
     }
 
     private var stopTrackingTitle: String {
@@ -90,12 +140,16 @@ enum BlueprintSheet: Identifiable, Hashable {
     case track
     case compare(UUID)
     case updateStarted(UUID)
+    case notifications(UUID)
+    case findDevice
 
     var id: String {
         switch self {
         case .track: "track"
         case .compare(let id): "compare \(id)"
         case .updateStarted(let id): "started \(id)"
+        case .notifications(let id): "notifications \(id)"
+        case .findDevice: "find device"
         }
     }
 }
@@ -119,6 +173,10 @@ struct SidebarView: View {
                             Button("Refresh") { Task { await model.refresh(tracked.id) } }
                             Button("Compare with a Group…") { sheet = .compare(tracked.id) }
                             Button("Set Update Start…") { sheet = .updateStarted(tracked.id) }
+                            Button("Notifications…") { sheet = .notifications(tracked.id) }
+                            Divider()
+                            Button("Open in Jamf Pro") { model.page(of: tracked.id).map { model.open([$0]) } }
+                                .disabled(model.page(of: tracked.id) == nil)
                             Divider()
                             Button("Stop Tracking…", role: .destructive) { stopTracking = tracked.id }
                                 .disabled(!model.canChangeTracked)
@@ -186,5 +244,7 @@ struct NoConnectionView: View {
 }
 
 #Preview {
-    ContentView(connections: .preview())
+    let connections = ConnectionsModel.preview()
+    let model = DashboardModel(connections: connections)
+    ContentView(connections: connections, model: model, automation: AutoRefresh(model: model, defaults: connections.defaults))
 }

@@ -116,6 +116,14 @@ final class ConnectionsModel {
         demoChoice.isActive ? TimeZone(identifier: "UTC") ?? .gmt : activeRecord?.timeZone ?? .gmt
     }
 
+    /// The Jamf Pro web address of the connection in use, for Open in Jamf
+    /// Pro; Demo Mode’s names no real server. Nil when none is set.
+    var jamfProWebAddress: String? {
+        if demoChoice.isActive { return JamfProPages.demoAddress }
+        let address = activeRecord?.connection.jamfProWebURL.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return address.isEmpty ? nil : address
+    }
+
     /// Changes whenever the connection in use does, so views read again.
     var inUseKey: String {
         guard let connection = connectionInUse else { return "none" }

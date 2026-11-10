@@ -131,6 +131,15 @@ nonisolated struct DeviceTarget: Sendable, Hashable, Codable {
     /// and it isn’t installing: the target stays the rule’s, and the device
     /// counts as past the step’s deadline.
     var earlierStepLapsed = false
+    /// The device has the rule’s own version pending, but with the deadline
+    /// of this Blueprint’s earlier step: Jamf moved the declaration to the
+    /// newer version and the device kept the step’s deadline. Shown, not
+    /// counted: the rule’s deadline counts.
+    var carriedStepVersion: String?
+    /// That deadline as the device reports it: a moment, or its local
+    /// date-time when the report gave no offset.
+    var carriedDeadline: Date?
+    var carriedDeadlineLocal: String?
 
     var osVersion: OSVersion? { version.flatMap(OSVersion.init) }
 
@@ -268,14 +277,14 @@ nonisolated enum TargetRules {
             }
             return DeviceTarget(reason: "Apple’s release data has no \(osName) \(current.major) release", unknown: .noReleaseForPlatform)
         }
-        let newestMajor = knownMajors.first ?? current.major
-        let limited = newestMajor > current.major
-            && catalog.supports(model: model, boardID: boardID, major: newestMajor, ctx.platform) == false
+        // the rule gives the newest release of the device's own major that Apple ships for its
+        // model (`pick`): never limited by its hardware for a release Apple shipped to other
+        // models only, nor for a newer major it can't run; a device that can't run its own
+        // major at all has no pick and is unsupported
         guard let pick = newestRelease(catalog, ctx.platform, model: model, boardID: boardID, days: 0, now: ctx.now,
                                        major: current.major) else {
             // nothing in this major is public yet: the version it runs is what it’s held to
-            var held = DeviceTarget(version: current.description, reason: "No public \(osName) \(current.major) release yet",
-                                    limitedByHardware: limited)
+            var held = DeviceTarget(version: current.description, reason: "No public \(osName) \(current.major) release yet")
             held.heldToCurrent = true
             return held
         }
@@ -285,8 +294,7 @@ nonisolated enum TargetRules {
             version: pick.version.description, build: catalog.build(of: pick, model: model, boardID: boardID), released: pick.releaseDate, activityFrom: pick.releaseDate,
             deadlineLocal: due,
             deadlineSource: basis(pick, catalog, model: model, boardID: boardID)?.source,
-            reason: "The newest public \(osName) \(current.major) release: \(pick.version)" + (due.map { "; installs by \(day($0))" } ?? ""),
-            limitedByHardware: limited)
+            reason: "The newest public \(osName) \(current.major) release: \(pick.version)" + (due.map { "; installs by \(day($0))" } ?? ""))
     }
 
     /// The newest release at least `days` old that the device can run, in
@@ -312,16 +320,6 @@ nonisolated enum TargetRules {
                       boardID: String?) -> (date: Date, source: DeadlineSource)? {
         if let posted = catalog.publicPosting(of: release, model: model, boardID: boardID)?.date { return (posted, .postingDate) }
         return release.releaseDate.map { ($0, .releaseDate) }
-    }
-
-    /// The model can’t run the platform’s newest major: it belongs on the
-    /// hardware to replace, measured against its own target. The same
-    /// recognition as the targets (`runs`, by the major when the release
-    /// lists don’t know the device).
-    static func cannotRunNewestMajor(_ catalog: AppleReleases.Catalog, _ platform: AppleReleases.Platform,
-                                     model: String?, boardID: String?) -> Bool {
-        guard let newest = catalog.majors(platform).first else { return false }
-        return catalog.supports(model: model, boardID: boardID, major: newest, platform) == false
     }
 
     /// A device already on a release Apple shipped to it, old enough for
@@ -389,6 +387,16 @@ nonisolated enum TargetRules {
                 return rule
             }
         }
+        // the other way round: Jamf already sent the rule's version, with its deadline,
+        // and the device still reports this older version of the same major pending;
+        // only when Apple's data lists the rule's version for this device
+        func movedOn() -> Bool {
+            guard let ruleVersion = rule.osVersion, ruleVersion.major == version.major, let ruleDue = rule.deadlineLocal,
+                  let catalog, let ruleRelease = catalog.release(ruleVersion, platform),
+                  catalog.supports(release: ruleRelease, model: model, boardID: boardID) == true else { return false }
+            return sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: ruleDue)
+                && sameClock(reported: pending.targetDate, reportedLocal: reportedLocal, expected: ruleDue, timeZone: timeZone)
+        }
         // this Blueprint's earlier step: sent before Apple posted the newer
         // version its rule now gives, recognized by the deadline it came with
         func isEarlierStep() -> Bool {
@@ -399,7 +407,7 @@ nonisolated enum TargetRules {
                 sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected)
                     && sameClock(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected, timeZone: timeZone)
             }) { return true }
-            return awaitingSync && !window.isEmpty
+            return awaitingSync && !window.isEmpty || movedOn()
         }
         if !rule.namedByBlueprint, let ruleVersion = rule.osVersion, version < ruleVersion, isEarlierStep() {
             // its own deadline as a moment: reported, or its local time in the device's zone (this Mac's for a Mac)
@@ -445,7 +453,31 @@ nonisolated enum TargetRules {
         let changes: [(date: Date, reason: StaleReason)] = isRuleVersion
             ? [blueprintChanged.map { ($0, .blueprintChanged) }, posted.map { ($0, .posted) }].compactMap { $0 } : []
         let missed = changes.filter { change in reportedAt.map { $0 <= change.date } ?? true }.max { $0.date < $1.date }
-        if let missed {
+        // the rule's own version with the deadline of this Blueprint's earlier step
+        // (an older version of the same major the rule targeted before): Jamf kept
+        // the step's deadline when it moved the declaration on
+        func carriedStep() -> OSVersion? {
+            guard isRuleVersion, followsApple, let ruleDue = rule.deadlineLocal, let catalog,
+                  pending.targetDate != nil || reportedLocal != nil,
+                  !sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: ruleDue) else { return nil }
+            func matches(_ expected: String) -> Bool {
+                sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected)
+                    && sameClock(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected, timeZone: timeZone)
+            }
+            let earlier = catalog.releases
+                .filter { $0.platform == platform && $0.version.extra == nil && $0.version.major == version.major && $0.version < version }
+                .map(\.version).sorted(by: >)
+            return earlier.first { step in
+                earlierStepDeadline?(step).map(matches) == true || (earlierStepWindow?(step) ?? []).contains(where: matches)
+            }
+        }
+        if let step = carriedStep() {
+            target.deadlineLocal = rule.deadlineLocal
+            target.deadlineSource = rule.deadlineSource
+            target.carriedStepVersion = step.description
+            target.carriedDeadline = pending.targetDate
+            target.carriedDeadlineLocal = pending.targetDate == nil ? reportedLocal : nil
+        } else if let missed {
             if rule.deadlineLocal == nil {
                 // the rule gives no deadline of its own: keep the reported
                 // one, said to be possibly out of date
@@ -492,7 +524,7 @@ nonisolated enum TargetRules {
 
     /// The deadlines this Blueprint’s rule could have given a version while
     /// it was the rule’s target. When Apple’s list still has the version’s
-    /// posting date (public or not), the one deadline from it; otherwise
+    /// posting dates (public or not, any build), one deadline from each; otherwise
     /// one per day from its release to the posting of the next release the
     /// rule moves to (in its own major for minor updates), at the Blueprint’s
     /// time. Empty for a specific version, a version Apple’s data doesn’t
@@ -513,9 +545,12 @@ nonisolated enum TargetRules {
                 && runs($0, model: model, boardID: boardID, catalog, platform) }
             .min { $0.version < $1.version }
         guard let next, let end = basis(next, catalog, model: model, boardID: boardID)?.date, end >= start else { return [] }
-        // Apple's own posting date, when its list still has one: that day only
-        if let posted = posting(of: release, model: model, boardID: boardID) {
-            return [deadline(released: posted, days: days, time: time)]
+        // Apple's own posting dates, when its list still has them: those days only. Every
+        // build's counts: Jamf can count from the public posting of another build (5 Nov)
+        // while the list keeps only the release-day posting of this device's own (26 Oct)
+        let posted = postings(of: release)
+        if !posted.isEmpty {
+            return Array(NSOrderedSet(array: posted.map { deadline(released: $0, days: days, time: time) })).compactMap { $0 as? String }
         }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
@@ -529,14 +564,10 @@ nonisolated enum TargetRules {
         return deadlines
     }
 
-    /// Apple’s posting date of a release, public or not, meant for this
-    /// device (by its board ID or model), else for any device; nil when its
-    /// list has none.
-    static func posting(of release: AppleReleases.Release, model: String?, boardID: String?) -> Date? {
-        let dated = release.postings.filter { $0.date != nil }
-        let ids = [boardID, model].compactMap { $0 }
-        let meant = dated.filter { posting in ids.contains { posting.devices.contains($0) } }
-        return (meant.isEmpty ? dated : meant).compactMap(\.date).min()
+    /// Apple’s posting dates of a release, public or not, for any build and
+    /// device, oldest first; empty when its list has none.
+    static func postings(of release: AppleReleases.Release) -> [Date] {
+        Set(release.postings.compactMap(\.date)).sorted()
     }
 
     /// Whether a reported deadline is at the expected time of day: a local

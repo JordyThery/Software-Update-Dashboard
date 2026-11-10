@@ -38,7 +38,7 @@ DOMAIN="be.jordythery.softwareupdatedashboard"
 CONTAINER="$HOME/Library/Containers/$DOMAIN/Data"
 TEST_HOST_CONTAINER="$DOMAIN"
 FINGERPRINT_DEFAULTS=()
-for key in connections activeConnectionID demoMode trackedBlueprints trackedGroups; do
+for key in connections activeConnectionID demoMode trackedBlueprints trackedGroups autoRefreshHours keepAwake showMenuBarItem notificationRules; do
     FINGERPRINT_DEFAULTS+=("$CONTAINER/Library/Preferences/$DOMAIN $key")
 done
 FINGERPRINT_PATHS=("$CONTAINER/Library/Application Support/History"

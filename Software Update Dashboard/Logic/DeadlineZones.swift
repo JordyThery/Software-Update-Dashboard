@@ -44,13 +44,19 @@ nonisolated enum DeadlineZones {
     /// common one, when it isn’t a whole hour from UTC, when its moment is
     /// hours off the most common one for its target, or when it has no zone.
     static func zones(devices: [DeviceStatus], here: TimeZone = .current, now: Date = Date()) -> [DeadlineZone] {
-        // a device past its earlier step's own deadline is counted at that step and its deadline,
-        // whatever the step's major and whether it is still installing
+        // a device that counts as past its earlier step's own deadline (passed by the grace,
+        // not installing, also when it failed) is listed at that step and its deadline; one
+        // still installing the step stays at its current target's deadline
         let shown = devices.map { device -> DeviceStatus in
-            guard let step = device.earlierStepVersion,
-                  let due = device.earlierStepDeadline
-                      ?? TargetRules.deadlineDate(device.earlierStepLocal, timeZone: device.timeZone ?? here.identifier),
-                  device.earlierStepLapsed == true || due <= now else { return device }
+            // the target pending with the earlier step's deadline: labeled, at the deadline that
+            // counts (the Blueprint's), never at the passed step deadline it doesn't count against
+            if let step = device.carriedStepVersion, let target = device.targetVersion {
+                var carried = device
+                carried.targetVersion = "\(target), still holds the deadline of earlier step \(step)"
+                return carried
+            }
+            guard let step = device.earlierStepVersion, device.earlierStepLapsed == true, device.pastDeadline == true,
+                  device.earlierStepDeadline != nil || device.earlierStepLocal != nil else { return device }
             var stepped = device
             stepped.targetVersion = "\(step), earlier step"
             stepped.deadlineDate = device.earlierStepDeadline
@@ -111,7 +117,7 @@ nonisolated enum DeadlineZones {
                 unusual = hoursText(Double(seconds - common))
             }
             return DeadlineZone(zone: zone, localDeadline: local, reported: zone == nil ? at : nil,
-                                target: zone == nil || first.targetVersion?.hasSuffix("earlier step") == true ? first.targetVersion : nil,
+                                target: zone == nil || first.targetVersion?.contains("earlier step") == true ? first.targetVersion : nil,
                                 deviceCount: group.count,
                                 deadline: at, unusual: unusual)
         }

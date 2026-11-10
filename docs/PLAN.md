@@ -175,6 +175,41 @@ Also in 0.3 (decided by Jordy on 2026-11-10, after the 0.2 hand checks):
 
 Order: A, B with C and M, L, D, G, I, J, K (as planned for 0.2 before the renumbering). Each with tests and a check in Demo Mode; one read of the production role before the release.
 
+**Round 1** (on branch `0.3`, 2026-11-10): the three items above, A and G.
+
+- A: the Platform API gives the Jamf Pro web address only with another permission (`jss-url:read`) or an organization-level sign-in, so it comes from the connection’s Jamf Pro Web Address field (decided by Jordy on 2026-11-10). Demo Mode opens nothing and shows the page instead.
+- The “27.2.1, 9 Nov 23:59” device: a Mac on 27.2 reporting 27.2.1 pending with 27.2’s deadline (its release on 26 Oct plus the Blueprint’s days); the earlier step was looked for only when the pending version is older than the target. Now the Blueprint’s current deadline counts and the kept deadline is shown, in Deadline per Time Zone as “27.2.1, with the deadline of earlier step 27.2”. Also: an earlier step’s deadline counts from every posting date Apple’s list still has for the version (Jamf counted 27.2 from 5 Nov, another build’s posting).
+- G: not supervised (iPhones and iPads only), no declarative device management, never reported (no status report at all).
+
+**Round 2** (on branch `0.3`, 2026-11-10, after Jordy’s hand check of round 1; with JTKit 1.7.0 on its branch `release-1.7.0`, decided by Jordy):
+
+- Readiness: Apple’s `com.apple.configuration.softwareupdate.enforcement.specific` allows supervised and device enrollments on iOS and iPadOS and supervised enrollments only on macOS. “Not supervised” is replaced by iPhones and iPads enrolled with User Enrollment (JTKit 1.7.0 reads `deviceOwnershipType` and `appleEnrollmentType` from the inventory it already reads; Apple’s type first) and Macs that aren’t supervised. Checked on the live tenant: every iPad Institutional, none with User Enrollment, every Mac supervised.
+- An older pending version of the rule’s major, reported with exactly the deadline the rule gives the rule’s version, while Apple’s data lists that version for the device: the rule’s version and deadline are the target, the pending version this Blueprint’s earlier step (seen on the live tenant: two iPads with 27.2 pending, due 16 Nov, the 27.2.1 deadline).
+- Past the deadline: the live tenant had two Macs at “26.7.2, earlier step, 9 Nov”: one downloaded and late (counted), one still installing (not counted, listed anyway). Deadline per Time Zone now lists a device at a passed step deadline only when it counts as past it (also when the step failed); a device still installing is listed at its current target’s deadline. A device holding an earlier step’s deadline for its current target is labeled at the deadline that counts.
+- Hardware to Replace: a device is marked only when it can’t run what the rule gives it (latest: the newest release; minor: its own major’s newest; a specific version: that version).
+- The device detail shows a pending version already installed as ignored.
+- B, C, M, L and D in SUD. The Stop button stops the automatic refresh that runs; automatic refresh stays on. Demo Mode’s notification rules are kept in memory and Demo Mode sends nothing (it writes what it would send in the activity log); the demo data doesn’t change between refreshes, so no notification is shown there.
+- Demo data (JTKit 1.7.0): Studio Mac 09 (27.0.2 pending with 27.1’s deadline), Studio Mac 10 (27.0.2 failed, past its deadline), Studio Mac 11 (a 2018 MacBook Pro on 15.7.3, not supervised), Field iPad 14 (User Enrollment).
+
+**Round 3** (on branch `0.3`, 2026-11-10): I, J and K, none of which reads from Jamf: they use what the last refresh holds.
+
+- I, Help: a Help window (⌘?) explaining the categories, targets and deadlines, earlier steps, Readiness and Inspect, then Known Problems with a public Apple source each (opened on 2026-11-10): bootstrap token (Apple Platform Deployment, secure and bootstrap tokens), Apple’s software update hosts (Apple, “Use Apple products on enterprise networks”), passcode at the deadline and offline devices (Platform Deployment, “Install and enforce software updates”), battery and free space (Platform Deployment, “About software updates”), the enforcement declaration’s enrollment rules (apple/device-management on GitHub). No Jamf page was needed. Inspect links a finding to its entry. Inspect’s low battery now follows Apple’s 30% for an automatic install on iPhone and iPad (was 50%).
+- J, Export Report as PDF: the Blueprint on screen or all tracked Blueprints, A4, each section drawn whole (none cut across pages), from the dashboard’s own views; “— Demo” in its title and “(Demo)” in its file name in Demo Mode. A Blueprint not refreshed in the session says so.
+- K, Find a Device (⇧⌘F, toolbar, Device menu): serial number or name across the tracked Blueprints, from this session’s refresh, else the newest in the history; once per Blueprint; opens the device in its Blueprint’s device list with every filter off.
+
+**Fixes before the release** (on branch `0.3`, 2026-11-10, from the independent review in `_release-gate/SUD-0.3-review.md`, Jordy’s hand check of round 3 and an anonymized snapshot of the live tenant):
+
+- History: an index of every refresh’s counts per Blueprint (`counts.index`: counts, rule, scope, targets) for the chart; the newest full refresh found by file name and decoded alone; both read off the main thread into the model and kept until the next save. Full refreshes kept 7 days, then the newest of each day, up to 180 days; counts 180 days. Older history gets its index once. A test lays out 3,000 refreshes. The model follows the connection itself (also with the window closed).
+- Battery: low only with a battery error or under 20%; under 30% on iPhone and iPad an automatic install may wait. Help gives Apple’s figures as published (20% and 30% on iPhone and iPad, 20% and 50% on a Mac with Apple silicon, 50% and 50% on Intel, none for an enforced update).
+- Help links to “Apple’s Software Update Servers Not Reachable” only for a clear connection failure, and only from the current likely cause.
+- Minor updates: never hardware to replace for a release Apple ships to other models only.
+- Refresh: every step reports progress (“Reading Blueprint health, 3 of 18 declarations”); Refresh becomes Stop Refresh in the toolbar and the Blueprint menu (⌘.).
+- “Needs attention” is the dashboard’s group (Failed and Not started); the diagnosis-based list is “Devices to check” in the summary, the PDF and Inspect.
+- PDF: a Blueprint not refreshed in the session uses its newest saved refresh, with its date (without Blueprint health, which the history doesn’t keep); one never refreshed gets one line. Blueprint health names declarations by their versions only.
+- From the snapshot: Readiness “OS too old for update declarations” (iOS and iPadOS 16 or earlier, macOS 13 or earlier) and that diagnosis when Apple has a newer version for the model; “Download declined over a cellular connection”; a passcode that has to be entered to install, also while downloading.
+- Low findings fixed: Readiness doesn’t say all is well when Jamf Pro doesn’t report enrollment or supervision; two Help sentences said more than Apple’s pages; a Stop isn’t an error; the Overview line stays while a run goes on after automatic refresh was turned off; the connection change with only the menu bar item open. The Stop test can fail now.
+- Low findings left: the Mac earlier step matched by its deadline’s minutes (a label only; needs a design); the bootstrap finding on target (harmless); KeepAwake’s `deinit` (it lives as long as the app; its test no longer takes a real hold); notification names in Notification Center and a refused permission noticed only on saving (behavior to decide); a Blueprint a manual refresh reads is left to that refresh by automatic refresh; Find a Device opening a device that has left the scope.
+
 ### Later
 
 - Computer groups end to end (the readers are in JTKit 1.5.0).

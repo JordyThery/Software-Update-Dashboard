@@ -5,6 +5,7 @@ import SwiftUI
 /// was last read.
 struct OverviewView: View {
     let model: DashboardModel
+    let automation: AutoRefresh
     @Binding var sheet: BlueprintSheet?
 
     var body: some View {
@@ -29,6 +30,10 @@ struct OverviewView: View {
                     .padding(20)
                 }
             }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            // also while a run goes on after automatic refresh was turned off, so Stop stays at hand
+            if (automation.isOn || automation.isRunning) && !model.trackedBlueprints.isEmpty { AutomationLine(automation: automation) }
         }
         .navigationTitle("Overview")
         .toolbar {
