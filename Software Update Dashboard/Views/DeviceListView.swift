@@ -6,6 +6,8 @@ import SwiftUI
 struct DeviceListView: View {
     let model: DashboardModel
     let result: RefreshResult
+    /// Set from a readiness count on the dashboard: only those devices.
+    @Binding var readiness: ReadinessCheck?
     @State private var selection: Set<DeviceStatus.ID> = []
     @State private var category: StatusCategory?
     @State private var search = ""
@@ -15,6 +17,7 @@ struct DeviceListView: View {
     private var devices: [DeviceStatus] {
         result.devices
             .filter { category == nil || $0.category == category }
+            .filter { readiness?.applies(to: $0) ?? true }
             .filter { device in
                 search.isEmpty || [device.name, device.serial, device.modelIdentifier, device.diagnosis]
                     .contains { $0.localizedCaseInsensitiveContains(search) }
@@ -57,9 +60,13 @@ struct DeviceListView: View {
                 .width(min: 200, ideal: 320)
         }
         .contextMenu(forSelectionType: DeviceStatus.ID.self) { ids in
+            Button("Open in Jamf Pro") { model.open(pages(ids)) }
+                .disabled(pages(ids).isEmpty)
             Button("Inspect") { inspect(ids) }
                 .disabled(ids.isEmpty)
         }
+        .focusedSceneValue(\.deviceSelection, DeviceSelection(model: model, trackedID: result.tracked.id,
+                                                              devices: result.devices.filter { selected.contains($0.id) }))
         .searchable(text: $search, prompt: "Name, serial, model or diagnosis")
         .safeAreaInset(edge: .top, spacing: 0) {
             HStack(spacing: 12) {
@@ -71,6 +78,15 @@ struct DeviceListView: View {
                     }
                 }
                 .fixedSize()
+                if let readiness {
+                    Button {
+                        self.readiness = nil
+                    } label: {
+                        Label("\(readiness.title) (\(ReadinessCheck.count(readiness, in: result.devices)))", systemImage: "xmark.circle.fill")
+                    }
+                    .help("Show every device again")
+                    .accessibilityLabel("Remove filter: \(readiness.title)")
+                }
                 Spacer()
                 Button("Inspect Devices Needing Attention") {
                     inspect(Set(InspectWorkflow.select(result.devices).map(\.id)))
@@ -117,6 +133,10 @@ struct DeviceListView: View {
         selection.intersection(result.devices.map(\.id))
     }
 
+    private func pages(_ ids: Set<DeviceStatus.ID>) -> [URL] {
+        model.pages(of: result.devices.filter { ids.contains($0.id) })
+    }
+
     private func inspect(_ ids: Set<DeviceStatus.ID>) {
         let chosen = result.devices.filter { ids.contains($0.id) }
         Task { await model.inspect(chosen, in: result.tracked.id) }
@@ -143,6 +163,13 @@ struct DeviceDetailView: View {
             }
             Section("Device") {
                 LabeledContent("Serial number", value: device.serial)
+                if let page = model.pages(of: [device]).first {
+                    Button("Open in Jamf Pro") { model.open([page]) }
+                        .help("Opens the device’s page in Jamf Pro in your browser, read-only")
+                } else {
+                    LabeledContent("Jamf Pro") { Text("No web address").foregroundStyle(.secondary) }
+                        .help(JamfProPages.noAddress)
+                }
                 LabeledContent("Model", value: device.model.isEmpty ? device.modelIdentifier : "\(device.model) (\(device.modelIdentifier))")
                 LabeledContent("\(device.osName) reported", value: device.reportedOS ?? "–")
                 LabeledContent("In inventory", value: device.inventoryOS ?? "–")
@@ -189,6 +216,14 @@ struct DeviceDetailView: View {
                             Text("Not counted: the Blueprint’s current deadline counts").foregroundStyle(.secondary)
                         }
                     }
+                }
+                // the target pending with this Blueprint's earlier step's deadline: shown, not counted
+                if let step = device.carriedStepVersion,
+                   let text = DeadlineZones.text(local: device.carriedDeadlineLocal, reported: device.carriedDeadline) {
+                    LabeledContent("Device reports", value: text)
+                    Text("The deadline of \(step), an earlier step of this Blueprint, kept when Jamf moved it to \(device.targetVersion ?? "the target"). "
+                         + "Not counted: the Blueprint’s current deadline counts")
+                        .foregroundStyle(.secondary)
                 }
                 if device.targetFromDevice == true, device.targetDiffersFromRule == true {
                     LabeledContent("Blueprint’s rule gives", value: device.ruleTarget ?? "No version")

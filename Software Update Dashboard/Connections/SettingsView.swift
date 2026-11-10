@@ -11,6 +11,7 @@ struct SettingsView: View {
         ConnectionsSettingsTab(
             store: connections.saved,
             services: [.jamfPlatform],
+            optionalFields: [.jamfProWebURL],
             roles: [connections.role()],
             newRecord: ConnectionsModel.newRecord,
             didDelete: { connections.connectionWasDeleted($0) },
@@ -42,7 +43,8 @@ struct SettingsView: View {
         It needs these read permissions only: \(ConnectionsModel.permissions.joined(separator: ", ")). \
         Software Update Dashboard never changes anything in Jamf. Copy the environment ID from the integration’s details. \
         Integrations expire after six months. \
-        The client secret is stored in the Keychain.
+        The client secret is stored in the Keychain. \
+        The Jamf Pro web address is optional: it is only used to open devices and Blueprints in Jamf Pro in your browser.
         """
 }
 

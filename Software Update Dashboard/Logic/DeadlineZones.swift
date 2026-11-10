@@ -47,6 +47,16 @@ nonisolated enum DeadlineZones {
         // a device past its earlier step's own deadline is counted at that step and its deadline,
         // whatever the step's major and whether it is still installing
         let shown = devices.map { device -> DeviceStatus in
+            // the target pending with the earlier step's deadline: listed at that deadline, labeled
+            if device.carriedStepVersion != nil, let target = device.targetVersion,
+               let due = device.carriedDeadline
+                   ?? TargetRules.deadlineDate(device.carriedDeadlineLocal, timeZone: device.timeZone ?? here.identifier), due <= now {
+                var carried = device
+                carried.targetVersion = "\(target), with the deadline of earlier step \(device.carriedStepVersion ?? "")"
+                carried.deadlineDate = device.carriedDeadline
+                carried.deadlineLocal = device.carriedDeadlineLocal ?? device.carriedDeadline.map { TargetRules.localText($0, offset: 0) }
+                return carried
+            }
             guard let step = device.earlierStepVersion,
                   let due = device.earlierStepDeadline
                       ?? TargetRules.deadlineDate(device.earlierStepLocal, timeZone: device.timeZone ?? here.identifier),
@@ -111,7 +121,7 @@ nonisolated enum DeadlineZones {
                 unusual = hoursText(Double(seconds - common))
             }
             return DeadlineZone(zone: zone, localDeadline: local, reported: zone == nil ? at : nil,
-                                target: zone == nil || first.targetVersion?.hasSuffix("earlier step") == true ? first.targetVersion : nil,
+                                target: zone == nil || first.targetVersion?.contains("earlier step") == true ? first.targetVersion : nil,
                                 deviceCount: group.count,
                                 deadline: at, unusual: unusual)
         }

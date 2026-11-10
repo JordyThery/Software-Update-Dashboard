@@ -142,6 +142,10 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var earlierStepLocal: String?
     /// The step’s own deadline has passed: it is the target again, late.
     var earlierStepLapsed: Bool?
+    /// The target pending with the deadline of this Blueprint’s earlier step: shown, not counted (`DeviceTarget`).
+    var carriedStepVersion: String?
+    var carriedDeadline: Date?
+    var carriedDeadlineLocal: String?
     /// A Rapid Security Response the device runs (`(a)`), and its build.
     var rapidSecurityResponse: String?
     var supplementalBuild: String?
@@ -163,6 +167,11 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     /// The refresh measured the device against the Blueprint’s current
     /// declarations (Blueprint health could be read).
     var declarationsChecked: Bool?
+    /// Readiness (`ReadinessCheck`): from the inventory, and whether Jamf Pro
+    /// has no status report of the device at all.
+    var supervised: Bool?
+    var ddmEnabled: Bool?
+    var neverReported: Bool?
 
     /// The device by kind and number: a Mac and an iPad can share a number.
     var id: String { "\(isComputer ? "computer" : "mobileDevice")/\(jamfID)" }
@@ -215,6 +224,9 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case earlierStepDeadline
         case earlierStepLocal
         case earlierStepLapsed
+        case carriedStepVersion
+        case carriedDeadline
+        case carriedDeadlineLocal
         case rapidSecurityResponse
         case supplementalBuild
         case betaEnrollment
@@ -225,6 +237,9 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case notFetched
         case notFetchedSince
         case declarationsChecked
+        case supervised
+        case ddmEnabled
+        case neverReported
     }
 
     /// The newer of the version the device reports and the one in its
@@ -326,10 +341,11 @@ nonisolated enum Classifier {
         else if unsupportedHardware, let os, let target, os.major < target.major { category = .unsupported }
         else if stale { category = .offline }
         else if !fresh { category = .noActivity }
-        else if (isFailed || busy) && !ours { category = .otherUpdate }
-        else if isFailed { category = .failed }
+        else if busy && !ours { category = .otherUpdate }
         else if busy { category = .inProgress }
-        else if failedSince && ours { category = .failed }
+        // update failures since the update started and nothing in progress: failed,
+        // also for another version pending (a count of 0 is no failure)
+        else if isFailed || (failedSince && status?.failure?.count != 0) { category = .failed }
         else { category = .notStarted }
 
         let error = shortError(status?.failure?.reason)
@@ -390,7 +406,10 @@ nonisolated enum Classifier {
             betaEnrollment: status?.betaEnrollment.flatMap(DeviceDetailText.betaProgram),
             installReason: status.flatMap { $0.installReasons.isEmpty ? nil : $0.installReasons.joined(separator: ", ") },
             fileVault: member.diskEncryption?.bootPartitionFileVault2State,
-            batteryHealth: status?.batteryHealth ?? member.batteryHealth)
+            batteryHealth: status?.batteryHealth ?? member.batteryHealth,
+            supervised: member.supervised, ddmEnabled: member.ddmEnabled,
+            // no report at all (none, or one without a single item); a report that couldn't be read isn't that
+            neverReported: input.statusProblem == nil && (status.map { $0.itemCount == 0 && $0.osVersion == nil } ?? true))
     }
 
     /// One device measured against its own target (`TargetRules`): its
@@ -416,6 +435,9 @@ nonisolated enum Classifier {
         status.earlierStepDeadline = target.earlierStepDeadline
         status.earlierStepLocal = target.earlierStepLocal
         status.earlierStepLapsed = target.earlierStepLapsed ? true : nil
+        status.carriedStepVersion = target.carriedStepVersion
+        status.carriedDeadline = target.carriedDeadline
+        status.carriedDeadlineLocal = target.carriedDeadlineLocal
         if let step = target.earlierStepVersion, status.category == .otherUpdate,
            let range = status.diagnosis.range(of: " (intermediate version \(step))") {
             // the intermediate version is this Blueprint's own earlier step
@@ -451,6 +473,10 @@ nonisolated enum Classifier {
         if target.earlierStepLapsed, let step = target.earlierStepVersion, status.diagnosis.hasPrefix("Downloaded") {
             // this Blueprint's earlier step, downloaded and left past its own deadline
             status.diagnosis = "\(step) downloaded but not installed after its deadline"
+        } else if let step = target.carriedStepVersion, status.pastDeadline != true, status.diagnosis.hasPrefix("Downloaded"),
+                  status.diagnosis.hasSuffix("installs at the deadline") {
+            // it holds the earlier step's deadline, already passed: it may install before the Blueprint's
+            status.diagnosis = "Downloaded, holds the deadline of the earlier step \(step)"
         } else if status.pastDeadline == true, status.diagnosis.hasPrefix("Downloaded"), status.diagnosis.hasSuffix("installs at the deadline") {
             status.diagnosis = status.diagnosis.replacingOccurrences(
                 of: "installs at the deadline",

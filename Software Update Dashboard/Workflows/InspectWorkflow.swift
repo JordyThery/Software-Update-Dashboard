@@ -53,6 +53,8 @@ nonisolated struct InspectWorkflow: Sendable {
                 input.status = JamfPro.SoftwareUpdateStatus(items: items)
                 input.installStateChanged = items.last { $0.key == "softwareupdate.install-state" }?.lastUpdateTime
                     .flatMap { JamfPro.serverDate($0, timeZone: serverTimeZone) }
+                input.osVersionChanged = items.last { $0.key == "device.operating-system.version" }?.lastUpdateTime
+                    .flatMap { JamfPro.serverDate($0, timeZone: serverTimeZone) }
             }
             guard let serial = member.serialNumber, let device = try await client.device(serial: serial) else { return input }
             input.platformDeviceID = device.id

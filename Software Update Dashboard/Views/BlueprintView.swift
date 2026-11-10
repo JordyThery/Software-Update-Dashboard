@@ -19,13 +19,18 @@ struct BlueprintView: View {
     @State private var export: TextExportDocument?
     @State private var exportName = ""
     @State private var exportType: UTType = .plainText
+    /// A readiness count opened on the dashboard: the device list shows those devices.
+    @State private var readiness: ReadinessCheck?
 
     var body: some View {
         Group {
             if let result = model.results[tracked.id] {
                 switch page {
-                case .dashboard: DashboardView(model: model, result: result, sheet: $sheet)
-                case .devices: DeviceListView(model: model, result: result)
+                case .dashboard: DashboardView(model: model, result: result, sheet: $sheet) { check in
+                    readiness = check
+                    page = .devices
+                }
+                case .devices: DeviceListView(model: model, result: result, readiness: $readiness)
                 }
             } else if model.refreshing.contains(tracked.id) {
                 ReadingProgress(model: model, id: tracked.id)
@@ -92,6 +97,7 @@ struct BlueprintView: View {
                 }
             }
         }
+        .onChange(of: tracked.id) { readiness = nil }
         .task(id: tracked.id) {
             if model.results[tracked.id] == nil && model.errors[tracked.id] == nil { await model.refresh(tracked.id) }
         }
@@ -223,6 +229,8 @@ struct DashboardView: View {
     let model: DashboardModel
     let result: RefreshResult
     @Binding var sheet: BlueprintSheet?
+    /// Opens the devices of a readiness count in the list.
+    var showDevices: (ReadinessCheck) -> Void = { _ in }
 
     var body: some View {
         ScrollView {
@@ -234,6 +242,7 @@ struct DashboardView: View {
                     WarningLabel(line + ".").font(.callout)
                 }
                 CategoryGrid(counts: result.counts)
+                ReadinessSection(devices: result.devices, showDevices: showDevices)
                 MajorsSection(result: result)
                 BlueprintHealthSection(result: result)
                 HistoryChart(snapshots: model.snapshots(result.tracked.id))
@@ -358,6 +367,39 @@ struct CategoryGrid: View {
                 .padding(12)
                 .background(.background.secondary, in: .rect(cornerRadius: 8))
                 .accessibilityElement(children: .combine)
+            }
+        }
+    }
+}
+
+/// Devices the update can’t reach as they are; each count opens them in the list.
+struct ReadinessSection: View {
+    let devices: [DeviceStatus]
+    let showDevices: (ReadinessCheck) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Readiness").font(.headline)
+            if ReadinessCheck.allCases.allSatisfy({ ReadinessCheck.count($0, in: devices) == 0 }) {
+                Text("Every device is supervised where needed, uses declarative device management and has reported.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 6) {
+                    ForEach(ReadinessCheck.allCases) { check in
+                        let count = ReadinessCheck.count(check, in: devices)
+                        GridRow {
+                            Label(check.title, systemImage: check.systemImage)
+                            Button("\(count)") { showDevices(check) }
+                                .buttonStyle(.link)
+                                .monospacedDigit()
+                                .disabled(count == 0)
+                                .help(count == 0 ? "" : "Show \(count == 1 ? "this device" : "these \(count) devices") in the device list")
+                                .accessibilityLabel("\(check.title): \(Plural.count(count, "device"))")
+                                .accessibilityHint(count == 0 ? "" : "Shows them in the device list")
+                            Text(check.note).font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
         }
     }

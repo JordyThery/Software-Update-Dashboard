@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Open in Jamf Pro:** open a device’s page (from its detail, the device list’s context menu, or Device › Open in Jamf Pro, ⌥⌘O) or the Blueprint’s page in your browser. Device pages open read-only, and opening more than 10 devices at once asks first. It uses the Jamf Pro web address you add to the connection in Settings › Connections.
+- **Readiness** on the dashboard: how many devices aren’t supervised (iPhones and iPads), don’t use declarative device management, or have never reported; each number shows those devices in the list.
+- **A device that has the Blueprint’s current version pending with the deadline of its earlier step** (for example 27.2.1 due on 27.2’s deadline) is no longer counted as past its deadline: the Blueprint’s current deadline counts, and the earlier deadline is shown and labeled, also in Deadline per Time Zone.
+- **An earlier step whose deadline Jamf counted from another posting date of the same version** is now recognized as this Blueprint’s earlier step.
+- **A device with update failures since the update started** and nothing in progress counts as Failed, not Not started.
+- **Inspect** no longer lists update errors from before a device on target installed its target.
+
 ## 0.2.0 — 2026-11-10
 
 - **Blueprint health:** each of the Blueprint’s software update declarations by name, one row per version range, with how many devices report it applied, pending, awaiting sync, failed or invalid, and the most common reason. Declarations that apply to no device in scope are summed up in one line. The dashboard says how many devices are on a version the Blueprint’s update doesn’t cover yet.

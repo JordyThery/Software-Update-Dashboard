@@ -34,6 +34,7 @@ struct SoftwareUpdateDashboardApp: App {
                 DemoModeToggle(demo: connections.demo)
             }
             BlueprintCommands()
+            DeviceCommands()
         }
 
         // JTKit's Settings window: Connections and Updates (no General tab:

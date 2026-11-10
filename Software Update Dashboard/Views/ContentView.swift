@@ -60,12 +60,32 @@ struct ContentView: View {
         } message: {
             Text(stopTrackingMessage)
         }
+        .confirmationDialog("Open \(Plural.count(model.pagesToConfirm?.count ?? 0, "Device")) in Jamf Pro?",
+                            isPresented: Binding(get: { model.pagesToConfirm != nil }, set: { if !$0 { model.pagesToConfirm = nil } }),
+                            titleVisibility: .visible) {
+            Button("Open \(model.pagesToConfirm?.count ?? 0) Pages") { model.open(model.pagesToConfirm ?? [], confirmed: true) }
+            Button("Cancel", role: .cancel) { model.pagesToConfirm = nil }
+        } message: {
+            Text("Each device opens in its own browser tab.")
+        }
+        .alert("Demo Mode Opens Nothing", isPresented: Binding(get: { model.demoPages != nil }, set: { if !$0 { model.demoPages = nil } })) {
+            Button("OK") { model.demoPages = nil }
+        } message: {
+            Text(Self.demoPagesText(model.demoPages ?? []))
+        }
         .onChange(of: connections.inUseKey) {
             model.connectionChanged()
         }
         .focusedSceneValue(\.blueprintFocus, BlueprintFocus(
             model: model, page: selectedID != nil ? $page : nil, sheet: $sheet,
             export: selectedID != nil ? { exportRequest = $0 } : nil, stopTracking: $stopTracking))
+    }
+
+    /// What Demo Mode says instead of opening pages: the first few, and how many more.
+    static func demoPagesText(_ urls: [URL]) -> String {
+        let shown = urls.prefix(3).map(\.absoluteString)
+        let more = urls.count > shown.count ? "\nand \(urls.count - shown.count) more" : ""
+        return "With a real connection, this opens in your browser:\n" + shown.joined(separator: "\n") + more
     }
 
     private var stopTrackingTitle: String {
@@ -119,6 +139,9 @@ struct SidebarView: View {
                             Button("Refresh") { Task { await model.refresh(tracked.id) } }
                             Button("Compare with a Group…") { sheet = .compare(tracked.id) }
                             Button("Set Update Start…") { sheet = .updateStarted(tracked.id) }
+                            Divider()
+                            Button("Open in Jamf Pro") { model.page(of: tracked.id).map { model.open([$0]) } }
+                                .disabled(model.page(of: tracked.id) == nil)
                             Divider()
                             Button("Stop Tracking…", role: .destructive) { stopTracking = tracked.id }
                                 .disabled(!model.canChangeTracked)

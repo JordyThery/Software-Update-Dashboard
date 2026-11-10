@@ -175,6 +175,12 @@ Also in 0.3 (decided by Jordy on 2026-11-10, after the 0.2 hand checks):
 
 Order: A, B with C and M, L, D, G, I, J, K (as planned for 0.2 before the renumbering). Each with tests and a check in Demo Mode; one read of the production role before the release.
 
+**Round 1** (on branch `0.3`, 2026-11-10): the three items above, A and G.
+
+- A: the Platform API gives the Jamf Pro web address only with another permission (`jss-url:read`) or an organization-level sign-in, so it comes from the connection’s Jamf Pro Web Address field (decided by Jordy on 2026-11-10). Demo Mode opens nothing and shows the page instead.
+- The “27.2.1, 9 Nov 23:59” device: a Mac on 27.2 reporting 27.2.1 pending with 27.2’s deadline (its release on 26 Oct plus the Blueprint’s days); the earlier step was looked for only when the pending version is older than the target. Now the Blueprint’s current deadline counts and the kept deadline is shown, in Deadline per Time Zone as “27.2.1, with the deadline of earlier step 27.2”. Also: an earlier step’s deadline counts from every posting date Apple’s list still has for the version (Jamf counted 27.2 from 5 Nov, another build’s posting).
+- G: not supervised (iPhones and iPads only), no declarative device management, never reported (no status report at all).
+
 ### Later
 
 - Computer groups end to end (the readers are in JTKit 1.5.0).

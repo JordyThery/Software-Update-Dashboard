@@ -18,6 +18,9 @@ nonisolated struct InspectInput: Sendable {
     /// When the device last changed its install state (the item’s
     /// `lastUpdateTime`, in the Jamf Pro server’s time zone); nil when not known.
     var installStateChanged: Date?
+    /// When the device last reported its OS version (the item’s
+    /// `lastUpdateTime`): for a device on target, when it had installed it.
+    var osVersionChanged: Date?
 
     init(member: JamfPro.GroupMember, status: JamfPro.SoftwareUpdateStatus? = nil, device: DeviceStatus? = nil,
          platformDeviceID: String? = nil, reports: [JamfPlatform.DeclarationReport]? = nil, reportsProblem: String? = nil,
@@ -320,6 +323,17 @@ nonisolated enum InspectFindings {
                     "\(osName) \(step) was sent before Apple posted \(target); the device installs \(step) first, then \(target)\(due)")
             }
         }
+        // the target pending with the deadline of this Blueprint's earlier step
+        if let step = row?.carriedStepVersion, let target = row?.targetVersion,
+           let held = DeadlineZones.text(local: row?.carriedDeadlineLocal, reported: row?.carriedDeadline) {
+            let due = DeadlineZones.text(local: row?.deadlineLocal, reported: row?.deadlineDate).map { "; the Blueprint’s deadline for \(target) is \($0)" } ?? ""
+            let passed = (row?.carriedDeadline ?? TargetRules.deadlineDate(row?.carriedDeadlineLocal,
+                                                                           timeZone: row?.timeZone ?? TimeZone.current.identifier))
+                .map { $0 <= ctx.now } ?? false
+            add("Earlier step’s deadline kept",
+                "The device has \(osName) \(target) pending with the deadline of \(step), an earlier step of this Blueprint (\(held))\(due)"
+                    + (passed ? ". As that deadline has passed, the device can install \(target) before the Blueprint’s deadline" : ""))
+        }
         if category == .notStarted, status?.installState == JamfPro.SoftwareUpdateStatus.InstallState.none,
            status?.pendingVersion == nil, status?.failure == nil {
             add("Idle: no update pending, no error", "The device reports nothing pending and no error")
@@ -421,6 +435,13 @@ nonisolated enum InspectFindings {
                    .contains { finding.cause.hasPrefix($0) }
            }), declarations < error {
             findings.insert(findings.remove(at: error), at: declarations)
+        }
+
+        // on target: an update error from before it installed the target (it reported the version,
+        // else the update started) belongs to an earlier install, so it isn't listed
+        if category == .onTarget, let failedAt, let installed = input.osVersionChanged ?? since, failedAt < installed {
+            let errorCauses: Set<String> = ["Update error", "Earlier update error", "Earlier bootstrap token error", "Bootstrap token"]
+            findings.removeAll { errorCauses.contains($0.cause) }
         }
 
         // the Blueprint's declarations for this device's own platform, by name; the rest in one line

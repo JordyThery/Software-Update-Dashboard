@@ -11,8 +11,16 @@ struct BlueprintFocus {
     let stopTracking: Binding<UUID?>
 }
 
+/// The devices selected in the device list, for the Device menu.
+struct DeviceSelection {
+    let model: DashboardModel
+    let trackedID: UUID
+    let devices: [DeviceStatus]
+}
+
 extension FocusedValues {
     @Entry var blueprintFocus: BlueprintFocus?
+    @Entry var deviceSelection: DeviceSelection?
 }
 
 /// The Blueprint menu and the View menu’s pages: every toolbar and context
@@ -71,6 +79,10 @@ struct BlueprintCommands: Commands {
                 .disabled(focus?.export == nil || result == nil)
             Button("Export Summary…") { focus?.export?(false) }
                 .disabled(focus?.export == nil || result == nil)
+            Button("Open Blueprint in Jamf Pro") {
+                if let id = selectedID, let model = focus?.model, let page = model.page(of: id) { model.open([page]) }
+            }
+            .disabled(selectedID.flatMap { focus?.model.page(of: $0) } == nil)
             Divider()
             Button("Stop Tracking…") {
                 if let id = selectedID { focus?.stopTracking.wrappedValue = id }
@@ -82,6 +94,27 @@ struct BlueprintCommands: Commands {
                     ForEach(DemoSituation.allCases) { Text($0.rawValue).tag($0) }
                 }
             }
+        }
+    }
+}
+
+/// The Device menu: what the device list’s context menu does, for the
+/// selected devices.
+struct DeviceCommands: Commands {
+    @FocusedValue(\.deviceSelection) private var selection
+
+    private var pages: [URL] { selection.map { $0.model.pages(of: $0.devices) } ?? [] }
+
+    var body: some Commands {
+        CommandMenu("Device") {
+            Button("Open in Jamf Pro") { selection?.model.open(pages) }
+                .keyboardShortcut("o", modifiers: [.command, .option])
+                .disabled(pages.isEmpty)
+            Button("Inspect") {
+                guard let selection else { return }
+                Task { await selection.model.inspect(selection.devices, in: selection.trackedID) }
+            }
+            .disabled(selection?.devices.isEmpty ?? true)
         }
     }
 }

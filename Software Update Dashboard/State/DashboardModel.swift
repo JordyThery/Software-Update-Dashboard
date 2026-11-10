@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import JTKit
 import Observation
@@ -44,6 +45,12 @@ final class DashboardModel {
     private(set) var unreadableTrackedCopy: String?
     /// Demo Mode’s situation; always sample data outside Demo Mode.
     private(set) var demoSituation: DemoSituation = .sampleData
+    /// Jamf Pro pages waiting for a yes: more than `JamfProPages.askAbove` at once.
+    var pagesToConfirm: [URL]?
+    /// Demo Mode: the pages that would have opened, shown instead.
+    var demoPages: [URL]?
+    /// Opens a page in the browser; tests replace it.
+    @ObservationIgnored var openPage: (URL) -> Void = { NSWorkspace.shared.open($0) }
 
     @ObservationIgnored private var saved: [TrackedBlueprint]
     /// Demo mode’s two, changed in memory only.
@@ -326,6 +333,34 @@ final class DashboardModel {
         guard let client = try connections.client() else { throw RefreshError("No connection in use.") }
         let items = try await client.statusItems(managementID: managementID, kind: device.isComputer ? .computer : .mobileDevice) ?? []
         return items.sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+    }
+
+    // MARK: Open in Jamf Pro
+
+    /// The devices’ pages in Jamf Pro; empty without a web address.
+    func pages(of devices: [DeviceStatus]) -> [URL] {
+        devices.compactMap { JamfProPages.device($0, base: connections.jamfProWebAddress) }
+    }
+
+    /// The tracked Blueprint’s page in Jamf Pro; nil without a web address.
+    func page(of id: UUID) -> URL? {
+        tracked(id).flatMap { JamfProPages.blueprint(id: $0.blueprintID, base: connections.jamfProWebAddress) }
+    }
+
+    /// Opens the pages in the browser: asks first above `JamfProPages.askAbove`
+    /// unless `confirmed`; in Demo Mode shows them instead. Nothing is sent to Jamf.
+    func open(_ urls: [URL], confirmed: Bool = false) {
+        guard !urls.isEmpty else { return }
+        if !confirmed && urls.count > JamfProPages.askAbove {
+            pagesToConfirm = urls
+            return
+        }
+        pagesToConfirm = nil
+        if isDemo {
+            demoPages = urls
+            return
+        }
+        urls.forEach(openPage)
     }
 
     // MARK: Inspect
