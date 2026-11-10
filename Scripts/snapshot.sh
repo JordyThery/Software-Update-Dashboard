@@ -13,7 +13,6 @@
 #   ~/Developer/_release-gate/sud-snapshots/SUD snapshot <date and time>.json
 # Made-up IDs come from a key kept beside the snapshots (.snapshot-key,
 # created once), so the same device gets the same ID in every snapshot.
-# While JTKit 1.7.0 isn't tagged, it builds against the local JTKit.
 cd "$(dirname "$0")/.." || exit 1
 
 OUT="$HOME/Developer/_release-gate/sud-snapshots"
@@ -27,7 +26,7 @@ fi
 
 export SUD_SNAPSHOT=1 TEST_RUNNER_SUD_SNAPSHOT=1 SUD_SNAPSHOT_SCRIPT="${0:A}"
 export TEST_RUNNER_SUD_SNAPSHOT_KEY="$(<"$KEYFILE")"
-./Scripts/release-check.sh --local-jtkit --include-production --only "takeSnapshot()"
+./Scripts/release-check.sh --include-production --only "takeSnapshot()"
 check=$?
 unset TEST_RUNNER_SUD_SNAPSHOT_KEY TEST_RUNNER_SUD_SNAPSHOT SUD_SNAPSHOT SUD_SNAPSHOT_SCRIPT
 

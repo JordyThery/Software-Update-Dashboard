@@ -33,7 +33,7 @@ LIVE_TESTS=("Software Update Dashboard Tests/LiveReadTests/appleReleaseData()"
 # for exactly that partial run. Anything else with SUD_SNAPSHOT set stops.
 if [[ -n "${SUD_SNAPSHOT:-}" ]]; then
     if [[ "$SUD_SNAPSHOT" == 1 && "${SUD_SNAPSHOT_SCRIPT:-}" == "${0:A:h}/snapshot.sh" \
-          && "$*" == "--local-jtkit --include-production --only takeSnapshot()" ]]; then
+          && "$*" == "--include-production --only takeSnapshot()" ]]; then
         LIVE_TESTS+=("Software Update Dashboard Tests/LiveSnapshot/takeSnapshot()")
     else
         print -u2 "SUD_SNAPSHOT is for Scripts/snapshot.sh only, never a release check"
