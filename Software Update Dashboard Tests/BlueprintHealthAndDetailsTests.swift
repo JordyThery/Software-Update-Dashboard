@@ -649,3 +649,79 @@ struct InspectCurrentDeclarationsTests {
         #expect(DeviceDetailText.failures(count: nil, time: nil, serverTimeZone: Sample.utc) == nil)
     }
 }
+
+@Suite("0.2: hand-check fixes")
+struct HandCheckFixTests {
+    static func installing(failedAt: String) -> JamfPro.SoftwareUpdateStatus {
+        Sample.status([("device.operating-system.version", "26.7.2"), ("softwareupdate.device-id", "J314sAP"),
+                       ("softwareupdate.install-state", "installing"),
+                       ("softwareupdate.pending-version.os-version", "26.7.3"),
+                       ("softwareupdate.install-reason.reason", "declaration"),
+                       ("softwareupdate.failure-reason.count", "2"),
+                       ("softwareupdate.failure-reason.reason", "Code=101 \"The update couldn’t be prepared\""),
+                       ("softwareupdate.failure-reason.timestamp", failedAt)], time: "2026-11-05T09:00:00")
+    }
+
+    static func inspect(_ status: JamfPro.SoftwareUpdateStatus, stateChanged: String?) -> InspectResult {
+        let (member, _, device) = InspectCurrentDeclarationsTests.row(notFetched: true)
+        var input = InspectInput(member: member, status: status, device: device, platformDeviceID: "P-6",
+                                 reports: BlueprintHealthTests.reports("P-6", notForDevice: true))
+        input.installStateChanged = stateChanged.map(Sample.date)
+        return InspectFindings.evaluate(input, context: InspectContext(blueprintID: BlueprintHealthTests.blueprint, blueprintName: "Test Mac Updates",
+                                                                       target: nil, since: Sample.updateStarted, now: Sample.now,
+                                                                       serverTimeZone: Sample.utc))
+    }
+
+    @Test("Installing: an error from before the install state changed isn’t the likely cause; a newer one is")
+    func errorDuringInstall() {
+        let older = Self.inspect(Self.installing(failedAt: "2026-11-05T07:00:00"), stateChanged: "2026-11-05T09:00:00")
+        #expect(older.likely?.cause != "Update error")
+        #expect(older.findings.contains { $0.cause == "Update error" }, "still listed")
+        let newer = Self.inspect(Self.installing(failedAt: "2026-11-05T10:00:00"), stateChanged: "2026-11-05T09:00:00")
+        #expect(newer.likely?.cause == "Update error")
+        // not installing: the error since the update started leads
+        #expect(InspectCurrentDeclarationsTests.evaluate(InspectCurrentDeclarationsTests.row(notFetched: true)).likely?.cause == "Update error")
+    }
+
+    @Test("Offline comes before “Not evaluated since the update started”")
+    func offlineFirst() {
+        let member = JamfPro.GroupMember(id: "8", kind: .mobileDevice, name: "iPad 8", serialNumber: "ZZTEST8", managementID: "M-8",
+                                         osVersion: "26.7.1", modelIdentifier: "iPad13,18",
+                                         lastContact: Sample.date("2026-09-01T10:00:00"), managed: true, supervised: true)
+        let reports = BlueprintHealthTests.reports("P-8").map { report -> JamfPlatform.DeclarationReport in
+            var copy = report
+            copy.lastReportTime = Sample.date("2026-09-01T09:00:00")
+            return copy
+        }
+        let status = Sample.status([("device.operating-system.version", "26.7.1")], time: "2026-09-01T09:00:00")
+        let result = InspectFindings.evaluate(InspectInput(member: member, status: status, platformDeviceID: "P-8", reports: reports),
+                                              context: InspectContext(blueprintID: BlueprintHealthTests.blueprint, target: OSVersion("27.0.1"),
+                                                                      since: Sample.updateStarted, now: Sample.now, serverTimeZone: Sample.utc))
+        #expect(result.likely?.cause == "Offline")
+        #expect(result.findings.contains { $0.cause == "Not evaluated since the update started" })
+    }
+
+    @Test("Deadline per Time Zone: an earlier step past its own deadline is listed under that step, for any major and also while installing")
+    func earlierStepZone() {
+        var device = InspectCurrentDeclarationsTests.row().2
+        device.targetVersion = "27.2.1"
+        device.deadlineLocal = "2026-11-23T23:59:00"
+        device.earlierStepVersion = "27.2"
+        device.earlierStepDeadline = Sample.date("2026-11-04T22:59:00")
+        device.earlierStepLapsed = nil
+        let zones = DeadlineZones.zones(devices: [device], now: Sample.now)
+        #expect(zones.map(\.target) == ["27.2, earlier step"])
+        #expect(zones.first?.deadline == device.earlierStepDeadline)
+        // before the step's own deadline: the current target and its deadline
+        let before = DeadlineZones.zones(devices: [device], now: Sample.date("2026-11-04T12:00:00"))
+        #expect(before.map(\.target) == ["27.2.1"])
+    }
+
+    @Test("Another Blueprint’s declaration is named without its ID")
+    func otherBlueprintName() {
+        let other = JamfPlatform.DeclarationReport(declarationIdentifier: "Blueprint_7b000000-1111-4000-8000-000000000001_s1_c1_sys_cfg3")
+        #expect(InspectFindings.otherName(other) == "A declaration from another Blueprint")
+        #expect(InspectFindings.otherName(.init(declarationIdentifier: "7b000000-1111-4000-8000-000000000002")) == "Another declaration")
+        #expect(InspectFindings.otherName(.init(declarationIdentifier: "com.example.wifi")) == "com.example.wifi")
+    }
+}

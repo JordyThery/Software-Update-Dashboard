@@ -43,11 +43,14 @@ nonisolated enum DeadlineZones {
     /// row. A row stands out when its zone’s offset differs from the most
     /// common one, when it isn’t a whole hour from UTC, when its moment is
     /// hours off the most common one for its target, or when it has no zone.
-    static func zones(devices: [DeviceStatus], here: TimeZone = .current) -> [DeadlineZone] {
-        // a device past its earlier step's own deadline is counted at that step and its deadline
+    static func zones(devices: [DeviceStatus], here: TimeZone = .current, now: Date = Date()) -> [DeadlineZone] {
+        // a device past its earlier step's own deadline is counted at that step and its deadline,
+        // whatever the step's major and whether it is still installing
         let shown = devices.map { device -> DeviceStatus in
-            guard device.earlierStepLapsed == true, let step = device.earlierStepVersion,
-                  device.earlierStepDeadline != nil || device.earlierStepLocal != nil else { return device }
+            guard let step = device.earlierStepVersion,
+                  let due = device.earlierStepDeadline
+                      ?? TargetRules.deadlineDate(device.earlierStepLocal, timeZone: device.timeZone ?? here.identifier),
+                  device.earlierStepLapsed == true || due <= now else { return device }
             var stepped = device
             stepped.targetVersion = "\(step), earlier step"
             stepped.deadlineDate = device.earlierStepDeadline

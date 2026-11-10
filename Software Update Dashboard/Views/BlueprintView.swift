@@ -536,7 +536,7 @@ struct BlueprintHealthSection: View {
                 if health.unmatchedDevices > 0 || health.devicesWithoutPlatformID > 0 {
                     Text(Self.unmatchedNote(health)).font(.caption).foregroundStyle(.secondary)
                 }
-                Text("Read once per refresh for each declaration the devices list. Inspect shows them for one device.")
+                Text("Each declaration’s device list is read once per refresh; Inspect shows them for one device.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text("The Blueprint’s declaration reports couldn’t be read in this refresh.").foregroundStyle(.secondary)

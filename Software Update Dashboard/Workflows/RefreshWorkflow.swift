@@ -213,7 +213,7 @@ nonisolated struct RefreshWorkflow: Sendable {
             blocks: blocks, settings: blueprint.softwareUpdateSettings, rule: Self.rule(blocks), ruleKey: Self.ruleKey(blocks),
             scope: scope, unmatchedScope: unmatched, scopeChange: ScopeChange(from: previousScope, to: scope),
             members: members, devices: devices, majors: MajorRow.rows(devices),
-            zones: DeadlineZones.zones(devices: devices),
+            zones: DeadlineZones.zones(devices: devices, now: now),
             replacements: Replacement.list(devices) { device in
                 // the same rule as the targets: the newest release the device can run
                 TargetRules.newestRelease(catalog, device.isComputer ? .macOS : .iOS, model: device.modelIdentifier,

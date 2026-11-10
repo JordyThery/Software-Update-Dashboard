@@ -15,6 +15,9 @@ nonisolated struct InspectInput: Sendable {
     var reportsProblem: String?
     /// Why the device couldn’t be inspected at all.
     var problem: String?
+    /// When the device last changed its install state (the item’s
+    /// `lastUpdateTime`, in the Jamf Pro server’s time zone); nil when not known.
+    var installStateChanged: Date?
 
     init(member: JamfPro.GroupMember, status: JamfPro.SoftwareUpdateStatus? = nil, device: DeviceStatus? = nil,
          platformDeviceID: String? = nil, reports: [JamfPlatform.DeclarationReport]? = nil, reportsProblem: String? = nil,
@@ -180,7 +183,9 @@ nonisolated enum InspectFindings {
                                 detail: "The device last reported its update declarations on \(day(evaluated)), before the update "
                                     + "started (\(day(start))), so its report doesn’t cover the current declarations. It reports "
                                     + "again after its next check-in")
-            if updated.map({ $0 >= start }) == true { findings.append(stale) } else { findings.insert(stale, at: 0) }
+            // an offline device is offline first: that is why it hasn't reported
+            let offlineFirst = member.lastSeen.map { ctx.now.timeIntervalSince($0) > Double(ctx.staleDays) * 86_400 } ?? false
+            if updated.map({ $0 >= start }) == true || offlineFirst { findings.append(stale) } else { findings.insert(stale, at: 0) }
         } else {
             let pending = applicable.flatMap(\.reports).filter { $0.status == .pending }
             if !pending.isEmpty { add("Update declarations not applied yet", "\(pending.count) still pending on the device") }
@@ -357,7 +362,7 @@ nonisolated enum InspectFindings {
         let others = otherPairs.flatMap(\.reports)
             .filter { $0.validity == .invalid || $0.reasons.contains(where: { ($0.code ?? "").hasPrefix("Error.") }) }
         for other in others.prefix(3) {
-            add("Other declaration with a problem", "\(readableName(other.declarationIdentifier, names: [:])): \(why(other, names: [:]))"
+            add("Other declaration with a problem", "\(otherName(other)): \(why(other, names: [:]))"
                 + (other.validity == .invalid ? " (invalid)" : ""))
         }
 
@@ -399,8 +404,18 @@ nonisolated enum InspectFindings {
                                     detail: "\(errorBefore.reason) (\(errorBefore.when), before the update started)", earlier: true))
         }
 
+        // an update error is the likely cause only when the device isn't downloading or
+        // installing, or the error is newer than its last install-state change; an older
+        // error during an install says nothing about that install
+        let failedAt = status?.failure?.timestamp.flatMap { JamfPro.serverDate($0, timeZone: ctx.serverTimeZone) }
+        let working = status?.installState == .downloading || status?.installState == .installing
+        let errorLeads = !working || (failedAt.flatMap { at in input.installStateChanged.map { at > $0 } } ?? false)
+        if !errorLeads, let error = findings.firstIndex(where: { $0.cause == "Update error" }),
+           findings.firstIndex(where: { $0.earlier != true }) == error, error + 1 < findings.count {
+            findings.insert(findings.remove(at: error), at: error + 1)
+        }
         // an update error since the update started ranks above what the declarations say
-        if let error = findings.firstIndex(where: { $0.cause == "Update error" }),
+        if errorLeads, let error = findings.firstIndex(where: { $0.cause == "Update error" }),
            let declarations = findings.firstIndex(where: { finding in
                ["Jamf’s update doesn’t cover", "Hasn’t fetched Jamf’s", "No update declaration applies", "Not evaluated since"]
                    .contains { finding.cause.hasPrefix($0) }
@@ -462,6 +477,15 @@ nonisolated enum InspectFindings {
     }
 
     // MARK: Helpers
+
+    /// A declaration that isn’t the tracked Blueprint’s, without its ID: “A
+    /// declaration from another Blueprint”, else its readable name, else
+    /// “Another declaration”.
+    static func otherName(_ report: JamfPlatform.DeclarationReport) -> String {
+        if report.blueprintID != nil { return "A declaration from another Blueprint" }
+        let readable = readableName(report.declarationIdentifier, names: [:])
+        return readable.contains("‹ID›") || readable.isEmpty ? "Another declaration" : readable
+    }
 
     /// The device’s update error when it is from before the update started.
     static func earlierError(_ status: JamfPro.SoftwareUpdateStatus?, since: Date?,
