@@ -47,8 +47,8 @@ struct EndToEndTests {
             ("Field iPad 11", .notStarted, "Online, update not started (no error)"),
             // the demo device reported installing days ago and checks in since
             ("Field iPad 12", .inProgress, "Installing 27.1 for more than 4 hours; the device checks in but hasn’t reported a new status"),
-            // its update declaration failed (the iPad isn't supervised): the list says it
-            ("Field iPad 13", .notStarted, "Update declaration failed: Error.ConfigurationFailed: Software update enforcement needs a supervised device."),
+            // its update declaration failed (for a reason that has nothing to do with supervision): the list says it
+            ("Field iPad 13", .notStarted, "Update declaration failed: Error.ConfigurationFailed: Software update enforcement couldn’t start: the device couldn’t reach Apple’s software update service."),
             // a personal iPad with User Enrollment: listed under readiness
             ("Field iPad 14", .notStarted, "Online, update not started (no error)"),
         ]
