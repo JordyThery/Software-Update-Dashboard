@@ -7,6 +7,8 @@ struct BlueprintFocus {
     let page: Binding<BlueprintView.Page>?
     let sheet: Binding<BlueprintSheet?>
     let export: ((Bool) -> Void)?
+    /// Export Report as PDF: true for all tracked Blueprints, false for the one on screen.
+    let exportPDF: ((Bool) -> Void)?
     /// Set to ask for confirmation before Stop Tracking.
     let stopTracking: Binding<UUID?>
 }
@@ -81,6 +83,10 @@ struct BlueprintCommands: Commands {
                 .disabled(focus?.export == nil || result == nil)
             Button("Export Summary…") { focus?.export?(false) }
                 .disabled(focus?.export == nil || result == nil)
+            Button("Export Report as PDF…") { focus?.exportPDF?(false) }
+                .disabled(focus?.exportPDF == nil || result == nil)
+            Button("Export Report of All Blueprints as PDF…") { focus?.exportPDF?(true) }
+                .disabled(focus?.model.trackedBlueprints.isEmpty ?? true)
             Button("Open Blueprint in Jamf Pro") {
                 if let id = selectedID, let model = focus?.model, let page = model.page(of: id) { model.open([page]) }
             }
@@ -104,11 +110,16 @@ struct BlueprintCommands: Commands {
 /// selected devices.
 struct DeviceCommands: Commands {
     @FocusedValue(\.deviceSelection) private var selection
+    @FocusedValue(\.blueprintFocus) private var focus
 
     private var pages: [URL] { selection.map { $0.model.pages(of: $0.devices) } ?? [] }
 
     var body: some Commands {
         CommandMenu("Device") {
+            Button("Find a Device…") { focus?.sheet.wrappedValue = .findDevice }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .disabled(focus == nil || focus?.model.trackedBlueprints.isEmpty == true)
+            Divider()
             Button("Open in Jamf Pro") { selection?.model.open(pages) }
                 .keyboardShortcut("o", modifiers: [.command, .option])
                 .disabled(pages.isEmpty)

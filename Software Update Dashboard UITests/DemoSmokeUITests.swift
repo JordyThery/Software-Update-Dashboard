@@ -146,6 +146,20 @@ final class DemoSmokeUITests: JTKitUITestCase {
         checkDemoTitles()
     }
 
+    /// Export Report of All Blueprints as PDF saves a PDF, only once the
+    /// Save panel shows this test's own folder; in Demo Mode its name says so.
+    func test13ReportPDF() throws {
+        openBlueprint(iPadBlueprint)
+        XCTAssertTrue(anyContaining("updatable devices on their target").waitForExistence(timeout: 30), "The dashboard didn't load")
+        tap(app.menuBars.menuBarItems["Blueprint"])
+        tap(app.menuItems["Export Report of All Blueprints as PDF…"])
+        try saveInTestFolder()
+        let pdf = try XCTUnwrap(waitForFile(ending: ".pdf"), "The report wasn't saved")
+        XCTAssertTrue(pdf.lastPathComponent.contains("(Demo)"), "The report's name doesn't say Demo")
+        let data = try Data(contentsOf: pdf)
+        XCTAssertTrue(data.starts(with: Data("%PDF".utf8)) && data.count > 10_000, "The report isn't a PDF with content")
+    }
+
     // MARK: Helpers
 
     /// Selects a tracked Blueprint in the sidebar; its window title follows.

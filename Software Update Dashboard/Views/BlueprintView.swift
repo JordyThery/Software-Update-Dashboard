@@ -16,6 +16,8 @@ struct BlueprintView: View {
     @Binding var page: Page
     @Binding var exportRequest: Bool?
     @Binding var sheet: BlueprintSheet?
+    /// Export Report as PDF (true: all tracked Blueprints), through the main window’s Save panel.
+    var exportPDF: (Bool) -> Void = { _ in }
     @State private var export: TextExportDocument?
     @State private var exportName = ""
     @State private var exportType: UTType = .plainText
@@ -78,11 +80,14 @@ struct BlueprintView: View {
                 Menu {
                     Button("Device List as CSV…") { prepareExport(csv: true) }
                     Button("Summary…") { prepareExport(csv: false) }
+                    Divider()
+                    Button("Report as PDF…") { exportPDF(false) }
+                    Button("Report of All Blueprints as PDF…") { exportPDF(true) }
                 } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }
                 .disabled(model.results[tracked.id] == nil)
-                .help("Save the device list or the summary")
+                .help("Save the device list, the summary or a PDF report")
             }
             ToolbarItem {
                 if model.refreshing.contains(tracked.id) {
@@ -376,6 +381,8 @@ struct CategoryGrid: View {
 struct ReadinessSection: View {
     let devices: [DeviceStatus]
     let showDevices: (ReadinessCheck) -> Void
+    /// False in a printed report: plain numbers, nothing to click.
+    var interactive = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -390,13 +397,17 @@ struct ReadinessSection: View {
                         GridRow {
                             Label(check.title, systemImage: check.systemImage)
                                 .accessibilityHidden(true)
-                            Button("\(count)") { showDevices(check) }
-                                .buttonStyle(.link)
-                                .monospacedDigit()
-                                .disabled(count == 0)
-                                .help(count == 0 ? "" : "Show \(count == 1 ? "this device" : "these \(count) devices") in the device list")
-                                .accessibilityLabel("\(check.title): \(Plural.count(count, "device"))")
-                                .accessibilityHint(count == 0 ? "" : "Shows them in the device list")
+                            if interactive {
+                                Button("\(count)") { showDevices(check) }
+                                    .buttonStyle(.link)
+                                    .monospacedDigit()
+                                    .disabled(count == 0)
+                                    .help(count == 0 ? "" : "Show \(count == 1 ? "this device" : "these \(count) devices") in the device list")
+                                    .accessibilityLabel("\(check.title): \(Plural.count(count, "device"))")
+                                    .accessibilityHint(count == 0 ? "" : "Shows them in the device list")
+                            } else {
+                                Text("\(count)").monospacedDigit()
+                            }
                             Text(check.note).font(.callout).foregroundStyle(.secondary)
                         }
                     }

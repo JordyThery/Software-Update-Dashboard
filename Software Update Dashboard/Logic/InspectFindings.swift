@@ -367,8 +367,9 @@ nonisolated enum InspectFindings {
         }
         // the battery matters only for an install: downloaded or installing, not a download
         let installing = status?.installState == .prepared || status?.installState == .installing
-        if installing, let level = member.batteryLevel, level < 50 {
-            add("Low battery", "\(level)% at the last inventory; installs need 50% or a charger")
+        // Apple's minimum for an automatic install on iPhone and iPad (Help › Known Problems)
+        if installing, let level = member.batteryLevel, level < 30 {
+            add("Low battery", "\(level)% at the last inventory; an automatic install needs at least 30%")
         }
         if member.roaming == true {
             add("Roaming on mobile data", "Updates are normally downloaded over Wi-Fi: check that the device has a Wi-Fi network")

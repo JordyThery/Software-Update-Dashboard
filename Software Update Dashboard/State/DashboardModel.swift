@@ -344,6 +344,43 @@ final class DashboardModel {
         return items.sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
     }
 
+    // MARK: Report as PDF
+
+    /// The PDF report of these tracked Blueprints (all when nil), from their
+    /// last refresh in this session and their history; nothing is read from Jamf.
+    func reportPDF(_ ids: [UUID]? = nil, created: Date = Date()) -> Data {
+        let chosen = ids.map { wanted in trackedBlueprints.filter { wanted.contains($0.id) } } ?? trackedBlueprints
+        let parts = chosen.map { ReportPDF.Part(tracked: $0, result: results[$0.id], snapshots: snapshots($0.id)) }
+        return ReportPDF.make(parts, demo: isDemo, created: created)
+    }
+
+    /// The report’s file name: the Blueprint’s or “All Blueprints”, the day, and Demo in Demo Mode.
+    func reportName(_ id: UUID?, day: Date = Date()) -> String {
+        let name = id.flatMap { tracked($0)?.blueprintName } ?? "All Blueprints"
+        return "\(name) Report \(day.formatted(.iso8601.year().month().day()))\(isDemo ? " (Demo)" : "").pdf"
+    }
+
+    // MARK: Find a device
+
+    /// What Find a Device searches: each tracked Blueprint’s refresh of this
+    /// session, else the newest in its history. Nothing is read from Jamf.
+    func searchSources() -> [DeviceSearch.Source] {
+        trackedBlueprints.map { tracked in
+            if let result = results[tracked.id] { return DeviceSearch.Source(tracked: tracked, devices: result.devices, date: result.date) }
+            let last = snapshots(tracked.id).last
+            return DeviceSearch.Source(tracked: tracked, devices: last?.devices ?? [], date: last?.date)
+        }
+    }
+
+    /// A device the device list is asked to show and select (Find a Device).
+    var deviceToShow: DeviceKey?
+
+    /// Opens a device in its Blueprint’s device list.
+    func show(_ match: DeviceSearch.Match) {
+        selection = .blueprint(match.trackedID)
+        deviceToShow = DeviceKey(tracked: match.trackedID, device: match.device.id)
+    }
+
     // MARK: Open in Jamf Pro
 
     /// The devices’ pages in Jamf Pro; empty without a web address.

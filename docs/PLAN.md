@@ -191,6 +191,12 @@ Order: A, B with C and M, L, D, G, I, J, K (as planned for 0.2 before the renumb
 - B, C, M, L and D in SUD. The Stop button stops the automatic refresh that runs; automatic refresh stays on. Demo Mode’s notification rules are kept in memory and Demo Mode sends nothing (it writes what it would send in the activity log); the demo data doesn’t change between refreshes, so no notification is shown there.
 - Demo data (JTKit 1.7.0): Studio Mac 09 (27.0.2 pending with 27.1’s deadline), Studio Mac 10 (27.0.2 failed, past its deadline), Studio Mac 11 (a 2018 MacBook Pro on 15.7.3, not supervised), Field iPad 14 (User Enrollment).
 
+**Round 3** (on branch `0.3`, 2026-11-10): I, J and K, none of which reads from Jamf: they use what the last refresh holds.
+
+- I, Help: a Help window (⌘?) explaining the categories, targets and deadlines, earlier steps, Readiness and Inspect, then Known Problems with a public Apple source each (opened on 2026-11-10): bootstrap token (Apple Platform Deployment, secure and bootstrap tokens), Apple’s software update hosts (Apple, “Use Apple products on enterprise networks”), passcode at the deadline and offline devices (Platform Deployment, “Install and enforce software updates”), battery and free space (Platform Deployment, “About software updates”), the enforcement declaration’s enrollment rules (apple/device-management on GitHub). No Jamf page was needed. Inspect links a finding to its entry. Inspect’s low battery now follows Apple’s 30% for an automatic install on iPhone and iPad (was 50%).
+- J, Export Report as PDF: the Blueprint on screen or all tracked Blueprints, A4, each section drawn whole (none cut across pages), from the dashboard’s own views; “— Demo” in its title and “(Demo)” in its file name in Demo Mode. A Blueprint not refreshed in the session says so.
+- K, Find a Device (⇧⌘F, toolbar, Device menu): serial number or name across the tracked Blueprints, from this session’s refresh, else the newest in the history; once per Blueprint; opens the device in its Blueprint’s device list with every filter off.
+
 ### Later
 
 - Computer groups end to end (the readers are in JTKit 1.5.0).

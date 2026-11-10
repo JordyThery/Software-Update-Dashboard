@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Help** (Help › Software Update Dashboard Help, ⌘?): how each category is decided, where a device’s target and deadline come from, what an earlier step of the Blueprint is, what Readiness counts and what Inspect does. Known Problems describes reasons an update doesn’t install, each with a link to Apple’s own page about it. Inspect links to the problem it finds.
+- **Export Report as PDF:** for the Blueprint on screen or all tracked Blueprints, with what the dashboard shows and the devices needing attention, from the last refresh.
+- **Find a Device** (⇧⌘F, also in the toolbar and the Device menu): a device by serial number or name in every tracked Blueprint, opened in its Blueprint’s device list.
+- **Low battery** in Inspect now follows Apple’s minimum for an automatic install on iPhone and iPad: 30%.
 - **Automatic refresh** in a new Automation tab in Settings: off, or every 1, 4 or 8 hours. Every tracked Blueprint is read one after another and each refresh is kept in its history. The Overview shows the last and next refresh, any problem, and a Stop button while it runs. A refresh that fails keeps the previous one and is tried again at the next interval.
 - **Keep this Mac awake** while automatic refresh is on, only while the Mac is on power (off by default). After a sleep, automatic refresh catches up once.
 - **Open at login** and **Show in menu bar** in Settings › General. The menu bar item shows each tracked Blueprint’s share on target with a colored dot, Refresh All and Open Window.

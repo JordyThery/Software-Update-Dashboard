@@ -53,6 +53,7 @@ struct SoftwareUpdateDashboardApp: App {
             }
             BlueprintCommands()
             DeviceCommands()
+            HelpCommands()
         }
 
         // JTKit's Settings window: General (Open at Login, the menu bar item), Connections,
@@ -77,6 +78,12 @@ struct SoftwareUpdateDashboardApp: App {
         .menuBarExtraStyle(.window)
 
         AboutWindow(configuration: .softwareUpdateDashboard)
+
+        // Help › Software Update Dashboard Help: the same in Demo Mode
+        Window("Software Update Dashboard Help", id: HelpView.windowID) {
+            HelpView()
+        }
+        .defaultSize(width: 720, height: 760)
 
         // JTKit's shared activity log (Window › Activity Log, ⇧⌘L).
         ActivityLogWindow(

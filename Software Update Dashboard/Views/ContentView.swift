@@ -1,4 +1,5 @@
 import JTKit
+import UniformTypeIdentifiers
 import SwiftUI
 
 /// The main window: the overview and the tracked Blueprints in the sidebar,
@@ -11,6 +12,9 @@ struct ContentView: View {
     @State private var page: BlueprintView.Page = .dashboard
     /// Set by the menu or the toolbar: true for the CSV, false for the summary.
     @State private var exportRequest: Bool?
+    /// Export Report as PDF, ready for the Save panel, and its file name.
+    @State private var pdfReport: PDFReportDocument?
+    @State private var pdfName = ""
     /// The tracked Blueprint whose Stop Tracking waits for confirmation.
     @State private var stopTracking: UUID?
 
@@ -29,7 +33,8 @@ struct ContentView: View {
                 if connections.connectionInUse == nil {
                     NoConnectionView(demo: connections.demo)
                 } else if case .blueprint(let id)? = model.selection, let tracked = model.tracked(id) {
-                    BlueprintView(model: model, tracked: tracked, page: $page, exportRequest: $exportRequest, sheet: $sheet)
+                    BlueprintView(model: model, tracked: tracked, page: $page, exportRequest: $exportRequest, sheet: $sheet,
+                                  exportPDF: exportPDF)
                 } else {
                     OverviewView(model: model, automation: automation, sheet: $sheet)
                 }
@@ -44,6 +49,15 @@ struct ContentView: View {
             ToolbarItem(placement: .navigation) {
                 ConnectionPicker(store: connections.saved, role: connections.role())
             }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    sheet = .findDevice
+                } label: {
+                    Label("Find a Device", systemImage: "magnifyingglass")
+                }
+                .help("Find a device by serial number or name in every tracked Blueprint (⇧⌘F)")
+                .disabled(model.trackedBlueprints.isEmpty)
+            }
         }
         .sheet(item: $sheet) { sheet in
             switch sheet {
@@ -51,6 +65,7 @@ struct ContentView: View {
             case .compare(let id): CompareGroupSheet(model: model, trackedID: id)
             case .updateStarted(let id): UpdateStartedSheet(model: model, trackedID: id)
             case .notifications(let id): NotificationSheet(model: model, trackedID: id)
+            case .findDevice: FindDeviceSheet(model: model)
             }
         }
         .confirmationDialog(stopTrackingTitle, isPresented: Binding(get: { stopTracking != nil }, set: { if !$0 { stopTracking = nil } }),
@@ -76,12 +91,20 @@ struct ContentView: View {
         } message: {
             Text(Self.demoPagesText(model.demoPages ?? []))
         }
+        // Find a Device opens a device: its Blueprint's device list
+        .onChange(of: model.deviceToShow) {
+            if model.deviceToShow != nil { page = .devices }
+        }
         .onChange(of: connections.inUseKey) {
             model.connectionChanged()
         }
         .focusedSceneValue(\.blueprintFocus, BlueprintFocus(
             model: model, page: selectedID != nil ? $page : nil, sheet: $sheet,
-            export: selectedID != nil ? { exportRequest = $0 } : nil, stopTracking: $stopTracking))
+            export: selectedID != nil ? { exportRequest = $0 } : nil, exportPDF: exportPDF, stopTracking: $stopTracking))
+        .fileExporter(isPresented: Binding(get: { pdfReport != nil }, set: { if !$0 { pdfReport = nil } }),
+                      document: pdfReport, contentType: .pdf, defaultFilename: pdfName) { _ in
+            pdfReport = nil
+        }
     }
 
     /// What Demo Mode says instead of opening pages: the first few, and how many more.
@@ -89,6 +112,13 @@ struct ContentView: View {
         let shown = urls.prefix(3).map(\.absoluteString)
         let more = urls.count > shown.count ? "\nand \(urls.count - shown.count) more" : ""
         return "With a real connection, this opens in your browser:\n" + shown.joined(separator: "\n") + more
+    }
+
+    /// Makes the report (all tracked Blueprints, or the one on screen) and opens the Save panel.
+    private func exportPDF(all: Bool) {
+        let id = all ? nil : selectedID
+        pdfName = model.reportName(id)
+        pdfReport = PDFReportDocument(data: model.reportPDF(id.map { [$0] }))
     }
 
     private var stopTrackingTitle: String {
@@ -114,6 +144,7 @@ enum BlueprintSheet: Identifiable, Hashable {
     case compare(UUID)
     case updateStarted(UUID)
     case notifications(UUID)
+    case findDevice
 
     var id: String {
         switch self {
@@ -121,6 +152,7 @@ enum BlueprintSheet: Identifiable, Hashable {
         case .compare(let id): "compare \(id)"
         case .updateStarted(let id): "started \(id)"
         case .notifications(let id): "notifications \(id)"
+        case .findDevice: "find device"
         }
     }
 }
