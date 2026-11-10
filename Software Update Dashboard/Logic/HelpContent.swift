@@ -55,10 +55,12 @@ nonisolated enum HelpContent {
         "Macs not supervised: on macOS, Apple allows the enforced update on supervised Macs only.",
         "No declarative device management: the Blueprint can’t reach these devices.",
         "Never reported: Jamf Pro has no status report of the device at all.",
+        "OS too old for update declarations: Apple’s update declaration starts at iOS and iPadOS 17 and macOS 14, so an older device can’t receive it. When Apple’s data gives its model a newer version, its diagnosis says so.",
     ])
 
     static let inspect = HelpTopic(id: "inspect", title: "Inspect", paragraphs: [
         "Inspect reads a device’s status report and its declaration reports from Jamf again, and lists every reason it may not update, the likely cause first.",
+        "Devices to check are those whose diagnosis needs someone to look at it, in any category; Inspect Devices to Check looks at them all. On the dashboard, Needs attention counts the Failed and Not started devices.",
         "An error from before the update started is listed but never given as the likely cause. A device on its target lists no errors from before it installed it.",
         "Where a finding is one of the known problems below, Inspect links to it.",
         "Inspect only reads: it never changes anything in Jamf.",
@@ -74,7 +76,7 @@ nonisolated enum HelpContent {
     static let problems: [KnownProblem] = [
         KnownProblem(
             id: "bootstrap-token", title: "Bootstrap Token Not Escrowed",
-            text: "On a Mac with Apple silicon, the bootstrap token lets the device management service authorize the install of a software update. Without an escrowed token, an enforced update can wait for someone to enter an administrator’s credentials on the Mac. The device detail shows the token’s status in Jamf Pro.",
+            text: "On a Mac with Apple silicon, the bootstrap token lets the device management service authorize the install of a software update. Without one, the Mac can ask the user for their credentials before it installs an enforced update. The device detail shows the token’s status in Jamf Pro.",
             sourceTitle: "Apple: Use secure token, bootstrap token, and volume ownership in deployments",
             source: url("https://support.apple.com/guide/deployment/use-secure-and-bootstrap-tokens-dep24dbdcf9e/web")),
         KnownProblem(
@@ -89,12 +91,12 @@ nonisolated enum HelpContent {
             source: url("https://support.apple.com/guide/deployment/install-and-enforce-software-updates-depd30715cbb/web")),
         KnownProblem(
             id: "battery", title: "Battery Too Low",
-            text: "Apple sets a minimum battery level for installing an update: for an automatic install, 30% on iPhone and iPad and 50% on a Mac. Downloading and preparing an automatic update needs the device to be connected to power.",
+            text: "Apple sets a minimum battery level for installing an update. iPhone and iPad: 20% for an update someone starts, 30% for an automatic one. Mac with Apple silicon: 20% and 50%. Mac with an Intel processor: 50% for both. Apple gives no figure for an enforced update. Downloading and preparing an automatic update needs the device to be connected to power.",
             sourceTitle: "Apple: About software updates for Apple devices",
             source: url("https://support.apple.com/guide/deployment/about-software-updates-depc4c80847a/web")),
         KnownProblem(
             id: "storage", title: "Not Enough Free Space",
-            text: "A device needs enough free space to download, prepare and install the update. When it hasn’t, the update fails and the device’s status report gives an error.",
+            text: "A device needs enough free space to download, prepare and install the update; without it the update can’t install. Free up space on the device.",
             sourceTitle: "Apple: About software updates for Apple devices",
             source: url("https://support.apple.com/guide/deployment/about-software-updates-depc4c80847a/web")),
         KnownProblem(
@@ -111,12 +113,19 @@ nonisolated enum HelpContent {
 
     static func problem(_ id: String) -> KnownProblem? { problems.first { $0.id == id } }
 
-    /// The known problem an Inspect finding names, if any.
-    static func problem(forCause cause: String, detail: String) -> KnownProblem? {
+    /// A clear failure to connect, the only update error that points at
+    /// Apple’s servers not being reachable; never a descriptor or asset
+    /// error, a bare “download” or “No update found”.
+    static let connectionFailure = "not being able to connect to the host|[Cc]ould ?n[o’']t connect|[Cc]annot connect|connection was lost|[Nn]etwork ?[Rr]equired|[Nn]ot connected to the [Ii]nternet|timed out|[Tt]imed ?[Oo]ut|[Hh]ost not found|could not be found"
+
+    /// The known problem an Inspect finding names, if any. `likely`: the
+    /// finding is the current likely cause; only then can an update error
+    /// point at Apple’s servers (never an earlier error).
+    static func problem(forCause cause: String, detail: String, likely: Bool = true) -> KnownProblem? {
         let id: String? = switch cause {
         case "Bootstrap token", "Bootstrap token not escrowed", "Earlier bootstrap token error": "bootstrap-token"
         case "Passcode": "passcode"
-        case "Low battery": "battery"
+        case "Low battery", "Battery under the automatic minimum": "battery"
         case "Low storage": "storage"
         case "User Enrollment", "Not supervised": "enrollment"
         case "Offline": "offline"
@@ -124,7 +133,7 @@ nonisolated enum HelpContent {
             if detail.range(of: "Passcode|Keybag", options: .regularExpression) != nil { "passcode" }
             else if detail.range(of: "[Bb]attery", options: .regularExpression) != nil { "battery" }
             else if detail.range(of: "[Dd]isk ?[Ss]pace|free space|[Ss]torage", options: .regularExpression) != nil { "storage" }
-            else if detail.range(of: "[Nn]etwork|[Dd]ownload|[Cc]atalog|[Tt]imed ?[Oo]ut|No update found", options: .regularExpression) != nil { "network-hosts" }
+            else if likely, cause == "Update error", detail.range(of: connectionFailure, options: .regularExpression) != nil { "network-hosts" }
             else { nil }
         default: nil
         }

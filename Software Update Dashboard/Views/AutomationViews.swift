@@ -110,10 +110,12 @@ struct AutomationLine: View {
     }
 
     static func text(_ automation: AutoRefresh) -> String {
-        let every = automation.hours == 1 ? "every hour" : "every \(automation.hours) hours"
+        let every = automation.hours == 0 ? "off" : automation.hours == 1 ? "every hour" : "every \(automation.hours) hours"
         var parts = ["Automatic refresh \(every)"]
         if automation.isRunning { parts.append("refreshing now") }
-        if let last = automation.lastRun { parts.append("last \(last.formatted(date: .omitted, time: .shortened))") }
+        if let last = automation.lastRun {
+            parts.append("last \(last.formatted(date: .omitted, time: .shortened))" + (automation.wasStopped ? ", stopped" : ""))
+        }
         if let next = automation.nextRun, !automation.isRunning {
             parts.append("next \(next.formatted(Calendar.current.isDateInToday(next) ? .dateTime.hour().minute() : .dateTime.weekday().hour().minute()))")
         }

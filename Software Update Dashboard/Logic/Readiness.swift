@@ -1,4 +1,5 @@
 import Foundation
+import JTKit
 
 /// Devices the Blueprint’s software update can’t reach as they are: each
 /// count on the dashboard opens those devices in the list.
@@ -13,6 +14,9 @@ nonisolated enum ReadinessCheck: String, CaseIterable, Identifiable, Hashable, S
     case noDeclarativeManagement
     /// Jamf Pro has no status report of the device at all.
     case neverReported
+    /// iOS or iPadOS 16 or earlier, macOS 13 or earlier: Apple’s software
+    /// update enforcement declaration starts at iOS 17 and macOS 14.
+    case osTooOld
 
     var id: String { rawValue }
 
@@ -22,6 +26,7 @@ nonisolated enum ReadinessCheck: String, CaseIterable, Identifiable, Hashable, S
         case .macNotSupervised: "Macs not supervised"
         case .noDeclarativeManagement: "No declarative device management"
         case .neverReported: "Never reported"
+        case .osTooOld: "OS too old for update declarations"
         }
     }
 
@@ -32,6 +37,7 @@ nonisolated enum ReadinessCheck: String, CaseIterable, Identifiable, Hashable, S
         case .macNotSupervised: "A Mac gets an enforced update only when it’s supervised"
         case .noDeclarativeManagement: "The Blueprint can’t reach these devices"
         case .neverReported: "No status report in Jamf Pro yet"
+        case .osTooOld: "Apple’s update declaration starts at iOS and iPadOS 17 and macOS 14"
         }
     }
 
@@ -41,6 +47,7 @@ nonisolated enum ReadinessCheck: String, CaseIterable, Identifiable, Hashable, S
         case .macNotSupervised: "lock.open"
         case .noDeclarativeManagement: "point.3.connected.trianglepath.dotted"
         case .neverReported: "questionmark.circle"
+        case .osTooOld: "clock.badge.exclamationmark"
         }
     }
 
@@ -52,7 +59,13 @@ nonisolated enum ReadinessCheck: String, CaseIterable, Identifiable, Hashable, S
         case .macNotSupervised: device.isComputer && device.supervised == false
         case .noDeclarativeManagement: device.ddmEnabled == false
         case .neverReported: device.neverReported == true
+        case .osTooOld: OSVersion(device.currentOS).map { Self.isTooOldForDeclarations($0, isComputer: device.isComputer) } ?? false
         }
+    }
+
+    /// Below the first version Apple’s software update enforcement declaration supports.
+    static func isTooOldForDeclarations(_ version: OSVersion, isComputer: Bool) -> Bool {
+        version.major < (isComputer ? 14 : 17)
     }
 
     static func count(_ check: ReadinessCheck, in devices: [DeviceStatus]) -> Int {

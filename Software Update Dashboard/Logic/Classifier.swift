@@ -268,7 +268,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var osName: String { Classifier.osName(isComputer: isComputer, modelIdentifier: modelIdentifier) }
 
     /// The diagnoses that need someone to look (summary, Inspect’s default selection).
-    static let attentionPattern = "^Downloaded.*not installed after|downloaded but not installed after|[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check|^Installing .*for more than|^Jamf’s update doesn’t cover|^Hasn’t fetched Jamf’s|^Update declaration (failed|invalid)"
+    static let attentionPattern = "too old for update declarations|^Download declined|passcode has to be entered|^Downloaded.*not installed after|downloaded but not installed after|[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check|^Installing .*for more than|^Jamf’s update doesn’t cover|^Hasn’t fetched Jamf’s|^Update declaration (failed|invalid)"
 
     var needsAttention: Bool { diagnosis.range(of: Self.attentionPattern, options: .regularExpression) != nil }
 
@@ -353,8 +353,10 @@ nonisolated enum Classifier {
 
         let error = shortError(status?.failure?.reason)
         let errorNow = failedSince ? error : ""
+        // the reason as the device wrote it too: a short error can lose the words that tell
+        let reasonNow = failedSince ? [status?.failure?.reason ?? "", errorNow].joined(separator: " ") : ""
         let blocker: String
-        if matches(errorNow, "Passcode|Keybag") { blocker = "the passcode" }
+        if matches(reasonNow, "Passcode|Keybag") { blocker = "the passcode (it has to be entered to install)" }
         else if matches(errorNow, "[Bb]attery") { blocker = "low battery (installs when charging)" }
         else if matches(errorNow, "MediaPlaying") { blocker = "media playing" }
         else if matches(errorNow, "NetworkRequired") { blocker = "no network" }
@@ -380,9 +382,12 @@ nonisolated enum Classifier {
         case state == .installing: diagnosis = "Installing now\(via)"
         case state == .prepared && !blocker.isEmpty: diagnosis = "Downloaded\(via), install blocked by \(blocker)"
         case state == .prepared: diagnosis = "Downloaded\(via), installs at the deadline"
+        case busy && blocker.hasPrefix("the passcode"): diagnosis = "Downloading\(via); the passcode has to be entered to install"
         case busy: diagnosis = "Downloading\(via)"
         case !blocker.isEmpty: diagnosis = "Install blocked by \(blocker)"
         case isFailed && errorNow.isEmpty: diagnosis = "Update failed (no error details)"
+        case matches(reasonNow, "[Cc]ellular") && matches(reasonNow, "[Dd]eclin|[Rr]efus|not allowed"):
+            diagnosis = "Download declined over a cellular connection: the device needs Wi-Fi"
         case matches(errorNow, "extractor|catalog|[Dd]ownload|[Tt]imed ?[Oo]ut|XPC|digested|[Nn]etwork"):
             diagnosis = "Download problem (device retries)"
         case errorNow == "No update found" || matches(errorNow, "NoUpdateFound|no update found"):
@@ -487,6 +492,14 @@ nonisolated enum Classifier {
                 with: status.pastDeadlineByGrace(now: base.now) ? "not installed after the deadline" : "installs now (the deadline has just passed)")
         }
         status.limitedByHardware = target.limitedByHardware
+        // Apple's update declaration starts at iOS and iPadOS 17 and macOS 14: an older OS can't
+        // receive it; when Apple's data gives the model a newer version, that is the diagnosis
+        if [.notStarted, .noActivity].contains(status.category), let current = OSVersion(status.currentOS),
+           ReadinessCheck.isTooOldForDeclarations(current, isComputer: status.isComputer),
+           let goal = target.osVersion, current < goal {
+            status.diagnosis = "\(status.osName) \(current) is too old for update declarations (Apple’s start at "
+                + (status.isComputer ? "macOS 14" : "iOS and iPadOS 17") + "): update it another way first"
+        }
         return status
     }
 

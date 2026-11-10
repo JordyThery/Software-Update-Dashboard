@@ -94,7 +94,7 @@ struct ClassificationTests {
             ("softwareupdate.failure-reason.timestamp", "2026-11-05T11:55:00"),
             ("passcode.is-present", "true")]), context: S.context(since: S.updateStarted))
         #expect(device.category == .inProgress)
-        #expect(device.diagnosis == "Downloaded, install blocked by the passcode")
+        #expect(device.diagnosis == "Downloaded, install blocked by the passcode (it has to be entered to install)")
         #expect(device.needsAttention)
         #expect(device.errorSinceUpdate == true)
         #expect(device.passcodePresent == true)

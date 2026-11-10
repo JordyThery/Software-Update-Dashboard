@@ -97,15 +97,31 @@ struct AutoRefreshTests {
         #expect(automation.nextRun == nil)
     }
 
-    @Test("Stop ends the run that is going on; automatic refresh stays on")
+    @Test("Stop ends the run that is going on: the Blueprint being read stops, the next isn’t read; automatic refresh stays on")
     func stop() async throws {
-        let (model, automation) = demoModel("auto-stop")
+        // Apple's release data takes seconds, so the run is caught in its first Blueprint
+        let connections = ConnectionsModel.preview(defaults: TestFiles.defaults("auto-stop"))
+        connections.demo.isOn = true
+        let model = DashboardModel(connections: connections, history: StatusHistory(folder: TestFiles.folder("auto-stop")),
+                                   releases: { try await Task.sleep(for: .seconds(20)); throw CancellationError() })
+        let keepAwake = KeepAwake()
+        keepAwake.hold = { 1 }
+        keepAwake.release = { _ in }
+        let automation = AutoRefresh(model: model, defaults: connections.defaults, keepAwake: keepAwake)
+        let tracked = model.trackedBlueprints
+        #expect(tracked.count == 2)
+        let started = Date()
         let run = Task { await automation.runOnce() }
-        await Task.yield()
+        for _ in 0..<200 where model.refreshing.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(model.refreshing == [tracked[0].id], "the run didn't start reading the first Blueprint")
         automation.stop()
         await run.value
-        #expect(!automation.isRunning)
-        #expect(model.trackedBlueprints.contains { model.errors[$0.id] == "Stopped." } || model.refreshing.isEmpty)
+        #expect(Date().timeIntervalSince(started) < 10, "Stop didn't end the run")
+        #expect(!automation.isRunning && automation.wasStopped)
+        #expect(model.errors[tracked[0].id] == "Stopped.")
+        // the second Blueprint was never read, and a Stop isn't an error
+        #expect(model.results[tracked[1].id] == nil && model.errors[tracked[1].id] == nil)
+        #expect(automation.lastError == nil)
     }
 
     @Test("The interval and the keep-awake choice are saved; anything else reads as off")
@@ -113,7 +129,11 @@ struct AutoRefreshTests {
         let defaults = TestFiles.defaults("auto-saved")
         let connections = ConnectionsModel.preview(defaults: defaults)
         let model = DashboardModel(connections: connections, history: StatusHistory(folder: TestFiles.folder("auto-saved")))
-        let automation = AutoRefresh(model: model, defaults: defaults)
+        // never the Mac's real hold in the test host
+        let keepAwake = KeepAwake()
+        keepAwake.hold = { 1 }
+        keepAwake.release = { _ in }
+        let automation = AutoRefresh(model: model, defaults: defaults, keepAwake: keepAwake)
         automation.sleep = { _ in throw CancellationError() }
         automation.hours = 8
         automation.keepsAwake = true

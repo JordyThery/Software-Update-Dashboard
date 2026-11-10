@@ -35,7 +35,7 @@ struct StatusSummaryTests {
         #expect(text.contains("  Changes since the previous refresh ("))
         #expect(text.contains("  Progress:   2 of 3 updatable devices on target (66.7%); updatable excludes unsupported, offline and no report\n"))
         #expect(text.contains("  Passcode:   1 online device not on target report a passcode\n"))
-        #expect(text.contains("  Needs attention: 1 device\n    Test iPad 3  iPad13,18  iPadOS 26.7.1  Downloaded, install blocked by the passcode\n"))
+        #expect(text.contains("  Devices to check: 1 device\n    Test iPad 3  iPad13,18  iPadOS 26.7.1  Downloaded, install blocked by the passcode\n"))
         #expect(!text.contains("!!"))
     }
 

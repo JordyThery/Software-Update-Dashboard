@@ -197,6 +197,19 @@ Order: A, B with C and M, L, D, G, I, J, K (as planned for 0.2 before the renumb
 - J, Export Report as PDF: the Blueprint on screen or all tracked Blueprints, A4, each section drawn whole (none cut across pages), from the dashboard’s own views; “— Demo” in its title and “(Demo)” in its file name in Demo Mode. A Blueprint not refreshed in the session says so.
 - K, Find a Device (⇧⌘F, toolbar, Device menu): serial number or name across the tracked Blueprints, from this session’s refresh, else the newest in the history; once per Blueprint; opens the device in its Blueprint’s device list with every filter off.
 
+**Fixes before the release** (on branch `0.3`, 2026-11-10, from the independent review in `_release-gate/SUD-0.3-review.md`, Jordy’s hand check of round 3 and an anonymized snapshot of the live tenant):
+
+- History: an index of every refresh’s counts per Blueprint (`counts.index`: counts, rule, scope, targets) for the chart; the newest full refresh found by file name and decoded alone; both read off the main thread into the model and kept until the next save. Full refreshes kept 7 days, then the newest of each day, up to 180 days; counts 180 days. Older history gets its index once. A test lays out 3,000 refreshes. The model follows the connection itself (also with the window closed).
+- Battery: low only with a battery error or under 20%; under 30% on iPhone and iPad an automatic install may wait. Help gives Apple’s figures as published (20% and 30% on iPhone and iPad, 20% and 50% on a Mac with Apple silicon, 50% and 50% on Intel, none for an enforced update).
+- Help links to “Apple’s Software Update Servers Not Reachable” only for a clear connection failure, and only from the current likely cause.
+- Minor updates: never hardware to replace for a release Apple ships to other models only.
+- Refresh: every step reports progress (“Reading Blueprint health, 3 of 18 declarations”); Refresh becomes Stop Refresh in the toolbar and the Blueprint menu (⌘.).
+- “Needs attention” is the dashboard’s group (Failed and Not started); the diagnosis-based list is “Devices to check” in the summary, the PDF and Inspect.
+- PDF: a Blueprint not refreshed in the session uses its newest saved refresh, with its date (without Blueprint health, which the history doesn’t keep); one never refreshed gets one line. Blueprint health names declarations by their versions only.
+- From the snapshot: Readiness “OS too old for update declarations” (iOS and iPadOS 16 or earlier, macOS 13 or earlier) and that diagnosis when Apple has a newer version for the model; “Download declined over a cellular connection”; a passcode that has to be entered to install, also while downloading.
+- Low findings fixed: Readiness doesn’t say all is well when Jamf Pro doesn’t report enrollment or supervision; two Help sentences said more than Apple’s pages; a Stop isn’t an error; the Overview line stays while a run goes on after automatic refresh was turned off; the connection change with only the menu bar item open. The Stop test can fail now.
+- Low findings left: the Mac earlier step matched by its deadline’s minutes (a label only; needs a design); the bootstrap finding on target (harmless); KeepAwake’s `deinit` (it lives as long as the app; its test no longer takes a real hold); notification names in Notification Center and a refused permission noticed only on saving (behavior to decide); a Blueprint a manual refresh reads is left to that refresh by automatic refresh; Find a Device opening a device that has left the scope.
+
 ### Later
 
 - Computer groups end to end (the readers are in JTKit 1.5.0).

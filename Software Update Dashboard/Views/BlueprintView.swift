@@ -56,6 +56,22 @@ struct BlueprintView: View {
             }
         }
         .safeAreaInset(edge: .top) {
+            // reading again over the refresh on screen: every step, so it never sits at a finished count
+            if model.results[tracked.id] != nil, model.refreshing.contains(tracked.id) {
+                HStack(spacing: 8) {
+                    // determinate when the step counts something
+                    if let step = model.progress[tracked.id], step.total > 0 {
+                        ProgressView(value: Double(step.done), total: Double(step.total)).progressViewStyle(.linear).frame(width: 120)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(model.progress[tracked.id]?.text ?? "Reading from Jamf…").font(.callout)
+                    Spacer()
+                }
+                .padding(.horizontal, 20).padding(.vertical, 6)
+                .background(.bar)
+                .accessibilityElement(children: .combine)
+            }
             // a refresh that stopped keeps the previous one on screen: say so
             if let result = model.results[tracked.id], !model.refreshing.contains(tracked.id) {
                 if let error = model.errors[tracked.id] {
@@ -90,8 +106,14 @@ struct BlueprintView: View {
                 .help("Save the device list, the summary or a PDF report")
             }
             ToolbarItem {
+                // the same size either way: Refresh, or Stop while it reads
                 if model.refreshing.contains(tracked.id) {
-                    ProgressView().controlSize(.small).help("Reading from Jamf")
+                    Button {
+                        model.stopRefresh(tracked.id)
+                    } label: {
+                        Label("Stop Refresh", systemImage: "stop.fill")
+                    }
+                    .help("Stop reading from Jamf (\(model.progress[tracked.id]?.text ?? "starting"))")
                 } else {
                     Button {
                         Task { await model.refresh(tracked.id) }
@@ -194,14 +216,15 @@ struct ReadingProgress: View {
         VStack(spacing: 8) {
             if let progress = model.progress[id], progress.total > 0 {
                 ProgressView(value: Double(progress.done), total: Double(progress.total)) {
-                    Text("Reading status reports")
+                    Text(progress.step)
                 } currentValueLabel: {
-                    Text("\(progress.done) of \(Plural.count(progress.total, "device"))")
+                    Text("\(progress.done) of \(progress.total) \(progress.unit)")
                 }
                 .frame(maxWidth: 320)
             } else {
-                ProgressView("Reading from Jamf…")
+                ProgressView(model.progress[id]?.step ?? "Reading from Jamf…")
             }
+            Button("Stop Refresh") { model.stopRefresh(id) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -388,8 +411,13 @@ struct ReadinessSection: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Readiness").font(.headline)
             if ReadinessCheck.allCases.allSatisfy({ ReadinessCheck.count($0, in: devices) == 0 }) {
-                Text("No device is enrolled with User Enrollment, every Mac is supervised, and every device uses declarative device management and has reported.")
+                // all clear only for what the inventory says: an unknown enrollment or supervision isn't "fine"
+                let unknown = devices.filter { $0.isComputer ? $0.supervised == nil : $0.userEnrollment == nil }.count
+                Text(unknown == 0
+                     ? "All devices are ready for the update."
+                     : "No device is held back, but Jamf Pro doesn’t report the enrollment or supervision of \(Plural.count(unknown, "device")).")
                     .foregroundStyle(.secondary)
+                    .help(ReadinessCheck.allCases.map(\.title).joined(separator: ", ") + ": none")
             } else {
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 6) {
                     ForEach(ReadinessCheck.allCases) { check in
@@ -465,7 +493,7 @@ struct MajorsSection: View {
 /// The five progress groups per refresh, with the refreshes where the
 /// counts stop comparing marked by number and listed under the chart.
 struct HistoryChart: View {
-    let snapshots: [HistorySnapshot]
+    let snapshots: [HistoryEntry]
 
     private var marks: [HistoryMark] { HistoryMark.marks(snapshots) }
 
@@ -547,6 +575,15 @@ struct HistoryChart: View {
 /// most common reason.
 struct BlueprintHealthSection: View {
     let result: RefreshResult
+    /// In the Blueprint’s own section of a report: each declaration by its
+    /// versions only (“macOS 27.0 to 27.2”), without the Blueprint’s name.
+    var versionsOnly = false
+
+    private func name(_ declaration: String) -> String {
+        guard versionsOnly else { return declaration }
+        let prefix = result.blueprintName + ", "
+        return declaration.hasPrefix(prefix) ? String(declaration.dropFirst(prefix.count)) : declaration
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -565,7 +602,7 @@ struct BlueprintHealthSection: View {
                         ForEach(health.declarations) { declaration in
                             GridRow {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(declaration.name)
+                                    Text(name(declaration.name))
                                     if declaration.notForDevice > 0 {
                                         Text("Not for \(Plural.count(declaration.notForDevice, "device")), by its condition")
                                             .font(.caption).foregroundStyle(.secondary)

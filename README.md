@@ -31,7 +31,7 @@ A read-only Mac app that shows, for the devices a Blueprint is scoped to, whethe
 - **History** of every refresh, per tracked Blueprint.
 - **Unsupported hardware** with a replacement list: the model, how many devices, and the last version it can run.
 - **Deadlines per time zone:** the deadline is each device’s local time, and unusual time zones are pointed out. Jamf Pro has no time zone for Macs, so a Mac’s computed deadline is measured in this Mac’s time zone. A downloaded update counts as stuck 4 hours after its deadline, and an install as long after 4 hours; status times are read in the connection’s Jamf Pro server time zone, so set that zone correctly.
-- **Exports:** the device list as CSV, a summary, and a report as PDF of the Blueprint on screen or all tracked Blueprints: what the dashboard shows and the devices needing attention, from the last refresh.
+- **Exports:** the device list as CSV, a summary, and a report as PDF of the Blueprint on screen or all tracked Blueprints: what the dashboard shows and the devices to check, from the last refresh.
 - **Automatic refresh** (Settings › Automation): every 1, 4 or 8 hours, every tracked Blueprint one after another, each refresh kept in the history. It can keep the Mac awake while it’s on power, and after a sleep it catches up once.
 - **Notifications** per tracked Blueprint (Blueprint › Notifications…): when the share on target reaches or drops below a level you choose, and when devices are newly failed or stuck.
 - **Menu bar and login** (Settings › General): a menu bar item with each tracked Blueprint’s share on target, Refresh All and Open Window, and Open at Login.

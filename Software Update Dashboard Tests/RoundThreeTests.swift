@@ -55,7 +55,7 @@ struct HelpTests {
         #expect(HelpContent.problem(forCause: "Earlier step of this Blueprint", detail: "") == nil)
     }
 
-    @Test("Low battery follows Apple’s figure for an automatic install on iPhone and iPad: under 30%")
+    @Test("Battery: under Apple’s 30% for an automatic install on iPhone and iPad it may wait; low only under 20%")
     func battery() {
         func findings(_ level: Int) -> [String] {
             var member = Sample.iPad()
@@ -66,8 +66,9 @@ struct HelpTests {
                                             context: InspectContext(blueprintID: "6a2f0000-1111-4000-8000-00000000c0de", target: nil,
                                                                     since: nil, now: Sample.now, serverTimeZone: Sample.utc)).findings.map(\.cause)
         }
-        #expect(findings(29).contains("Low battery"))
-        #expect(!findings(35).contains("Low battery"))
+        #expect(findings(29).contains("Battery under the automatic minimum") && !findings(29).contains("Low battery"))
+        #expect(findings(19).contains("Low battery"))
+        #expect(!findings(35).contains("Low battery") && !findings(35).contains("Battery under the automatic minimum"))
     }
 }
 
@@ -127,7 +128,7 @@ struct ReportPDFTests {
             let date = try #require(model.results[tracked.id]?.date)
             #expect(text.contains("Refresh of \(date.formatted(date: .long, time: .shortened))"))
         }
-        let missing = ["Readiness", "By Major Release", "Blueprint Health", "Deadline per Time Zone", "Devices Needing Attention", "History"]
+        let missing = ["Readiness", "By Major Release", "Blueprint Health", "Deadline per Time Zone", "Devices to Check", "History"]
             .filter { !text.contains($0) }
         #expect(missing.isEmpty, "missing: \(missing)")
         // a device needing attention, with its diagnosis

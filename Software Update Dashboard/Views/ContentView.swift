@@ -95,9 +95,6 @@ struct ContentView: View {
         .onChange(of: model.deviceToShow) {
             if model.deviceToShow != nil { page = .devices }
         }
-        .onChange(of: connections.inUseKey) {
-            model.connectionChanged()
-        }
         .focusedSceneValue(\.blueprintFocus, BlueprintFocus(
             model: model, page: selectedID != nil ? $page : nil, sheet: $sheet,
             export: selectedID != nil ? { exportRequest = $0 } : nil, exportPDF: exportPDF, stopTracking: $stopTracking))

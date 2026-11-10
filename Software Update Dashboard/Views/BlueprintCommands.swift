@@ -52,11 +52,16 @@ struct BlueprintCommands: Commands {
             Button("Track a Blueprint…") { focus?.sheet.wrappedValue = .track }
                 .disabled(focus == nil || focus?.model.connectionID == nil || isDemo || focus?.model.canChangeTracked == false)
             Divider()
-            Button("Refresh") {
-                if let id = selectedID, let model = focus?.model { Task { await model.refresh(id) } }
+            if let id = selectedID, focus?.model.refreshing.contains(id) == true {
+                Button("Stop Refresh") { focus?.model.stopRefresh(id) }
+                    .keyboardShortcut(".")
+            } else {
+                Button("Refresh") {
+                    if let id = selectedID, let model = focus?.model { Task { await model.refresh(id) } }
+                }
+                .keyboardShortcut("r")
+                .disabled(selectedID == nil)
             }
-            .keyboardShortcut("r")
-            .disabled(selectedID == nil || focus?.model.refreshing.contains(selectedID!) == true)
             Button("Refresh All") {
                 if let model = focus?.model { Task { await model.refreshAll() } }
             }
@@ -74,7 +79,7 @@ struct BlueprintCommands: Commands {
             Button("Notifications…") { if let id = selectedID { focus?.sheet.wrappedValue = .notifications(id) } }
                 .disabled(selectedID == nil)
             Divider()
-            Button("Inspect Devices Needing Attention") {
+            Button("Inspect Devices to Check") {
                 guard let id = selectedID, let model = focus?.model, let result else { return }
                 Task { await model.inspect(InspectWorkflow.select(result.devices), in: id) }
             }

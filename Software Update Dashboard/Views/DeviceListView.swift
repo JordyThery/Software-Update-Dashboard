@@ -88,11 +88,11 @@ struct DeviceListView: View {
                     .accessibilityLabel("Remove filter: \(readiness.title)")
                 }
                 Spacer()
-                Button("Inspect Devices Needing Attention") {
+                Button("Inspect Devices to Check") {
                     inspect(Set(InspectWorkflow.select(result.devices).map(\.id)))
                 }
                 .disabled(InspectWorkflow.select(result.devices).isEmpty || model.isInspecting(in: result.tracked.id))
-                .help("Look for the likely cause on every device whose diagnosis needs attention")
+                .help("Look for the likely cause on every device to check: those whose diagnosis needs someone to look at it")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -306,7 +306,7 @@ struct DeviceDetailView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(finding.cause)
                                 Text(finding.detail).foregroundStyle(.secondary)
-                                if let problem = HelpContent.problem(forCause: finding.cause, detail: finding.detail) {
+                                if let problem = HelpContent.problem(forCause: finding.cause, detail: finding.detail, likely: false) {
                                     KnownProblemLink(problem: problem)
                                 }
                             }

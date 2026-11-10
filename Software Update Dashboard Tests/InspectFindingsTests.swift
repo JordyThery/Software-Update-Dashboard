@@ -43,7 +43,7 @@ struct InspectFindingsTests {
         #expect(result.cause == "User Enrollment")
         let all = result.findings.map { "\($0.cause): \($0.detail)" }
         #expect(all.contains("Low storage: 2.1 GB free of 62.5 GB"))
-        #expect(all.contains("Low battery: 25% at the last inventory; an automatic install needs at least 30%"))
+        #expect(all.contains("Battery under the automatic minimum: 25% at the last inventory: an automatic install may wait for charging (Apple asks for 30% on iPhone and iPad)"))
     }
 
     @Test("A failed download: the device's own error is the likely cause, and low battery isn't listed for a download")
