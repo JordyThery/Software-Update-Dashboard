@@ -94,6 +94,12 @@ nonisolated struct RefreshResult: Sendable {
     var coverage: Coverage?
     /// What couldn’t be read but didn’t stop the refresh, e.g. Apple’s release data.
     var problems: [String]
+    /// How the Blueprint’s declarations stand across its devices; nil when
+    /// they couldn’t be read. Not kept in the history.
+    var health: BlueprintHealth?
+
+    /// Devices on a version the Blueprint’s update doesn’t cover yet.
+    var notCoveredCount: Int { devices.filter { $0.notCoveredBy != nil }.count }
 
     var counts: CategoryCounts { CategoryCounts(devices) }
     var pastDeadline: Int { devices.filter { $0.pastDeadline == true }.count }
@@ -147,7 +153,33 @@ nonisolated struct RefreshWorkflow: Sendable {
         }
 
         let inputs = try await statuses(members, progress: progress)
-        let devices = inputs.map { input in classify(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now) }
+        // the Blueprint's declarations, as the devices list them: each read once, for every device
+        let declarations = await declarationReports(tracked.blueprintID, inputs: inputs)
+        var deviceIDs: [String: String] = [:]
+        for input in inputs {
+            if let platformID = input.platformDeviceID?.lowercased() { deviceIDs[platformID] = Self.key(input.member) }
+        }
+        let tied = BlueprintHealth.byDevice(declarations.reports, deviceIDs: deviceIDs)
+        var devices = inputs.map { input in
+            classify(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now,
+                     awaitingSync: BlueprintHealth.isAwaitingSync(tied.reports[Self.key(input.member)] ?? []))
+        }
+        var health: BlueprintHealth?
+        if declarations.problem == nil {
+            let built = BlueprintHealth.make(byDevice: tied.reports, devices: devices, blueprintName: blueprint.overview.name,
+                                             blueprintID: tracked.blueprintID, unmatchedDevices: tied.unmatched,
+                                             devicesWithoutPlatformID: inputs.filter { $0.platformDeviceID == nil }.count)
+            // the cause where nothing else explains it: the list says it
+            for index in devices.indices {
+                guard let ranges = built.notCovered[devices[index].id],
+                      BlueprintHealth.explainedCategories.contains(devices[index].category) else { continue }
+                devices[index].notCoveredBy = ranges
+                devices[index].diagnosis = BlueprintHealth.notCoveredDiagnosis(devices[index])
+            }
+            health = built
+        } else if let problem = declarations.problem {
+            problems.append("The Blueprint’s declaration reports couldn’t be read: \(problem)")
+        }
 
         var coverage: Coverage?
         if let compare = tracked.compareGroup {
@@ -166,12 +198,42 @@ nonisolated struct RefreshWorkflow: Sendable {
                 TargetRules.newestRelease(catalog, device.isComputer ? .macOS : .iOS, model: device.modelIdentifier,
                                           boardID: device.boardID, knownOnly: true)?.version.description
             },
-            coverage: coverage, problems: problems)
+            coverage: coverage, problems: problems, health: health)
+    }
+
+    /// Each of the Blueprint’s declarations the devices list, read once
+    /// (its devices’ reports), a few at a time. A refusal stops the reading
+    /// and is returned as the problem; a declaration nothing reported gives none.
+    func declarationReports(_ blueprintID: String,
+                            inputs: [DeviceInput]) async -> (reports: [JamfPlatform.DeclarationReport], problem: String?) {
+        let identifiers = BlueprintHealth.identifiers(blueprintID: blueprintID, statuses: inputs.map(\.status))
+        do {
+            var reports: [JamfPlatform.DeclarationReport] = []
+            try await withThrowingTaskGroup(of: [JamfPlatform.DeclarationReport].self) { group in
+                var next = 0
+                func start() {
+                    guard next < identifiers.count else { return }
+                    let identifier = identifiers[next]
+                    next += 1
+                    group.addTask { try await client.declarationReports(declarationIdentifier: identifier) ?? [] }
+                }
+                for _ in 0..<max(1, parallel) { start() }
+                while let found = try await group.next() {
+                    reports += found
+                    start()
+                }
+            }
+            return (reports, nil)
+        } catch is CancellationError {
+            return ([], "Stopped")
+        } catch {
+            return ([], error.localizedDescription)
+        }
     }
 
     /// One device against its own target.
     func classify(_ input: DeviceInput, blocks: [JamfPlatform.SoftwareUpdateBlock], blueprint: JamfPlatform.BlueprintDetail,
-                  tracked: TrackedBlueprint, now: Date) -> DeviceStatus {
+                  tracked: TrackedBlueprint, now: Date, awaitingSync: Bool = false) -> DeviceStatus {
         let member = input.member
         let platform: AppleReleases.Platform = member.kind == .computer ? .macOS : .iOS
         let model = member.modelIdentifier ?? input.status?.modelIdentifier
@@ -193,6 +255,11 @@ nonisolated struct RefreshWorkflow: Sendable {
                                                 TargetRules.ruleDeadline(for: version, block: block, catalog: catalog, platform: platform,
                                                                          model: model, boardID: input.status?.deviceID)
                                             },
+                                            earlierStepWindow: { [catalog] version in
+                                                TargetRules.ruleWindow(for: version, block: block, catalog: catalog, platform: platform,
+                                                                       model: model, boardID: input.status?.deviceID, now: now)
+                                            },
+                                            awaitingSync: awaitingSync,
                                             timeZone: member.timeZone, now: now)
         // hardware that can't run the newest major stays on the list to
         // replace, whichever source gave its target
@@ -222,7 +289,7 @@ nonisolated struct RefreshWorkflow: Sendable {
                     }
                     do {
                         let status = try await client.softwareUpdateStatus(managementID: managementID, kind: member.kind)
-                        return (index, DeviceInput(member: member, status: status))
+                        return (index, DeviceInput(member: member, status: status, platformDeviceID: await platformID(member)))
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch {
@@ -238,6 +305,14 @@ nonisolated struct RefreshWorkflow: Sendable {
             }
         }
         return members.indices.compactMap { inputs[$0] }
+    }
+
+    /// The device’s Platform API ID, found by its serial number, to tie its
+    /// declaration reports to it; nil when it isn’t found or the lookup fails
+    /// (its reports are then left out, and counted).
+    func platformID(_ member: JamfPro.GroupMember) async -> String? {
+        guard let serial = member.serialNumber, !serial.isEmpty else { return nil }
+        return try? await client.device(serial: serial)?.id
     }
 
     /// A device by kind and Jamf Pro number: a Mac and an iPad can share a number.

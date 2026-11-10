@@ -111,7 +111,9 @@ final class DemoSmokeUITests: JTKitUITestCase {
         XCTAssertTrue(app.outlines.staticTexts[macBlueprint].exists, "The other Blueprint went too")
     }
 
-    /// Both exports save a file: the device list as CSV and the summary.
+    /// Both exports save a file: the device list as CSV and the summary,
+    /// each only once the Save panel shows this test's own folder
+    /// (JTKit's `saveInTestFolder`).
     func test10Exports() throws {
         openBlueprint(iPadBlueprint)
         XCTAssertTrue(anyContaining("updatable devices on their target").waitForExistence(timeout: 30), "The dashboard didn't load")
@@ -159,24 +161,6 @@ final class DemoSmokeUITests: JTKitUITestCase {
         tap(app.menuItems[situation])
     }
 
-    /// The sandboxed app's Save panel opens in its own last folder: go to
-    /// this test's folder first, and save only once the panel shows it
-    /// (its name, `JTKitUITest-…`, in the Where menu). Otherwise the panel
-    /// is canceled and the test fails, so nothing lands among the user's files.
-    private func saveInTestFolder() throws {
-        XCTAssertTrue(app.buttons["OKButton"].firstMatch.waitForExistence(timeout: 15), "No Save panel opened")
-        goToFolder(testFolder.path)
-        let name = testFolder.lastPathComponent
-        let shown = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "value == %@ OR label == %@ OR title == %@", name, name, name)).firstMatch
-        guard shown.waitForExistence(timeout: 5) else {
-            app.buttons["CancelButton"].firstMatch.click()
-            XCTFail("The Save panel doesn't show the test's folder: canceled, nothing saved")
-            throw SavePanelNotInTestFolder()
-        }
-        saveInChosenFolder()
-    }
-
     /// A device's name in the device table (SwiftUI exposes a text as its value).
     private func deviceRow(_ name: String) -> XCUIElement {
         // SwiftUI's Table is exposed as an outline, like the sidebar
@@ -199,6 +183,3 @@ final class DemoSmokeUITests: JTKitUITestCase {
         return nil
     }
 }
-
-/// The Save panel wasn't in the test's own folder (`saveInTestFolder`).
-private struct SavePanelNotInTestFolder: Error {}

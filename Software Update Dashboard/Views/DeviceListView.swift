@@ -128,20 +128,31 @@ struct DeviceDetailView: View {
     let model: DashboardModel
     let result: RefreshResult
     let device: DeviceStatus
+    @State private var showsStatusItems = false
 
     var body: some View {
         Form {
             Section {
                 LabeledContent("Category") { StatusBadge(device.category.title, style: device.category.badgeStyle) }
                 Text(device.diagnosis)
+                if let ranges = device.notCoveredBy {
+                    Text("The Blueprint’s update declarations for this hardware cover \(ranges), not \(device.currentOS). "
+                         + "Jamf sets these ranges; until it widens them, the device gets no update from this Blueprint.")
+                        .foregroundStyle(.secondary)
+                }
             }
             Section("Device") {
                 LabeledContent("Serial number", value: device.serial)
                 LabeledContent("Model", value: device.model.isEmpty ? device.modelIdentifier : "\(device.model) (\(device.modelIdentifier))")
                 LabeledContent("\(device.osName) reported", value: device.reportedOS ?? "–")
                 LabeledContent("In inventory", value: device.inventoryOS ?? "–")
+                if let response = device.rapidSecurityResponse {
+                    LabeledContent("Rapid Security Response",
+                                   value: response + (device.supplementalBuild.map { ", build \($0)" } ?? ""))
+                }
                 LabeledContent("Time zone", value: device.timeZone ?? (device.isComputer ? "Not in Jamf Pro for Macs" : "Not reported"))
                 if device.isComputer {
+                    LabeledContent("FileVault", value: DeviceDetailText.fileVault(device.fileVault))
                     LabeledContent("Bootstrap token", value: DeviceDetailText.bootstrap(device.bootstrapToken))
                     // only a Mac with Apple silicon needs the token to install an enforced update
                     if device.bootstrapToken?.uppercased() == "NOT_ESCROWED",
@@ -149,6 +160,10 @@ struct DeviceDetailView: View {
                            appleSilicon: DeviceDetailText.isAppleSilicon(model: device.modelIdentifier, boardID: device.boardID)) {
                         WarningLabel(why)
                     }
+                }
+                LabeledContent("Battery health", value: DeviceDetailText.batteryHealth(device.batteryHealth))
+                if DeviceDetailText.batteryNeedsService(device.batteryHealth) {
+                    WarningLabel("The battery needs service")
                 }
                 LabeledContent("Last contact") {
                     if let date = device.lastContact { Text(date, format: .relative(presentation: .named)) } else { Text("Never") }
@@ -203,8 +218,15 @@ struct DeviceDetailView: View {
             Section("Software Update") {
                 LabeledContent("Install state", value: DeviceDetailText.installState(device.installState))
                 LabeledContent("Pending version", value: device.pendingVersion ?? "–")
+                if device.installReason != nil {
+                    LabeledContent("Started by", value: DeviceDetailText.installReason(device.installReason))
+                }
+                if let beta = device.betaEnrollment {
+                    LabeledContent("Beta program", value: beta)
+                }
                 if !device.error.isEmpty {
                     LabeledContent("Last error", value: device.error)
+                    if let failures = failureText { LabeledContent("Failures", value: failures) }
                     LabeledContent("Since the update started", value: device.errorSinceUpdate == true ? "Yes" : "No")
                 }
                 LabeledContent("Passcode", value: device.passcodePresent.map { $0 ? "Present" : "None" } ?? "–")
@@ -212,6 +234,8 @@ struct DeviceDetailView: View {
                     if let date = device.statusUpdated { Text(date, format: .relative(presentation: .named)) } else { Text("–") }
                 }
                 if let problem = device.statusProblem { WarningLabel(problem) }
+                Button("Show All Status Items…") { showsStatusItems = true }
+                    .help("Reads every item of the device’s status report from Jamf now; nothing is kept")
             }
             Section("Inspect") {
                 if model.isInspecting(device, in: result.tracked.id) {
@@ -233,6 +257,14 @@ struct DeviceDetailView: View {
                             }
                         }
                     }
+                    if !inspection.declarations.isEmpty {
+                        Text("The Blueprint’s Declarations (\(inspection.declarations.count))")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                        // names are unique (BlueprintHealth.uniqueNames): never the row numbers the list above uses
+                        ForEach(inspection.declarations, id: \.name) { line in
+                            LabeledContent(line.name) { Text(line.state).multilineTextAlignment(.trailing) }
+                        }
+                    }
                 }
                 if let error = model.inspectError { WarningLabel(error) }
                 Button(model.inspection(of: device, in: result.tracked.id) == nil ? "Inspect" : "Inspect Again") {
@@ -243,6 +275,18 @@ struct DeviceDetailView: View {
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $showsStatusItems) {
+            StatusItemsView(model: model, trackedID: result.tracked.id, device: device)
+        }
+    }
+
+    /// “3, last 9 Nov 2026 at 10:00”: the failure count and when it last
+    /// failed, in this Mac’s time; nil without either.
+    private var failureText: String? {
+        let when = device.errorTime.flatMap { JamfPro.serverDate($0, timeZone: model.connections.serverTimeZone) }
+            .map { "last \($0.formatted(date: .abbreviated, time: .shortened))" }
+        let parts = [device.failureCount.map(String.init), when].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
     /// Apple dates a release by its day: “26 Oct 2026”, without a time,

@@ -230,8 +230,12 @@ struct DashboardView: View {
                 RuleSection(model: model, result: result, sheet: $sheet)
                 ForEach(result.problems, id: \.self) { WarningLabel($0).font(.callout) }
                 ProgressSection(counts: result.counts, pastDeadline: result.pastDeadline)
+                if let line = BlueprintHealth.dashboardLine(result.notCoveredCount) {
+                    WarningLabel(line + ".").font(.callout)
+                }
                 CategoryGrid(counts: result.counts)
                 MajorsSection(result: result)
+                BlueprintHealthSection(result: result)
                 HistoryChart(snapshots: model.snapshots(result.tracked.id))
                 DeadlineZonesSection(result: result)
                 if !result.replacements.isEmpty { ReplacementSection(result: result) }
@@ -481,6 +485,85 @@ struct HistoryChart: View {
                 }
             }
         }
+    }
+}
+
+/// Each of the Blueprint’s declarations by name, with how many devices
+/// report it applied, pending, awaiting sync, failed or invalid, and the
+/// most common reason.
+struct BlueprintHealthSection: View {
+    let result: RefreshResult
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Blueprint Health").font(.headline)
+            if let health = result.health {
+                if health.declarations.isEmpty {
+                    Text("No device reports one of the Blueprint’s declarations yet.").foregroundStyle(.secondary)
+                } else {
+                    Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 6) {
+                        GridRow {
+                            Text("Declaration"); Text("Applied"); Text("Pending"); Text("Awaiting sync"); Text("Failed"); Text("Invalid")
+                            Text("Most common reason")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        ForEach(health.declarations) { declaration in
+                            GridRow {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(declaration.name)
+                                    if declaration.notForDevice > 0 {
+                                        Text("Not for \(Plural.count(declaration.notForDevice, "device")), by its condition")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                                count(declaration.applied)
+                                count(declaration.pending)
+                                count(declaration.awaitingSync)
+                                count(declaration.failed, warns: true)
+                                count(declaration.invalid, warns: true)
+                                Text(declaration.commonReason.map { "\($0) (\(Plural.count(declaration.commonReasonCount, "device")))" } ?? "–")
+                                    .font(.callout)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
+                    }
+                }
+                if health.unmatchedDevices > 0 || health.devicesWithoutPlatformID > 0 {
+                    Text(Self.unmatchedNote(health)).font(.caption).foregroundStyle(.secondary)
+                }
+                Text("Read once per refresh for each declaration the devices list. Inspect shows them for one device.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("The Blueprint’s declaration reports couldn’t be read in this refresh.").foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// A number, with the warning sign when a problem count isn’t zero (never by color alone).
+    @ViewBuilder
+    private func count(_ value: Int, warns: Bool = false) -> some View {
+        if warns && value > 0 {
+            Label("\(value)", systemImage: "exclamationmark.triangle.fill")
+                .symbolRenderingMode(.multicolor)
+                .monospacedDigit()
+        } else {
+            Text("\(value)").monospacedDigit().foregroundStyle(value == 0 ? .secondary : .primary)
+        }
+    }
+
+    /// Reports left out because they couldn’t be tied to a device in the list.
+    static func unmatchedNote(_ health: BlueprintHealth) -> String {
+        var parts: [String] = []
+        if health.devicesWithoutPlatformID > 0 {
+            parts.append("\(Plural.count(health.devicesWithoutPlatformID, "device")) of the list \(health.devicesWithoutPlatformID == 1 ? "isn’t" : "aren’t") "
+                         + "in the Platform device list by serial number")
+        }
+        if health.unmatchedDevices > 0 {
+            parts.append("reports of \(Plural.count(health.unmatchedDevices, "device")) outside the list")
+        }
+        return "Left out: " + parts.joined(separator: "; ") + "."
     }
 }
 

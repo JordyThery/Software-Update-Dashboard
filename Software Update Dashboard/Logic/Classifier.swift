@@ -10,11 +10,16 @@ nonisolated struct DeviceInput: Sendable, Hashable {
     /// Why the report couldn’t be read (anything but “none yet”), e.g. a
     /// missing permission.
     var statusProblem: String?
+    /// The Platform API’s device ID, found by serial number; nil when the
+    /// serial isn’t in the Platform device list.
+    var platformDeviceID: String?
 
-    init(member: JamfPro.GroupMember, status: JamfPro.SoftwareUpdateStatus? = nil, statusProblem: String? = nil) {
+    init(member: JamfPro.GroupMember, status: JamfPro.SoftwareUpdateStatus? = nil, statusProblem: String? = nil,
+         platformDeviceID: String? = nil) {
         self.member = member
         self.status = status
         self.statusProblem = statusProblem
+        self.platformDeviceID = platformDeviceID
     }
 }
 
@@ -137,6 +142,20 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var earlierStepLocal: String?
     /// The step’s own deadline has passed: it is the target again, late.
     var earlierStepLapsed: Bool?
+    /// A Rapid Security Response the device runs (`(a)`), and its build.
+    var rapidSecurityResponse: String?
+    var supplementalBuild: String?
+    /// The beta program the device is enrolled in, if any.
+    var betaEnrollment: String?
+    /// Why the pending update was started: `declaration`, `mdm`, …, comma-separated.
+    var installReason: String?
+    /// A Mac’s FileVault as Jamf Pro reports its boot volume: `ENCRYPTED`, `UNENCRYPTED`, …
+    var fileVault: String?
+    /// Battery health from the status report, else the inventory.
+    var batteryHealth: String?
+    /// The Blueprint’s version ranges for this hardware, none of which
+    /// covers the version the device runs (“macOS 27.0 to 27.0.1”).
+    var notCoveredBy: String?
 
     /// The device by kind and number: a Mac and an iPad can share a number.
     var id: String { "\(isComputer ? "computer" : "mobileDevice")/\(jamfID)" }
@@ -189,6 +208,13 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case earlierStepDeadline
         case earlierStepLocal
         case earlierStepLapsed
+        case rapidSecurityResponse
+        case supplementalBuild
+        case betaEnrollment
+        case installReason
+        case fileVault
+        case batteryHealth
+        case notCoveredBy
     }
 
     /// The newer of the version the device reports and the one in its
@@ -214,7 +240,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var osName: String { Classifier.osName(isComputer: isComputer, modelIdentifier: modelIdentifier) }
 
     /// The diagnoses that need someone to look (summary, Inspect’s default selection).
-    static let attentionPattern = "^Downloaded.*not installed after|downloaded but not installed after|[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check|^Installing .*for more than"
+    static let attentionPattern = "^Downloaded.*not installed after|downloaded but not installed after|[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check|^Installing .*for more than|^Jamf’s update doesn’t cover"
 
     var needsAttention: Bool { diagnosis.range(of: Self.attentionPattern, options: .regularExpression) != nil }
 
@@ -222,7 +248,8 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     static let csvColumns = ["jamf_pro_id", "kind", "name", "serial", "model", "model_id", "inventory_os", "reported_os",
                              "target", "deadline", "deadline_source", "past_deadline", "install_state", "pending_version", "category",
                              "diagnosis", "error", "error_time", "error_since_update", "passcode_present", "last_contact",
-                             "status_updated", "time_zone"]
+                             "status_updated", "time_zone", "rapid_security_response", "beta_enrollment", "install_reason",
+                             "failure_count", "filevault", "battery_health"]
 
     var csvLine: String {
         func date(_ value: Date?) -> String { value.map { $0.formatted(.iso8601) } ?? "" }
@@ -234,7 +261,8 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
                          installState ?? "",
                          pendingVersion ?? "", category.rawValue, diagnosis, error, errorTime ?? "", flag(errorSinceUpdate),
                          passcodePresent.map { $0 ? "true" : "false" } ?? "", date(lastContact), date(statusUpdated),
-                         timeZone ?? ""])
+                         timeZone ?? "", rapidSecurityResponse ?? "", betaEnrollment ?? "", installReason ?? "",
+                         failureCount.map(String.init) ?? "", fileVault ?? "", batteryHealth ?? ""])
     }
 }
 
@@ -346,7 +374,13 @@ nonisolated enum Classifier {
             errorSinceUpdate: failTime == nil ? nil : failedSince, passcodePresent: status?.passcodePresent ?? member.passcodePresent,
             lastContact: member.lastSeen, statusUpdated: updated, timeZone: member.timeZone, managementID: member.managementID,
             category: category, diagnosis: diagnosis, statusProblem: input.statusProblem, boardID: status?.deviceID,
-            bootstrapToken: member.bootstrapTokenEscrowedStatus)
+            bootstrapToken: member.bootstrapTokenEscrowedStatus,
+            rapidSecurityResponse: status?.supplementalExtraVersion ?? member.osRapidSecurityResponse,
+            supplementalBuild: status?.supplementalBuild ?? member.osSupplementalBuild,
+            betaEnrollment: status?.betaEnrollment.flatMap(DeviceDetailText.betaProgram),
+            installReason: status.flatMap { $0.installReasons.isEmpty ? nil : $0.installReasons.joined(separator: ", ") },
+            fileVault: member.diskEncryption?.bootPartitionFileVault2State,
+            batteryHealth: status?.batteryHealth ?? member.batteryHealth)
     }
 
     /// One device measured against its own target (`TargetRules`): its

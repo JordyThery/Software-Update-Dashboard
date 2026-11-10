@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2 (not released yet)
+
+- **Blueprint health:** each of the Blueprint’s update declarations by name, with how many devices report it applied, pending, awaiting sync, failed or invalid, and the most common reason. The dashboard says how many devices are on a version the Blueprint’s update doesn’t cover yet, and the device list gives that as their diagnosis.
+- **Inspect** lists all of the Blueprint’s declarations for the device, with how each one stands.
+- **Device details:** Rapid Security Response, beta program, why the pending update started, the number and time of failures, FileVault and battery health. The useful ones are also in the device list’s CSV.
+- **All status items of a device,** read from Jamf when asked, with a filter and Copy. They aren’t kept.
+- **An earlier step of the Blueprint** is recognized also after Apple has replaced it in its public catalog, for example 27.2 due 19 Nov while the Blueprint now asks for 27.2.1: the device is measured against 27.2.1 and its deadline, with 27.2 shown as the step it installs first.
+
 ## 0.1.1 — 2026-11-10
 
 - **When Apple posts a newer version during an update,** a device still installing the Blueprint’s earlier version is measured against the newer one and its deadline, and shown as installing the earlier version first. Once that earlier version’s own deadline has passed and it isn’t installing, the device keeps the newer target but counts as past its deadline, for example “26.7.2 downloaded but not installed after its deadline”. A pending version from a report older than the update’s start no longer affects the target or the deadline.

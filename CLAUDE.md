@@ -22,9 +22,9 @@ A read-only Mac app that answers, for the devices a Blueprint is scoped to, whet
 - `App/`: the app (About, Check for Updates, Settings, Connection menu, activity log, Demo Mode), `UnderTest`.
 - `Connections/`: `AppConnection` (a JTKit connection plus the Jamf Pro server's time zone), `ConnectionsModel` (saved connections, the one in use, demo mode, the read-only clients), the Connections tab.
 - `State/`: tracked Blueprints (with the move from tracked groups), the history, the dashboard model.
-- `Logic/`: the classifier, the target rules per device (`TargetRules`), the summary, Inspect, deadlines per zone.
+- `Logic/`: the classifier, the target rules per device (`TargetRules`), the summary, Inspect, deadlines per zone, Blueprint health (`BlueprintHealth`: the Blueprint’s declarations, read once per refresh, per declaration).
 - `Views/`: the main window.
-- From JTKit: `ConnectionStore`, `ConnectionsSettingsTab`, `ConnectionPicker`/`ConnectionCommands`, `SettingsWindow`, `AboutWindow`, `UpdateChecker`, `ActivityLogWindow`, `DemoMode` with `DemoSoftwareUpdate`, `JamfPlatform.Client` and the 1.5.0 readers (groups and members, `softwareUpdateStatus`, Declaration Reporting, `softwareUpdateBlocks`), `AppleReleases`.
+- From JTKit: `ConnectionStore`, `ConnectionsSettingsTab`, `ConnectionPicker`/`ConnectionCommands`, `SettingsWindow`, `AboutWindow`, `UpdateChecker`, `ActivityLogWindow`, `DemoMode` with `DemoSoftwareUpdate`, `JamfPlatform.Client` and the 1.5.0 and 1.6.0 readers (groups and members with FileVault, `softwareUpdateStatus` with the declarations a device holds, raw `statusItems`, Declaration Reporting per device and per declaration, `softwareUpdateBlocks`), `AppleReleases`, `DemoSoftwareUpdate.pastRefreshes` and the demo release server’s `isUnreachable`, and `JTKitUITestCase.saveInTestFolder()` in the UI tests.
 - Every request goes through JTKit; the app only interprets. When something is needed that JTKit could share, extend JTKit instead of adding a copy here.
 - Build facts: macOS 15.0, sandboxed (outgoing network, user-selected files read-write), Swift 5 mode with MainActor default isolation, bundle ID `be.jordythery.softwareupdatedashboard`. The "Run Build Number Script" phase stamps the built app's `CFBundleVersion` with a UTC date-time; nothing to commit.
 

@@ -205,6 +205,8 @@ final class DashboardModel {
     func setDemoSituation(_ situation: DemoSituation) async {
         guard isDemo, situation != demoSituation else { return }
         demoSituation = situation
+        // the demo's own release feeds fail, as Apple's would
+        connections.demo.appleReleaseServer.isUnreachable = situation == .appleDataUnreachable
         forgetReleaseData()
         generation += 1
         await refreshAll()
@@ -284,8 +286,6 @@ final class DashboardModel {
     private func appleReleases() async -> AppleReleases.Catalog? {
         let key = connections.inUseKey
         if let catalog, catalog.key == key, Date().timeIntervalSince(catalog.date) < 3_600 { return catalog.value }
-        // Demo Mode’s “Apple’s Release Data Unreachable”: as if no source answered
-        if isDemo && demoSituation == .appleDataUnreachable { return nil }
         let read: AppleReleases.Catalog?
         if let releasesOverride { read = try? await releasesOverride() } else { read = try? await connections.appleReleases().catalog() }
         guard let fetched = read else { return nil }
@@ -293,25 +293,37 @@ final class DashboardModel {
         return fetched
     }
 
-    /// Five made-up earlier days for demo mode, so its chart has a history:
-    /// each day back, fewer devices on target. Three days back the software
-    /// update was another one and a made-up pilot group joined the scope;
-    /// it left a day back: the chart marks both refreshes.
+    /// Five earlier days for demo mode, from JTKit’s samples
+    /// (`DemoSoftwareUpdate.pastRefreshes`), so its chart has a history:
+    /// each day back, fewer devices on target; four and five days back the
+    /// software update was another one, and two and three days back a pilot
+    /// group was in the scope too. The chart marks those refreshes.
     private func seedDemoHistory(_ result: RefreshResult, in history: StatusHistory) {
-        let earlierRule = result.rule.hasPrefix("Version") ? "Minor updates, without delay" : "The newest release, without delay"
-        let pilot = GroupReference(key: .init(kind: result.scope.first?.key.kind ?? .mobileDevice, groupID: "699"),
-                                   name: "Pilot Devices", isSmart: false)
-        for daysAgo in (1...5).reversed() {
+        for past in DemoSoftwareUpdate.pastRefreshes(now: result.date)
+        where past.blueprintID.lowercased() == result.tracked.blueprintID.lowercased() {
+            let block = JamfPlatform.SoftwareUpdateBlock(stepIndex: 0, componentIndex: 0, enforcement: past.enforcement)
             var devices = result.devices
-            var onTarget = devices.indices.filter { devices[$0].category == .onTarget }
-            var updating = devices.indices.filter { devices[$0].category == .inProgress }
-            for _ in 0..<min(daysAgo, onTarget.count) { devices[onTarget.removeLast()].category = .inProgress }
-            for _ in 0..<min(daysAgo / 2, updating.count) { devices[updating.removeLast()].category = .notStarted }
-            let date = result.date.addingTimeInterval(-Double(daysAgo) * 86_400)
-            try? history.save(HistorySnapshot(date: date, target: daysAgo > 3 ? earlierRule : result.rule, devices: devices,
-                                              scope: (2...3).contains(daysAgo) ? result.scope + [pilot] : result.scope),
+            for index in devices.indices where devices[index].category == .onTarget && !past.onTarget.contains(Int(devices[index].jamfID) ?? -1) {
+                devices[index].category = .inProgress
+            }
+            let date = result.date.addingTimeInterval(-Double(past.daysAgo) * 86_400)
+            try? history.save(HistorySnapshot(date: date, target: RefreshWorkflow.rule([block]), ruleKey: RefreshWorkflow.ruleKey([block]),
+                                              devices: devices, scope: result.scope + (past.extraScopeGroup.map { [GroupReference($0)] } ?? [])),
                               for: result.tracked.id)
         }
+    }
+
+    // MARK: Status items
+
+    /// Every status item of one device, read now (not kept: neither here
+    /// nor in the history). Empty when Jamf Pro has no report for it.
+    func statusItems(of device: DeviceStatus, in id: UUID) async throws -> [JamfPro.StatusItem] {
+        guard let managementID = device.managementID, !managementID.isEmpty else {
+            throw RefreshError("The device has no management ID in Jamf Pro, so its status report can’t be read.")
+        }
+        guard let client = try connections.client() else { throw RefreshError("No connection in use.") }
+        let items = try await client.statusItems(managementID: managementID, kind: device.isComputer ? .computer : .mobileDevice) ?? []
+        return items.sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
     }
 
     // MARK: Inspect
@@ -362,6 +374,7 @@ final class DashboardModel {
         let previous = StatusSummary.previous(history?.latest(for: id, before: result.date), target: result.rule, ruleKey: result.ruleKey)
         var notes: [String] = []
         if let change = result.scopeChange { notes.append(change.text) }
+        if let line = BlueprintHealth.dashboardLine(result.notCoveredCount) { notes.append(line) }
         if let coverage = result.coverage {
             notes.append("Compared with \(coverage.group.name): \(coverage.notReached.count) of \(Plural.count(coverage.members, "device")) not reached by the Blueprint")
         }
@@ -385,6 +398,7 @@ final class DashboardModel {
         forgetReleaseData()
         demoTracked = nil
         demoSituation = .sampleData
+        connections.demo.appleReleaseServer.isUnreachable = false
         selection = .overview
     }
 }

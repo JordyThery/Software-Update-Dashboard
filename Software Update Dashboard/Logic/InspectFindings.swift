@@ -60,6 +60,13 @@ nonisolated struct Finding: Sendable, Hashable, Codable {
     var earlier: Bool?
 }
 
+/// One of the Blueprint’s declarations on one device: its name (never an
+/// ID) and how it stands there.
+nonisolated struct DeclarationLine: Sendable, Hashable, Codable {
+    var name: String
+    var state: String
+}
+
 /// Every reason a device may not update, most likely first.
 nonisolated struct InspectResult: Sendable, Hashable, Identifiable {
     var id: String
@@ -70,6 +77,8 @@ nonisolated struct InspectResult: Sendable, Hashable, Identifiable {
     var diagnosis: String
     var onTarget: Bool
     var findings: [Finding]
+    /// Each of the Blueprint’s declarations on this device by name, with how it stands.
+    var declarations: [DeclarationLine] = []
 
     /// The likely cause: the first finding that isn’t from before the update started.
     var likely: Finding? { findings.first { $0.earlier != true } }
@@ -309,7 +318,9 @@ nonisolated enum InspectFindings {
             let present = (status?.passcodePresent ?? member.passcodePresent).map { $0 ? "yes" : "no" } ?? "?"
             add("Passcode", "Passcode present: \(present); the update installs once the passcode is entered on the device, or after it’s cleared")
         }
-        if member.batteryHealth == "SERVICE_RECOMMENDED" { add("Battery needs service", "Battery health: service recommended") }
+        if DeviceDetailText.batteryNeedsService(status?.batteryHealth ?? member.batteryHealth) {
+            add("Battery needs service", "Battery health: service recommended")
+        }
         // the battery matters only for an install: downloaded or installing, not a download
         let installing = status?.installState == .prepared || status?.installState == .installing
         if installing, let level = member.batteryLevel, level < 50 {
@@ -369,9 +380,12 @@ nonisolated enum InspectFindings {
                                     detail: "\(errorBefore.reason) (\(errorBefore.when), before the update started)", earlier: true))
         }
 
+        // every one of the Blueprint's declarations on this device, by name
+        let names = [ctx.blueprintID.lowercased(): ctx.blueprintName]
+        let lines = pairs.map { DeclarationLine(name: label($0), state: $0.state(names: names)) }
         return InspectResult(id: RefreshWorkflow.key(member), name: row?.name ?? member.name ?? "", serial: member.serialNumber ?? "",
                              modelIdentifier: modelID, os: os, diagnosis: diagnosis, onTarget: category == .onTarget,
-                             findings: findings)
+                             findings: findings, declarations: BlueprintHealth.uniqueNames(lines))
     }
 
     // MARK: Helpers
@@ -494,7 +508,30 @@ nonisolated struct DeclarationPair: Sendable, Hashable {
     func label(blueprint: String, osName: String, deviceMajor: Int?) -> String {
         if let range = predicate.flatMap(Self.versionRange) { return "\(blueprint), \(osName) \(range)" }
         if isActive, let deviceMajor { return "\(blueprint), \(osName) \(deviceMajor) (applies to this device)" }
+        // a step for one OS family, without a version condition
+        if let family { return "\(blueprint), \(family)" }
         return number.map { "\(blueprint), update declaration \($0)" } ?? blueprint
+    }
+
+    /// How this device stands with the pair, in plain words: not for it,
+    /// applied, pending, awaiting sync, failed or invalid (with the reason).
+    func state(names: [String: String]) -> String {
+        if isNotForThisDevice { return "Not for this device" }
+        let configuration = reports.first { $0.type == "CONFIGURATION" } ?? reports.first
+        guard let report = configuration else { return "Not reported" }
+        if reports.contains(where: { $0.validity == .invalid }) {
+            return "Invalid: " + InspectFindings.why(reports.first { $0.validity == .invalid } ?? report, names: names)
+        }
+        if let failed = reports.first(where: { $0.reasons.contains { ($0.code ?? "").hasPrefix("Error.") } }) {
+            return "Failed: " + InspectFindings.why(failed, names: names)
+        }
+        switch report.status {
+        case .successful: return "Applied"
+        case .pending: return "Pending"
+        case .awaitingSync: return "Awaiting sync"
+        case .unsuccessful: return "Not applied"
+        case .unknown, .other: return "Unknown"
+        }
     }
 
     /// The versions a predicate’s `MATCHES "^(26[.][0-6]([.][0-9]+)*|26[.]7([.][0-1]([.][0-9]+)*)?)$"`
@@ -590,6 +627,59 @@ nonisolated enum DeviceDetailText {
         case nil: "Not reported"
         default: status ?? "Not reported"
         }
+    }
+
+    /// A beta program as the device names it; nil when it is in none.
+    static func betaProgram(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        return trimmed.range(of: "^(none|null|false|)$", options: [.regularExpression, .caseInsensitive]) == nil ? trimmed : nil
+    }
+
+    /// A Mac’s FileVault: “On”, “Off”, “Encrypting”, “Decrypting”; “Not
+    /// reported” without a value.
+    static func fileVault(_ state: String?) -> String {
+        switch state?.uppercased() {
+        case "ENCRYPTED": "On"
+        case "UNENCRYPTED", "DECRYPTED": "Off"
+        case "ENCRYPTING": "Encrypting"
+        case "DECRYPTING": "Decrypting"
+        case nil, "", "UNKNOWN": "Not reported"
+        default: words(state ?? "")
+        }
+    }
+
+    /// Battery health as words, whichever way it was written: `NORMAL` and
+    /// `normal` read “Normal”, `service-recommended` and
+    /// `SERVICE_RECOMMENDED` “Service recommended”.
+    static func batteryHealth(_ health: String?) -> String {
+        guard let health, !health.isEmpty else { return "Not reported" }
+        return words(health)
+    }
+
+    /// Whether the battery needs service, however it was written.
+    static func batteryNeedsService(_ health: String?) -> Bool {
+        words(health ?? "") == "Service recommended"
+    }
+
+    /// Why the pending update was started, in plain words: `declaration`
+    /// “A declaration”, `mdm` “An MDM command”, `system-settings` “Software
+    /// Update settings on the device”; others as words.
+    static func installReason(_ reasons: String?) -> String {
+        guard let reasons, !reasons.isEmpty else { return "–" }
+        return reasons.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.map { reason in
+            switch reason.lowercased() {
+            case "declaration": "A declaration"
+            case "mdm": "An MDM command"
+            case "system-settings": "Software Update settings on the device"
+            default: words(reason)
+            }
+        }.joined(separator: "; ")
+    }
+
+    /// `SERVICE_RECOMMENDED` or `service-recommended` as “Service recommended”.
+    static func words(_ text: String) -> String {
+        let spaced = text.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ").lowercased()
+        return spaced.prefix(1).uppercased() + spaced.dropFirst()
     }
 
     /// An install state as a capitalized word: “Failed”, “None”; “–” when

@@ -132,6 +132,8 @@ Only what talks to vendors:
 
 Keep awake, the automatic refresh scheduler, notifications, the help window, the menu bar item and open at login stay in SUD; they move to JTKit only when a second app needs them.
 
+Done on branch `release-1.6.0` (JTKit) on 2026-11-10, not tagged; see JTKit’s CHANGELOG. Added by Jordy on 2026-11-10: the identifiers of a device’s declarations from its `management.declarations` status item (`SoftwareUpdateStatus.declarationIdentifiers`), and a UI test check that a Save panel shows the test’s own folder before it saves.
+
 ### Step 2: 0.2
 
 | | Feature |
@@ -150,7 +152,14 @@ Keep awake, the automatic refresh scheduler, notifications, the help window, the
 | J | Export Report as PDF, one Blueprint or all (nice to have). |
 | K | Find a device by serial number or name across all tracked Blueprints (nice to have). |
 
-Order: step 0 (released as 0.1.1), step 1, then A, B with C and M, L, D, G, H, F, E, I, J, K. Each with tests and a check in Demo Mode; one read of the production role before the release; JTKit is tagged only after Jordy approves.
+Order: step 0 (released as 0.1.1), step 1, then A, B with C and M, L, D, G, H, F, E, I, J, K.
+
+**F, H and E first** (decided by Jordy on 2026-11-10, on branch `0.2`, together with JTKit 1.6.0, so JTKit is tagged only once SUD uses every new reader):
+
+- **F, Blueprint health:** read per declaration, never per device. The identifiers are those of this Blueprint among the declarations the devices list in their status reports (`management.declarations`), so no extra request finds them; a declaration no device has received isn’t listed. Each is read once per refresh (`declarations/{id}/devices`). A report is tied to a device through the Platform device ID SUD finds by serial number; a report that can’t be tied is left out and counted in a note. Names come from the predicate (versions, OS family) or the step, never IDs. A device whose Blueprint ranges for its hardware all end below its version, while its target is newer, is “Jamf’s update doesn’t cover ‹OS› ‹version› yet” in the list (when it is not started or has no activity), counted on the dashboard and in the summary. Not kept in the history.
+- **H, device details:** Rapid Security Response (status report, else inventory), beta program, install reason, failure count and time, FileVault (`DISK_ENCRYPTION`), battery health (status report, else inventory); in the CSV as six new columns at the end.
+- **E, all status items:** read when asked from the device detail, every value type, with a filter and Copy; never kept.
+- **This Blueprint’s earlier step after Apple replaced it** (the 0.2 note): Apple’s public catalog can drop the earlier version’s posting once it posts the newer one. A reported deadline also counts as the step’s when it falls on a day the rule could have given that version while it was the rule’s target (from its release, or posting, to the next version’s posting), at the Blueprint’s time of day; a declaration report awaiting sync supports a version the rule targeted in that window. Each with tests and a check in Demo Mode; one read of the production role before the release; JTKit is tagged only after Jordy approves.
 
 ### Later
 
