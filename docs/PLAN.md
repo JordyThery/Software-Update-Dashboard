@@ -118,6 +118,8 @@ Also in 0.1.1 (decided by Jordy on 2026-11-10, after review and a hand check): a
 
 Left for 0.2 (item F): the “Jamf’s update doesn’t cover …” cause in the device list, with a total on the dashboard. The Blueprint itself holds the rule only; Jamf’s version ranges come from the declaration reports, one request for each declaration.
 
+Also for 0.2 (noted by Jordy on 2026-11-10, after the 0.1.1 hand check): Macs with a pending 27.2 and a 19 Nov deadline, this Blueprint’s step before 27.2.1, still show target 27.2 instead of 27.2.1 with “an earlier step”. Treat them like the 26.7.2 case: the Blueprint’s current target and deadline, with the step shown.
+
 ### Step 1: JTKit 1.6.0 (in Apps.xcworkspace)
 
 Only what talks to vendors:
