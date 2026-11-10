@@ -30,6 +30,9 @@ nonisolated struct DeadlineZone: Sendable, Hashable, Identifiable {
 }
 
 nonisolated enum DeadlineZones {
+    /// Why a Mac’s row has no time zone: shown once under the table.
+    static let macNote = "Jamf Pro has no time zone for Macs: the deadline is each Mac’s own local time"
+
     /// Per zone and deadline, most devices first. A reported deadline is
     /// its own row (to the minute); a computed one is per zone and local
     /// time, and without a zone per local time and target. A computed row
@@ -62,9 +65,7 @@ nonisolated enum DeadlineZones {
             }
             var unusual: String?
             if zone == nil {
-                unusual = first.isComputer
-                    ? "Jamf Pro has no time zone for Macs: the deadline is each Mac’s own local time"
-                    : "No time zone reported"
+                unusual = first.isComputer ? macNote : "No time zone reported"
             } else if TimeZone(identifier: zone!) == nil {
                 unusual = "Not a time zone the Mac knows"
             } else if let seconds = offset(zone, at: local), seconds % 3_600 != 0 {

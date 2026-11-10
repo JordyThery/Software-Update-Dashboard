@@ -56,6 +56,8 @@ nonisolated struct InspectContext: Sendable {
 nonisolated struct Finding: Sendable, Hashable, Codable {
     var cause: String
     var detail: String
+    /// From before the update started (an earlier error): listed, never the likely cause.
+    var earlier: Bool?
 }
 
 /// Every reason a device may not update, most likely first.
@@ -69,11 +71,20 @@ nonisolated struct InspectResult: Sendable, Hashable, Identifiable {
     var onTarget: Bool
     var findings: [Finding]
 
-    /// The likely cause: the first finding.
-    var cause: String { onTarget ? "On target" : findings.first?.cause ?? "No cause found" }
+    /// The likely cause: the first finding that isn’t from before the update started.
+    var likely: Finding? { findings.first { $0.earlier != true } }
+    var cause: String { onTarget ? "On target" : likely?.cause ?? "No cause found" }
     var detail: String {
         onTarget ? "Already on the target version"
-            : findings.first?.detail ?? "Check the device in Jamf Pro (management history, declarations)"
+            : likely?.detail ?? "Check the device in Jamf Pro (management history, declarations)"
+    }
+
+    /// Every finding but the likely cause, in order.
+    var alsoFound: [Finding] {
+        guard !onTarget, let index = findings.firstIndex(where: { $0.earlier != true }) else { return findings }
+        var rest = findings
+        rest.remove(at: index)
+        return rest
     }
 
     static let csvColumns = ["serial", "device", "model", "os", "status_diagnosis", "likely_cause", "detail", "all_findings"]
@@ -152,19 +163,38 @@ nonisolated enum InspectFindings {
         } else {
             let pending = applicable.flatMap(\.reports).filter { $0.status == .pending }
             if !pending.isEmpty { add("Update declarations not applied yet", "\(pending.count) still pending on the device") }
+            // Jamf sent a declaration again (a new version) and the device hasn't fetched it
+            if let waiting = pairs.first(where: { $0.reports.contains { $0.status == .awaitingSync } }) {
+                add("New declaration not fetched yet",
+                    "Jamf sent \(label(waiting)) again; the device hasn’t fetched it yet (awaiting sync), so it still follows "
+                        + "the earlier one. It fetches it at its next check-in")
+            }
             if active.isEmpty {
-                let others = pairs.count - applicable.count
+                // only the declarations for the device's own OS (a Blueprint sends them for every platform)
+                let own = pairs.filter { pair in pair.family.map { $0 == osName } ?? true }
                 // the device's own ID against the predicates' lists
                 let ids = [status?.deviceID ?? row?.boardID, modelID.isEmpty ? nil : modelID].compactMap { $0 }
-                let listing = pairs.filter { pair in ids.contains { pair.lists($0) } }
+                let listing = own.filter { pair in ids.contains { pair.lists($0) } }
                 let idText = ids.first ?? "its model"
-                let lists = listing.isEmpty
-                    ? " No declaration lists \(idText), so the Blueprint doesn’t cover this hardware."
-                    : " \(listing.count) list \(idText) (\(listing.map { $0.label(blueprint: ctx.blueprintName, osName: osName, deviceMajor: nil) }.joined(separator: "; "))), so their version condition excludes \(osName) \(os)."
-                add("No update declaration applies",
-                    "None of \(ctx.blueprintName)’s \(pairs.count) update declarations applies to \(osName) \(os)"
-                        + (others > 0 ? " (\(others) \(others == 1 ? "is" : "are") for other versions or models)" : "")
-                        + (pairs.contains { $0.predicate != nil } ? "." + lists : ""))
+                let ranges = listing.compactMap { $0.predicate.flatMap(DeclarationPair.versionRange).map { "\(osName) \($0)" } }
+                // every range that lists this hardware ends below its version: Jamf hasn't extended them yet
+                let below = !listing.isEmpty && listing.allSatisfy { pair in
+                    guard let upper = pair.upperBound, let version, upper.major == version.major else { return false }
+                    return upper < version
+                }
+                if below, let version {
+                    add("Jamf’s update doesn’t cover \(osName) \(version) yet",
+                        "The Blueprint’s update declarations for this hardware cover \(ranges.joined(separator: "; ")), not \(version), "
+                            + "so none applies. Jamf sets these ranges; until Jamf extends them, the device gets no update from this Blueprint")
+                } else {
+                    let lists = listing.isEmpty
+                        ? " No declaration lists \(idText), so the Blueprint doesn’t cover this hardware."
+                        : " \(listing.count) list \(idText) (\(ranges.joined(separator: "; "))), so their version condition excludes \(osName) \(os)."
+                    add("No update declaration applies",
+                        "None of \(ctx.blueprintName)’s \(own.count) update \(own.count == 1 ? "declaration" : "declarations") "
+                            + "for \(osName) applies to \(osName) \(os)."
+                            + (own.contains { $0.predicate != nil } ? lists : ""))
+                }
             } else if active.count > 1 {
                 add("Several update declarations active", active.map(label).joined(separator: "; ") + " all apply to \(osName) \(os)")
             }
@@ -208,13 +238,30 @@ nonisolated enum InspectFindings {
         if let state = status?.installState, state.isBusy, let updated, !offline {
             let pendingVersion = status?.pendingVersion?.osVersion ?? "?"
             // past the deadline that counts (the rule’s, for a stale report), as the row says
-            if state == .prepared && row?.pastDeadline == true {
+            if state == .prepared && row?.pastDeadlineByGrace(now: ctx.now) == true {
                 add("Update stuck", "\(osName) \(pendingVersion) is downloaded but not installed after its deadline (last change \(ago(updated, now: ctx.now))); a restart of the device usually gets it going")
+            } else if state == .prepared && row?.pastDeadline == true {
+                add("Update downloaded", "\(osName) \(pendingVersion) is downloaded; the deadline has just passed, so it installs now")
             } else if state == .prepared {
                 add("Update downloaded", "\(osName) \(pendingVersion) is downloaded and installs at the deadline")
+            } else if state == .installing, ctx.now.timeIntervalSince(updated) > TargetRules.longInstall {
+                let hours = Int(TargetRules.longInstall / 3_600)
+                if member.lastSeen.map({ $0 > updated }) == true {
+                    add("Installing for more than \(hours) hours",
+                        "\(osName) \(pendingVersion) has been installing since \(moment(updated)); the device checks in with Jamf "
+                            + "but hasn’t reported a new status. A restart of the device usually finishes it")
+                } else {
+                    add("Update in progress", "Installing \(osName) \(pendingVersion) since \(moment(updated)); no contact since it started installing")
+                }
             } else {
                 add("Update in progress", "\(DeviceDetailText.installState(state.rawValue)) \(osName) \(pendingVersion), last change \(ago(updated, now: ctx.now))")
             }
+        }
+        // this Blueprint's earlier step, sent before Apple posted the version its rule now gives
+        if let step = row?.earlierStepVersion, let target = row?.targetVersion {
+            let due = DeadlineZones.text(local: row?.deadlineLocal, reported: row?.deadlineDate).map { ", due \($0)" } ?? ""
+            add("Earlier step of this Blueprint",
+                "\(osName) \(step) was sent before Apple posted \(target); the device installs \(step) first, then \(target)\(due)")
         }
         if category == .notStarted, status?.installState == JamfPro.SoftwareUpdateStatus.InstallState.none,
            status?.pendingVersion == nil, status?.failure == nil {
@@ -227,6 +274,7 @@ nonisolated enum InspectFindings {
             let count = status?.failure?.count.map { "\($0) \($0 == 1 ? "failure" : "failures"), " } ?? ""
             add("Update error", "\(reason.isEmpty ? "No reason given" : reason) (\(count)last \(moment(failAt)))")
         }
+        let errorBefore = earlierError(status, since: since, serverTimeZone: ctx.serverTimeZone)
         if let beta = status?.betaEnrollment, beta.range(of: "^(none|null|false)$", options: [.regularExpression, .caseInsensitive]) == nil {
             add("Enrolled in a beta program", "\(beta) (build \(status?.osBuild ?? member.osBuild ?? "?")): the device follows the beta channel, so the release update may not be offered. Unenroll it (Software Update settings: beta program not allowed) and update")
         }
@@ -259,15 +307,27 @@ nonisolated enum InspectFindings {
                 + (other.validity == .invalid ? " (invalid)" : ""))
         }
 
-        // a Mac’s bootstrap token: the likely cause when the last error names it
+        // a Mac’s bootstrap token: the likely cause when the error since the update started names it
+        var namesBootstrap = false
         if member.kind == .computer {
-            let token = DeviceDetailText.bootstrap(member.bootstrapTokenEscrowedStatus ?? row?.bootstrapToken)
+            let tokenStatus = member.bootstrapTokenEscrowedStatus ?? row?.bootstrapToken
+            let token = DeviceDetailText.bootstrap(tokenStatus)
             let error = [status?.failure?.reason, row?.error].compactMap { $0 }.joined(separator: " ")
-            if error.localizedCaseInsensitiveContains("bootstrap") {
+            namesBootstrap = error.localizedCaseInsensitiveContains("bootstrap")
+            let escrowed = tokenStatus?.uppercased() == "ESCROWED"
+            if namesBootstrap && errorBefore == nil {
                 findings.insert(Finding(cause: "Bootstrap token",
-                                        detail: "The last error names the bootstrap token; Jamf Pro reports it as \(token.lowercased()). "
-                                            + "Without an escrowed bootstrap token the Mac can’t install an enforced update on its own"),
+                                        detail: escrowed
+                                            ? "The last error names the bootstrap token, although Jamf Pro reports it as escrowed. "
+                                                + "Check the token on the Mac (profiles status -type bootstraptoken)"
+                                            : "The last error names the bootstrap token; Jamf Pro reports it as \(token.lowercased()). "
+                                                + "Without an escrowed bootstrap token the Mac can’t install an enforced update on its own"),
                                 at: 0)
+            } else if namesBootstrap, let errorBefore {
+                findings.append(Finding(cause: "Earlier bootstrap token error",
+                                        detail: "An error from before the update started (\(errorBefore.when)) names the bootstrap token; "
+                                            + "Jamf Pro now reports the token as \(token.lowercased())",
+                                        earlier: true))
             } else if (member.bootstrapTokenEscrowedStatus ?? row?.bootstrapToken)?.uppercased() == "NOT_ESCROWED",
                       let why = DeviceDetailText.notEscrowedWarning(
                           appleSilicon: DeviceDetailText.isAppleSilicon(model: modelID, boardID: status?.deviceID ?? row?.boardID)) {
@@ -276,12 +336,27 @@ nonisolated enum InspectFindings {
             }
         }
 
+        // an error from before the update started: listed last, never the likely cause
+        if let errorBefore, !namesBootstrap {
+            findings.append(Finding(cause: "Earlier update error",
+                                    detail: "\(errorBefore.reason) (\(errorBefore.when), before the update started)", earlier: true))
+        }
+
         return InspectResult(id: RefreshWorkflow.key(member), name: row?.name ?? member.name ?? "", serial: member.serialNumber ?? "",
                              modelIdentifier: modelID, os: os, diagnosis: diagnosis, onTarget: category == .onTarget,
                              findings: findings)
     }
 
     // MARK: Helpers
+
+    /// The device’s update error when it is from before the update started.
+    static func earlierError(_ status: JamfPro.SoftwareUpdateStatus?, since: Date?,
+                             serverTimeZone: TimeZone) -> (reason: String, when: String)? {
+        guard let failure = status?.failure, let since, let time = failure.timestamp,
+              let at = JamfPro.serverDate(time, timeZone: serverTimeZone), at < since else { return nil }
+        let reason = Classifier.shortError(failure.reason)
+        return (reason.isEmpty ? "No reason given" : reason, moment(at))
+    }
 
     /// The reasons of a declaration, as text, without IDs or hashes: a
     /// Blueprint declaration is named by its Blueprint (`names`, by
@@ -372,13 +447,21 @@ nonisolated struct DeclarationPair: Sendable, Hashable {
         predicate?.contains("\"\(id)\"") == true
     }
 
+    /// The OS family the predicate asks for (`operating-system.family == "macOS"`); nil without one.
+    var family: String? {
+        predicate?.firstMatch(of: #/operating-system\.family\s*==\s*"([^"]+)"/#).map { String($0.output.1) }
+    }
+
+    /// The newest version the predicate’s version condition takes; nil without one.
+    var upperBound: OSVersion? { predicate.flatMap(Self.covered)?.max() }
+
     /// The predicate’s text, from the activation’s Info.Predicate reason.
     var predicate: String? {
         activation?.reasons.flatMap(\.details).first { $0.key?.lowercased() == "predicate" }?.description
             ?? activation?.reasons.compactMap(\.description).first { $0.contains("predicate") }
     }
 
-    /// “‹Blueprint›, macOS 27.0–27.1”: the versions it is for from its
+    /// “‹Blueprint›, macOS 26.0 to 26.7.1”: the versions it is for from its
     /// predicate; for the active one the device’s own major.
     func label(blueprint: String, osName: String, deviceMajor: Int?) -> String {
         if let range = predicate.flatMap(Self.versionRange) { return "\(blueprint), \(osName) \(range)" }
@@ -386,27 +469,52 @@ nonisolated struct DeclarationPair: Sendable, Hashable {
         return number.map { "\(blueprint), update declaration \($0)" } ?? blueprint
     }
 
-    /// The versions in a predicate’s `MATCHES "^(27[.][0-1]([.][0-9]+)*)$"`:
-    /// `27.0–27.1`; `18.0–18.7` for `18[.][0-6]…|18[.]7…`; `27` for a whole major.
+    /// The versions a predicate’s `MATCHES "^(26[.][0-6]([.][0-9]+)*|26[.]7([.][0-1]([.][0-9]+)*)?)$"`
+    /// takes, to the patch: “26.0 to 26.7.1”; “27.0 to 27.1.x” when the last
+    /// minor takes every patch; “26.7.x” for one minor; “27” for a whole
+    /// major. Read by trying versions against the condition itself.
     static func versionRange(_ predicate: String) -> String? {
-        guard let regex = predicate.firstMatch(of: #/MATCHES\s*"([^"]+)"/#)?.output.1 else {
+        guard let covered = covered(predicate) else {
             // the older form: version BEGINSWITH "27." AND version < "27.0.1"
             guard let major = predicate.firstMatch(of: #/BEGINSWITH\s*"([0-9]+)\./#)?.output.1 else { return nil }
             if let below = predicate.firstMatch(of: #/version\s*<\s*"([0-9.]+)"/#)?.output.1 { return "\(major) below \(below)" }
             return String(major)
         }
-        let text = String(regex)
-        var major: Int?
-        var minors: [Int] = []
-        for match in text.matches(of: #/([0-9]+)\[\.\](?:\[([0-9])-([0-9])\]|([0-9]+))?/#) {
-            guard let found = Int(match.output.1) else { continue }
-            if major == nil { major = found } else if major != found { continue }
-            if let low = match.output.2.flatMap({ Int($0) }), let high = match.output.3.flatMap({ Int($0) }) { minors += [low, high] }
-            if let exact = match.output.4.flatMap({ Int($0) }) { minors.append(exact) }
+        guard let low = covered.min(), let high = covered.max(), let matches = matcher(predicate) else { return nil }
+        let major = low.major
+        if matches("\(major).\(maxMinor)") { return "\(major)" }
+        // the last minor takes every patch: “.x”
+        let openEnded = matches("\(major).\(high.minor).\(maxPatch)")
+        let lowText = "\(major).\(low.minor)"
+        let highText = openEnded ? "\(major).\(high.minor).x" : high.description
+        if low.minor == high.minor && openEnded { return highText }
+        return lowText == highText ? lowText : "\(lowText) to \(highText)"
+    }
+
+    private static let maxMinor = 40
+    private static let maxPatch = 30
+
+    /// Whether a version text meets a predicate’s `MATCHES "…"` condition; nil without one.
+    static func matcher(_ predicate: String) -> ((String) -> Bool)? {
+        guard let pattern = predicate.firstMatch(of: #/MATCHES\s*"([^"]+)"/#)?.output.1,
+              let regex = try? NSRegularExpression(pattern: String(pattern)) else { return nil }
+        return { text in regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil }
+    }
+
+    /// Every version (major.minor and major.minor.patch) the condition
+    /// takes in its major; nil without a `MATCHES` condition.
+    static func covered(_ predicate: String) -> [OSVersion]? {
+        guard let matches = matcher(predicate),
+              let pattern = predicate.firstMatch(of: #/MATCHES\s*"([^"]+)"/#)?.output.1,
+              let major = pattern.firstMatch(of: #/([0-9]+)/#).flatMap({ Int($0.output.1) }) else { return nil }
+        var versions: [OSVersion] = []
+        for minor in 0...maxMinor {
+            for patch in [nil] + Array(0...maxPatch) {
+                let text = patch.map { "\(major).\(minor).\($0)" } ?? "\(major).\(minor)"
+                if matches(text), let version = OSVersion(text) { versions.append(version) }
+            }
         }
-        guard let major else { return nil }
-        guard let low = minors.min(), let high = minors.max() else { return "\(major)" }
-        return low == high ? "\(major).\(low)" : "\(major).\(low)–\(major).\(high)"
+        return versions
     }
 
     /// The reports grouped into pairs, in number order; a declaration whose
@@ -429,6 +537,11 @@ nonisolated struct DeclarationPair: Sendable, Hashable {
 
 /// Texts the device detail and Inspect share.
 nonisolated enum DeviceDetailText {
+    /// Why a target shows in orange: the model can’t run the newest release of its OS.
+    static func hardwareLimit(_ device: DeviceStatus) -> String {
+        "This model can’t run the newest \(device.osName): it is on the hardware to replace"
+    }
+
     /// A Mac’s bootstrap token as Jamf Pro reports it.
     static func bootstrap(_ status: String?) -> String {
         switch status?.uppercased() {

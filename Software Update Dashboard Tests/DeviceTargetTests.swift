@@ -164,12 +164,15 @@ struct DeviceTargetTests {
         #expect(DeadlineZones.text(local: "2026-11-09T23:59:00", reported: nil)?.hasSuffix(" (device’s local time)") == true)
 
         // the macOS 27 row: each distinct deadline once (to the minute)
-        let row = MajorRow.deadlines([mac("1", target: "27.2", local: "", reported: "2026-11-19T22:59:06"),
-                                      mac("2", target: "27.2", local: "", reported: "2026-11-19T22:59:09"),
-                                      mac("3", target: "27.2", local: "", reported: "2026-11-09T22:59:06"),
-                                      mac("5", target: "27.2", local: "2026-11-09T23:59:00", reported: nil)])
-        #expect(row.count == 3)
-        #expect(row.filter { $0.hasSuffix("(this Mac’s time)") }.count == 2)
+        // the Blueprint's deadline once; a reported one that is it in some zone counts as it, the others apart
+        let row = MajorRow.deadlineColumn([mac("1", target: "27.2", local: "", reported: "2026-11-19T22:59:06"),
+                                           mac("2", target: "27.2", local: "", reported: "2026-11-19T22:59:09"),
+                                           mac("3", target: "27.2", local: "", reported: "2026-11-09T22:59:06"),
+                                           mac("5", target: "27.2", local: "2026-11-09T23:59:00", reported: nil)])
+        #expect(row.shown.count == 1 && row.shown[0].hasSuffix("(device’s local time)"))
+        #expect(row.others.count == 1 && row.otherDevices == 2)
+        // only reported deadlines: those show
+        #expect(MajorRow.deadlineColumn([mac("1", target: "27.2", local: "", reported: "2026-11-19T22:59:06")]).shown.count == 1)
     }
 
     @Test("Where the target comes from, in plain words")
@@ -261,18 +264,23 @@ struct InspectDeclarationPairTests {
         #expect(!all.contains(blueprint) && !all.contains("9f86d081"))
     }
 
-    @Test("Nothing applies: said once, with how many are for other versions")
+    @Test("Nothing applies: said once, counting the declarations for the device’s own OS")
     func noneApplies() throws {
         let result = evaluate(notForThisDevice(1, range: "^(27[.][0-1]([.][0-9]+)*)$"))
         let finding = try #require(result.findings.first { $0.cause == "No update declaration applies" })
-        #expect(finding.detail == "None of Test Mac Updates’s 1 update declarations applies to macOS 26.7.1 (1 is for other versions or models). "
+        #expect(finding.detail == "None of Test Mac Updates’s 1 update declaration for macOS applies to macOS 26.7.1. "
                 + "No declaration lists Mac14,2, so the Blueprint doesn’t cover this hardware.")
     }
 
     @Test("A predicate’s versions read as a range", arguments: [
-        (#"x MATCHES "^(27[.][0-1]([.][0-9]+)*)$""#, "27.0–27.1"),
-        (#"x MATCHES "^(18[.][0-6]([.][0-9]+)*|18[.]7([.][0-7]([.][0-9]+)*)?)$""#, "18.0–18.7"),
-        (#"x MATCHES "^(26[.]7([.][0-9]+)*)$""#, "26.7"),
+        (#"x MATCHES "^(27[.][0-1]([.][0-9]+)*)$""#, "27.0 to 27.1.x"),
+        (#"x MATCHES "^(18[.][0-6]([.][0-9]+)*|18[.]7([.][0-7]([.][0-9]+)*)?)$""#, "18.0 to 18.7.7"),
+        (#"x MATCHES "^(26[.]7([.][0-9]+)*)$""#, "26.7.x"),
+        // the forms Jamf sends: to the patch
+        (#"x MATCHES "^(26[.][0-6]([.][0-9]+)*|26[.]7([.][0-1]([.][0-9]+)*)?)$""#, "26.0 to 26.7.1"),
+        (#"x MATCHES "^(18[.][0-6]([.][0-9]+)*|18[.]7([.]([0-9]|10)([.][0-9]+)*)?)$""#, "18.0 to 18.7.10"),
+        (#"x MATCHES "^(26[.][0-5]([.][0-9]+)*|26[.]6([.]0([.][0-9]+)*)?)$""#, "26.0 to 26.6"),
+        (#"x MATCHES "^(27([.][0-9]+)*)$""#, "27"),
     ])
     func ranges(predicate: String, range: String) {
         #expect(DeclarationPair.versionRange(predicate) == range)
@@ -414,9 +422,15 @@ struct InspectStaleAndStuckTests {
         row.activityFrom = Sample.date("2026-10-26T00:00:00")
         let reports = pair(14, versions: "^(15[.][0-8]([.][0-1])?)$", lists: ["J313AP", "J274AP"], reported: "2026-11-05T09:00:00")
             + pair(2, versions: "^(26[.][0-7]([.][0-9]+)*)$", lists: ["J414sAP"], reported: "2026-11-05T09:00:00")
+        // the range that lists this Mac ends below its version: Jamf's update doesn't cover it yet
         let finding = try #require(evaluate(member, status: status, row: row, reports: reports).findings
+            .first { $0.cause == "Jamf’s update doesn’t cover macOS 15.8.2 yet" })
+        #expect(finding.detail.hasPrefix("The Blueprint’s update declarations for this hardware cover macOS 15.0 to 15.8.1, not 15.8.2"))
+        // a range above its version: the condition excludes it
+        let above = pair(14, versions: "^(15[.]9([.][0-9]+)*)$", lists: ["J313AP"], reported: "2026-11-05T09:00:00")
+        let excluded = try #require(evaluate(member, status: status, row: row, reports: above).findings
             .first { $0.cause == "No update declaration applies" })
-        #expect(finding.detail.contains("1 list J313AP (Test Mac Updates, macOS 15.0–15.8)"))
+        #expect(excluded.detail.contains("1 list J313AP (macOS 15.9.x), so their version condition excludes macOS 15.8.2."))
         let none = pair(2, versions: "^(26[.][0-7]([.][0-9]+)*)$", lists: ["J414sAP"], reported: "2026-11-05T09:00:00")
         let other = try #require(evaluate(member, status: status, row: row, reports: none).findings
             .first { $0.cause == "No update declaration applies" })

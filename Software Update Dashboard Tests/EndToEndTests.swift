@@ -45,7 +45,8 @@ struct EndToEndTests {
             ("Field iPad 09", .unsupported, "Hardware can’t run iPadOS 27 (stays on its last supported version)"),
             ("Field iPad 10", .noActivity, "No report since the update started (switched off or not synced yet)"),
             ("Field iPad 11", .notStarted, "Online, update not started (no error)"),
-            ("Field iPad 12", .inProgress, "Installing now"),
+            // the demo device reported installing days ago and checks in since
+            ("Field iPad 12", .inProgress, "Installing 27.1 for more than 4 hours; the device checks in but hasn’t reported a new status"),
         ]
         #expect(result.devices.count == expected.count)
         for (name, category, diagnosis) in expected {

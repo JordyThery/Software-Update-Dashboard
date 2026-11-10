@@ -120,7 +120,7 @@ struct ClassificationTests {
             ("softwareupdate.failure-reason.reason", #"Code=3 "(null)""#),
             ("softwareupdate.failure-reason.timestamp", "2026-10-01T00:00:00")]), context: S.context(since: S.updateStarted))
         #expect(device.category == .notStarted)
-        #expect(device.diagnosis == "Online, update not started (no error)")
+        #expect(device.diagnosis == "Online, update not started (no error since the update started)")
         #expect(device.errorSinceUpdate == false)
         #expect(device.error == "No update found")
     }

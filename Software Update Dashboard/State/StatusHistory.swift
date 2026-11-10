@@ -1,4 +1,5 @@
 import Foundation
+import JTKit
 
 /// The five groups of the progress chart, each a few categories.
 nonisolated enum ProgressGroup: String, CaseIterable, Sendable, Identifiable {
@@ -40,6 +41,10 @@ nonisolated struct HistorySnapshot: Sendable, Hashable, Codable, Identifiable {
     /// “Minor updates, 14 days after their release”) or the version it asks
     /// for; nil when unknown. Refreshes are compared only for the same one.
     var target: String?
+    /// The same rule by its values (`RefreshWorkflow.ruleKey`); nil in
+    /// entries saved before it was kept. Compared instead of the text,
+    /// which changes with this Mac’s region and clock format.
+    var ruleKey: String?
     var counts: CategoryCounts
     /// The measured devices: those whose target was unknown aren’t kept.
     var devices: [DeviceStatus]
@@ -56,13 +61,22 @@ nonisolated struct HistorySnapshot: Sendable, Hashable, Codable, Identifiable {
 
     var id: Date { date }
 
-    init(date: Date, target: String?, devices: [DeviceStatus], scope: [GroupReference]? = nil, rules: Int? = currentRules) {
+    init(date: Date, target: String?, ruleKey: String? = nil, devices: [DeviceStatus], scope: [GroupReference]? = nil,
+         rules: Int? = currentRules) {
         self.date = date
         self.target = target
+        self.ruleKey = ruleKey
         self.rules = rules
         self.devices = devices.filter { $0.category != .targetUnknown }
         self.scope = scope
         counts = CategoryCounts(self.devices)
+    }
+
+    /// Whether this refresh measured against the given rule: by its values
+    /// when both have them, else by its text.
+    func measures(target other: String?, ruleKey otherKey: String?) -> Bool {
+        if let ruleKey, let otherKey { return ruleKey == otherKey }
+        return target == other
     }
 }
 
@@ -71,7 +85,9 @@ nonisolated struct HistorySnapshot: Sendable, Hashable, Codable, Identifiable {
 /// changed how targets are worked out. One mark per refresh, whatever
 /// changed in it.
 nonisolated struct HistoryMark: Sendable, Hashable, Identifiable {
-    enum Kind: String, Sendable { case rule = "Software update", counting = "App update", scope = "Scope" }
+    enum Kind: String, Sendable {
+        case rule = "Software update", counting = "App update", scope = "Scope", release = "Apple release"
+    }
     var date: Date
     var kinds: [Kind]
     /// What changed, in one sentence without a colon.
@@ -83,7 +99,7 @@ nonisolated struct HistoryMark: Sendable, Hashable, Identifiable {
         zip(snapshots, snapshots.dropFirst()).compactMap { previous, next -> HistoryMark? in
             var kinds: [Kind] = []
             var parts: [String] = []
-            if previous.target != next.target {
+            if !previous.measures(target: next.target, ruleKey: next.ruleKey) {
                 kinds.append(.rule)
                 parts.append("the Blueprint’s software update changed to “\(next.target ?? "unknown")”")
             } else if previous.rules != next.rules {
@@ -94,10 +110,42 @@ nonisolated struct HistoryMark: Sendable, Hashable, Identifiable {
                 kinds.append(.scope)
                 parts.append("the Blueprint’s scope changed, \(change.description)")
             }
-            guard !parts.isEmpty else { return nil }
-            let text = parts.joined(separator: "; ") + ", so earlier counts don’t compare"
+            // Apple released a version that became the target: the counts
+            // compare, but devices on the old target are no longer on it
+            var released: String?
+            if kinds.isEmpty, let versions = Self.newTargets(from: previous, to: next) {
+                kinds.append(.release)
+                released = "Apple released \(versions), so devices on the earlier version are no longer on target"
+            }
+            guard !kinds.isEmpty else { return nil }
+            let text = parts.isEmpty ? released ?? "" : parts.joined(separator: "; ") + ", so earlier counts don’t compare"
             return HistoryMark(date: next.date, kinds: kinds, text: text.prefix(1).uppercased() + text.dropFirst())
         }
+    }
+
+    /// The versions that became a target from Apple’s release data between
+    /// two refreshes, newer than every earlier target of their platform and
+    /// major: “macOS 27.2.1 and 26.7.3”. Nil when there are none.
+    static func newTargets(from previous: HistorySnapshot, to next: HistorySnapshot) -> String? {
+        func targets(_ snapshot: HistorySnapshot) -> [(os: String, version: OSVersion)] {
+            snapshot.devices.filter { $0.targetFromDevice != true }
+                .compactMap { device in device.targetVersion.flatMap(OSVersion.init).map { (device.osName, $0) } }
+        }
+        let before = targets(previous)
+        guard !before.isEmpty else { return nil }
+        var seen = Set<String>()
+        var new: [(os: String, version: OSVersion)] = []
+        for item in targets(next) {
+            let known = before.contains { $0.os == item.os && $0.version.major == item.version.major && !($0.version < item.version) }
+            if !known && seen.insert("\(item.os) \(item.version)").inserted { new.append(item) }
+        }
+        guard !new.isEmpty else { return nil }
+        var parts: [String] = []
+        for (os, items) in Dictionary(grouping: new, by: { $0.os }).sorted(by: { $0.key < $1.key }) {
+            let versions: [String] = items.map(\.version).sorted(by: >).map(\.description)
+            parts.append("\(os) " + versions.formatted(.list(type: .and)))
+        }
+        return parts.formatted(.list(type: .and))
     }
 }
 
