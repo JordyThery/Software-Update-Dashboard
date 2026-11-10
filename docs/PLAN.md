@@ -41,6 +41,8 @@ The days are the time until the deadline, not a wait before a release becomes th
 
 - **A stale report** (decided by Jordy on 2026-11-09): a reported deadline for the rule’s own version counts only when the report is newer than the Blueprint’s last change and, for latest and minor, Apple’s public posting of the version. Otherwise the rule’s deadline counts and the device detail and Inspect say which of the two the report predates; when the rule has no deadline, the reported one stays, labeled as possibly out of date. Not raised when both deadlines fall on the same day.
 - **What Jamf sent comes first** (decided by Jordy on 2026-11-09). When a device reports a pending version (`softwareupdate.pending-version`) with an install reason that includes `declaration`, newer than what it runs and reported after the update started, that version is its target, with the deadline it reports (a moment with an offset; the offset places the device in Deadline per Time Zone). When the rule above gives another version, the detail shows both and flags that another declaration may be enforcing this. For a specific version a lower pending version is an intermediate step, and the Blueprint’s version stands. Pending versions that are stale (equal to or older than the installed one) or come from another reason (`notification`, none) are ignored. Otherwise the rule above, from Apple’s data, applies.
+- **This Blueprint’s earlier step** (decided by Jordy on 2026-11-10): when the pending version is one this Blueprint itself sent before Apple posted a newer one, and its rule now gives that newer version, the newer version and its deadline count. The device is “Other update: installing ‹pending› first”; the earlier deadline is shown in the detail (“earlier step of this Blueprint”) and isn’t counted as past. Jamf’s status items don’t name the declaration that sent a pending version, so it is this Blueprint’s earlier step only with evidence: the reported deadline equals this Blueprint’s deadline for that version (its posting date plus the days, at the Blueprint’s time), or the Blueprint’s declaration report for the device says awaiting sync. Without evidence the rule above (what Jamf sent comes first) stands.
+- **Installing for a long time** (decided by Jordy on 2026-11-10): a device that reports installing for more than 4 hours and has contacted Jamf since is flagged “Installing for more than 4 hours; the device checks in but hasn’t reported a new status”, and stays In progress. When its inventory already shows the pending version, the newer of the inventory and reported versions counts (installed, status not updated yet). Without contact since it started, the detail says “no contact since it started installing”, not a warning.
 - **Matching Apple’s release lists:** by the device’s own `softwareupdate.device-id` first, then its model, and only when Apple lists that ID for the release’s major. A device the lists don’t recognize (Intel Macs report `X86LEGACYAP`) is unknown, never unsupported: it is judged by the major and gets that major’s newest release, never an older one only because that one has no device list. The target and the replacement list use the same rule.
 - A device that already runs a release Apple shipped to it, old enough for the rule and newer than the rule’s target, is “Target unknown” (the rule doesn’t fit it), never measured against a lower target.
 - A device is unsupported only when no release applies to its hardware at all.
@@ -92,13 +94,59 @@ On branch `milestone-1` (SUD) and `1.5.0` (JTKit):
 4. A mobile group end to end, in Demo Mode and on the allow-list’s read-only production role.
 5. Every app in `Apps.xcworkspace` builds; then Jordy’s check by hand. JTKit isn’t tagged before Jordy approves.
 
-### Next (0.1.1)
+## Next (decided by Jordy on 2026-11-10)
 
-- With a delay of 0, call a downloaded update stuck only some time after the deadline, not the moment it passes.
-- Compare a Blueprint’s rule by its values, not its text, so a change of the Mac’s region or clock format adds no history mark.
+Read only throughout: nothing changes anything in Jamf (no sync, no update push, no inventory request). No new permissions are expected; the release check’s production read confirms it.
+
+### Step 0: release 0.1.1, fixes
+
+Found in a check of the live tenant on 2026-11-10. Released on its own, before 0.2, on branch `0.1.1`; no JTKit change (it builds against JTKit 1.5.0). In 0.1.1 the refresh finds this Blueprint’s earlier step by the reported deadline; awaiting sync is shown by Inspect, which reads the device’s declaration report (the refresh reads it once JTKit 1.6.0 can read a declaration’s devices).
+
+1. With a delay of 0, call a downloaded update stuck only some time after the deadline, not the moment it passes.
+2. Compare a Blueprint’s rule by its values, not its text, so a change of the Mac’s region or clock format adds no history mark.
+3. Inspect: an error from before the update started is never the likely cause; it is listed under Also Found as an earlier error. The bootstrap token finding fits a token Jamf Pro reports as escrowed.
+4. Inspect: exact version ranges from the predicate, to the patch (“macOS 26.0 to 26.7.1”, not “26.0–26.7”); only the declarations for the device’s own OS family are counted; shorter text (the Blueprint’s name once). A new likely cause when no declaration’s range covers the device’s version: “Jamf’s update doesn’t cover macOS ‹version› yet”.
+5. This Blueprint’s earlier step: see “Targets per device”.
+6. Installing for a long time: see “Targets per device”.
+7. The diagnosis “Online, update not started (no error since the update started)” when an earlier error exists.
+8. The orange target (the newest the model can run) explains itself as a help tag and for VoiceOver, never by color alone.
+9. Dashboard: By Major Release shows the Blueprint’s deadline once plus “N devices report another deadline” (details on hover); Deadline per Time Zone shows the Mac warning once.
+10. History chart: steps between refreshes instead of slopes; a mark when Apple posts a release that moves targets; the axis labelled as devices.
+11. Watchlist: Jamf’s minor-update ranges can lag behind their targets (devices already on the previous release are then not covered); `softwareupdate.install-reason` names no declaration; a declaration’s device list needs a filter.
+
+### Step 1: JTKit 1.6.0 (in Apps.xcworkspace)
+
+Only what talks to vendors:
+
+- A declaration’s device list (`ddm/report/v1/declarations/{id}/devices`) answers 400 without a filter: the reader sends `active==true,active==false`, with a test.
+- Raw status items of every value type (strings, numbers, booleans, objects).
+- A Mac’s FileVault (`DISK_ENCRYPTION`).
+- Mac status items for battery health and Rapid Security Responses (supplemental build, extra version).
+- Demo data for all of it (invalid and failed declarations, activations with predicates, awaiting sync, an unsupervised device, a Rapid Security Response, a long install), plus the samples noted for SUD in the release gate’s list of JTKit candidates.
+
+Keep awake, the automatic refresh scheduler, notifications, the help window, the menu bar item and open at login stay in SUD; they move to JTKit only when a second app needs them.
+
+### Step 2: 0.2
+
+| | Feature |
+|---|---|
+| A | Open in Jamf Pro: the Jamf Pro web address comes from the API when it gives one, otherwise from a field per connection (JTKit’s “Jamf Pro Web Address”); the device (detail, context menu, Device menu ⌥⌘O, asks first above 10) and the Blueprint. |
+| B | Automatic refresh (in SUD) in a new Automation settings tab: off, every 1, 4 or 8 hours, all tracked Blueprints one after another; every refresh is saved in the history; a line on the Overview with the last and next refresh and any error; a Stop button. |
+| C | Keep this Mac awake while automatic refresh is on: off by default, and only while the Mac is on power. After a sleep, automatic refresh catches up instead. |
+| M | Open at login. |
+| L | Menu bar item: the share on target with a colored dot, the tracked Blueprints, Refresh All, Open Window. |
+| D | Notifications per tracked Blueprint: the share on target reaches or drops below a level; devices newly failed or stuck. Only changes between two refreshes notify. |
+| G | Readiness: devices not supervised, without declarative device management, or that never reported; each number opens those devices. |
+| H | Device details: Rapid Security Response, beta enrollment, install reason, failure count and time, FileVault, battery health; the useful ones in the CSV. |
+| F | Blueprint health: each declaration by name (never IDs) with how many devices report it successful, pending, awaiting sync, failed or invalid, and the most common reason; devices whose version no declaration covers. Read per declaration, not per device. Inspect shows all of the Blueprint’s declarations for one device. |
+| E | All status items of a device, read on request, with a filter and Copy; not kept in the history. |
+| I | Help › Software Update Dashboard Help: how each category is decided, and Known Problems, only problems with a public source (Apple’s or Jamf’s documentation), each linked in the list, e.g. the bootstrap token and Apple’s network access; Inspect links to them. In the app’s own words. |
+| J | Export Report as PDF, one Blueprint or all (nice to have). |
+| K | Find a device by serial number or name across all tracked Blueprints (nice to have). |
+
+Order: step 0 (released as 0.1.1), step 1, then A, B with C and M, L, D, G, H, F, E, I, J, K. Each with tests and a check in Demo Mode; one read of the production role before the release; JTKit is tagged only after Jordy approves.
 
 ### Later
 
 - Computer groups end to end (the readers are in JTKit 1.5.0).
-- The release check with its UI smoke tests in Demo Mode.
 - Other MDMs.
