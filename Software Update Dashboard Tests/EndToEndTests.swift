@@ -37,7 +37,7 @@ struct EndToEndTests {
             ("Field iPad 01", .onTarget, "On target"),
             ("Field iPad 02", .onTarget, "On target"),
             ("Field iPad 03", .inProgress, "Downloading"),
-            ("Field iPad 04", .inProgress, "Downloaded, install blocked by the passcode"),
+            ("Field iPad 04", .inProgress, "Downloaded, install blocked by the passcode (it has to be entered to install)"),
             ("Field iPad 05", .otherUpdate, "Downloading (intermediate version 27.0.2)"),
             ("Field iPad 06", .failed, "Download problem (device retries)"),
             ("Field iPad 07", .noReport, "No update status available"),

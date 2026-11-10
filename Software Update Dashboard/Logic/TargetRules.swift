@@ -277,9 +277,10 @@ nonisolated enum TargetRules {
             }
             return DeviceTarget(reason: "Apple’s release data has no \(osName) \(current.major) release", unknown: .noReleaseForPlatform)
         }
-        // the rule gives the newest release of the device's own major: limited by its
-        // hardware only when it can't run that one (never for a newer major it can't run)
-        let newestOwn = releases(catalog, ctx.platform, days: 0, now: ctx.now).first { $0.version.major == current.major }
+        // the rule gives the newest release of the device's own major that Apple ships for its
+        // model (`pick`): never limited by its hardware for a release Apple shipped to other
+        // models only, nor for a newer major it can't run; a device that can't run its own
+        // major at all has no pick and is unsupported
         guard let pick = newestRelease(catalog, ctx.platform, model: model, boardID: boardID, days: 0, now: ctx.now,
                                        major: current.major) else {
             // nothing in this major is public yet: the version it runs is what it’s held to
@@ -288,15 +289,12 @@ nonisolated enum TargetRules {
             return held
         }
         if let unknown = runsNewer(current, than: pick, catalog, ctx.platform, days: 0, now: ctx.now, osName: osName) { return unknown }
-        let limited = newestOwn.map { pick.version < $0.version } ?? false
         let due = basis(pick, catalog, model: model, boardID: boardID).map { deadline(released: $0.date, days: days, time: time) }
         return DeviceTarget(
             version: pick.version.description, build: catalog.build(of: pick, model: model, boardID: boardID), released: pick.releaseDate, activityFrom: pick.releaseDate,
             deadlineLocal: due,
             deadlineSource: basis(pick, catalog, model: model, boardID: boardID)?.source,
-            reason: "The newest public \(osName) \(current.major) release: \(pick.version)" + (due.map { "; installs by \(day($0))" } ?? "")
-                + (limited ? " (the newest this model can run; it can’t run \(osName) \(newestOwn?.version.description ?? ""))" : ""),
-            limitedByHardware: limited)
+            reason: "The newest public \(osName) \(current.major) release: \(pick.version)" + (due.map { "; installs by \(day($0))" } ?? ""))
     }
 
     /// The newest release at least `days` old that the device can run, in

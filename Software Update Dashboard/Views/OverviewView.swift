@@ -32,7 +32,8 @@ struct OverviewView: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if automation.isOn && !model.trackedBlueprints.isEmpty { AutomationLine(automation: automation) }
+            // also while a run goes on after automatic refresh was turned off, so Stop stays at hand
+            if (automation.isOn || automation.isRunning) && !model.trackedBlueprints.isEmpty { AutomationLine(automation: automation) }
         }
         .navigationTitle("Overview")
         .toolbar {

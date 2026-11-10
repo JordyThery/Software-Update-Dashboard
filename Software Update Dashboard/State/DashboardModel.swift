@@ -37,7 +37,9 @@ final class DashboardModel {
     private(set) var results: [UUID: RefreshResult] = [:]
     private(set) var refreshing: Set<UUID> = []
     /// “12 of 40 devices”, while a Blueprint refreshes.
-    private(set) var progress: [UUID: (done: Int, total: Int)] = [:]
+    private(set) var progress: [UUID: RefreshProgress] = [:]
+    /// The refresh of each tracked Blueprint that is running, so Stop can end it.
+    @ObservationIgnored private var running: [UUID: Task<Void, Never>] = [:]
     private(set) var errors: [UUID: String] = [:]
     private(set) var inspections: [DeviceKey: InspectResult] = [:]
     private(set) var inspecting: Set<DeviceKey> = []
@@ -47,6 +49,11 @@ final class DashboardModel {
     private(set) var unreadableTrackedCopy: String?
     /// Demo Mode’s situation; always sample data outside Demo Mode.
     private(set) var demoSituation: DemoSituation = .sampleData
+    /// The history in memory (`snapshots`, `newestSaved`), and per Blueprint
+    /// the refresh saved before this session’s latest, for the summary.
+    private(set) var historyEntries: [UUID: [HistoryEntry]] = [:]
+    private var newestSnapshots: [UUID: HistorySnapshot] = [:]
+    private var previousSnapshots: [UUID: HistorySnapshot] = [:]
     /// Jamf Pro pages waiting for a yes: more than `JamfProPages.askAbove` at once.
     var pagesToConfirm: [URL]?
     /// Demo Mode: the pages that would have opened, shown instead.
@@ -71,6 +78,26 @@ final class DashboardModel {
         historyOverride = history
         releasesOverride = releases
         (saved, unreadableTrackedCopy) = TrackedBlueprintList.read(from: connections.defaults)
+        // the history into memory now and after every change of connection, also without a window open
+        Task { [weak self] in await self?.followConnection() }
+    }
+
+    /// Loads the history, then waits for the connection in use to change:
+    /// then starts over for the new one (`connectionChanged`).
+    private func followConnection() async {
+        var key = connections.inUseKey
+        await loadHistory()
+        while !Task.isCancelled {
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                withObservationTracking { _ = connections.inUseKey } onChange: { done.resume() }
+            }
+            // the change is told before it is made: read it on the next turn
+            await Task.yield()
+            guard connections.inUseKey != key else { continue }
+            key = connections.inUseKey
+            connectionChanged()
+            await loadHistory()
+        }
     }
 
     // MARK: Tracked Blueprints
@@ -113,7 +140,10 @@ final class DashboardModel {
             saved.removeAll { $0.id == id }
             save()
         }
-        history?.remove(id)
+        if let history { Task.detached(priority: .utility) { history.remove(id) } }
+        historyEntries[id] = nil
+        newestSnapshots[id] = nil
+        previousSnapshots[id] = nil
         if !isDemo { notifier.remove(id) }
         results[id] = nil
         inspections = inspections.filter { $0.key.tracked != id }
@@ -237,9 +267,37 @@ final class DashboardModel {
         return (try? StatusHistory.standardFolder()).map(StatusHistory.init(folder:))
     }
 
-    func snapshots(_ id: UUID) -> [HistorySnapshot] {
-        _ = results[id]?.date
-        return history?.snapshots(for: id) ?? []
+    /// Every saved refresh’s counts, oldest first, for the chart: from
+    /// memory, loaded off the main thread (`loadHistory`) and kept up to date
+    /// on every save. Never decodes full refreshes.
+    func snapshots(_ id: UUID) -> [HistoryEntry] {
+        historyEntries[id] ?? []
+    }
+
+    /// The newest saved refresh of a tracked Blueprint, with its devices:
+    /// from memory, until the next save.
+    func newestSaved(_ id: UUID) -> HistorySnapshot? {
+        newestSnapshots[id]
+    }
+
+    /// Reads the counts and the newest refresh of every tracked Blueprint
+    /// off the main thread; what a refresh of this session saved since stays.
+    func loadHistory() async {
+        guard let history else {
+            historyEntries = [:]
+            newestSnapshots = [:]
+            return
+        }
+        let key = connections.inUseKey
+        let ids = trackedBlueprints.map(\.id)
+        let loaded = await Task.detached(priority: .utility) {
+            ids.map { id in (id, history.entries(for: id), history.latest(for: id)) }
+        }.value
+        guard connections.inUseKey == key else { return }
+        for (id, entries, newest) in loaded where results[id] == nil {
+            historyEntries[id] = entries
+            newestSnapshots[id] = newest
+        }
     }
 
     /// The latest counts: the refresh in this session, else the newest history.
@@ -254,7 +312,21 @@ final class DashboardModel {
         for tracked in trackedBlueprints { await refresh(tracked.id) }
     }
 
+    /// Refreshes a tracked Blueprint; `stopRefresh` can end it.
     func refresh(_ id: UUID) async {
+        guard tracked(id) != nil, !refreshing.contains(id) else { return }
+        let task = Task { await read(id) }
+        running[id] = task
+        await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        running[id] = nil
+    }
+
+    /// Stops the refresh of a tracked Blueprint; the previous one stays.
+    func stopRefresh(_ id: UUID) {
+        running[id]?.cancel()
+    }
+
+    private func read(_ id: UUID) async {
         guard let tracked = tracked(id), !refreshing.contains(id) else { return }
         refreshing.insert(id)
         errors[id] = nil
@@ -273,19 +345,32 @@ final class DashboardModel {
             let catalog = await appleReleases()
             // stopped while Apple's data was read: a stop, not unreachable data
             try Task.checkCancellation()
-            let previous = history?.latest(for: id)
+            // the refresh before, off the main thread (one file, by its name), unless it is in memory
+            let previous: HistorySnapshot?
+            if let newest = newestSnapshots[id] { previous = newest }
+            else if let history { previous = await Task.detached(priority: .utility) { history.latest(for: id) }.value }
+            else { previous = nil }
             let workflow = RefreshWorkflow(client: client, catalog: catalog, serverTimeZone: connections.serverTimeZone)
-            var result = try await workflow.run(tracked, previousScope: previous?.scope) { done, total in
-                Task { @MainActor in self.progress[id] = (done, total) }
+            var result = try await workflow.run(tracked, previousScope: previous?.scope) { step in
+                Task { @MainActor in if self.refreshing.contains(id) { self.progress[id] = step } }
             }
             guard connections.inUseKey == key else { return }
             // nothing measured (the banner says so): a snapshot of zero devices would only drop the chart
             if result.counts.isWorthSaving, let history {
-                if isDemo && previous == nil { seedDemoHistory(result, in: history) }
-                try? history.save(HistorySnapshot(date: result.date, target: result.rule, ruleKey: result.ruleKey, devices: result.devices,
-                                                  scope: result.scope),
-                                  for: id)
+                let seeds = isDemo && previous == nil ? demoHistory(result) : []
+                let snapshot = HistorySnapshot(date: result.date, target: result.rule, ruleKey: result.ruleKey, devices: result.devices,
+                                               scope: result.scope)
+                // saved and read back off the main thread
+                let entries = await Task.detached(priority: .utility) {
+                    for seed in seeds { try? history.save(seed, for: id) }
+                    try? history.save(snapshot, for: id)
+                    return history.entries(for: id)
+                }.value
+                guard connections.inUseKey == key else { return }
+                historyEntries[id] = entries
+                newestSnapshots[id] = snapshot
             }
+            previousSnapshots[id] = previous
             // what changed since the refresh before (this session's, else the history's): never on the first
             let before = results[id]?.devices ?? previous?.devices
             notifier.post(RefreshNotices.between(previous: before, current: result.devices, rule: notifier.rule(for: id, demo: isDemo),
@@ -316,7 +401,8 @@ final class DashboardModel {
     /// each day back, fewer devices on target; four and five days back the
     /// software update was another one, and two and three days back a pilot
     /// group was in the scope too. The chart marks those refreshes.
-    private func seedDemoHistory(_ result: RefreshResult, in history: StatusHistory) {
+    private func demoHistory(_ result: RefreshResult) -> [HistorySnapshot] {
+        var seeds: [HistorySnapshot] = []
         for past in DemoSoftwareUpdate.pastRefreshes(now: result.date)
         where past.blueprintID.lowercased() == result.tracked.blueprintID.lowercased() {
             let block = JamfPlatform.SoftwareUpdateBlock(stepIndex: 0, componentIndex: 0, enforcement: past.enforcement)
@@ -325,10 +411,10 @@ final class DashboardModel {
                 devices[index].category = .inProgress
             }
             let date = result.date.addingTimeInterval(-Double(past.daysAgo) * 86_400)
-            try? history.save(HistorySnapshot(date: date, target: RefreshWorkflow.rule([block]), ruleKey: RefreshWorkflow.ruleKey([block]),
-                                              devices: devices, scope: result.scope + (past.extraScopeGroup.map { [GroupReference($0)] } ?? [])),
-                              for: result.tracked.id)
+            seeds.append(HistorySnapshot(date: date, target: RefreshWorkflow.rule([block]), ruleKey: RefreshWorkflow.ruleKey([block]),
+                                         devices: devices, scope: result.scope + (past.extraScopeGroup.map { [GroupReference($0)] } ?? [])))
         }
+        return seeds
     }
 
     // MARK: Status items
@@ -342,6 +428,43 @@ final class DashboardModel {
         guard let client = try connections.client() else { throw RefreshError("No connection in use.") }
         let items = try await client.statusItems(managementID: managementID, kind: device.isComputer ? .computer : .mobileDevice) ?? []
         return items.sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+    }
+
+    // MARK: Report as PDF
+
+    /// The PDF report of these tracked Blueprints (all when nil), from their
+    /// last refresh in this session and their history; nothing is read from Jamf.
+    func reportPDF(_ ids: [UUID]? = nil, created: Date = Date()) -> Data {
+        let chosen = ids.map { wanted in trackedBlueprints.filter { wanted.contains($0.id) } } ?? trackedBlueprints
+        let parts = chosen.map { ReportPDF.Part(tracked: $0, result: results[$0.id], saved: newestSaved($0.id), snapshots: snapshots($0.id)) }
+        return ReportPDF.make(parts, demo: isDemo, created: created)
+    }
+
+    /// The report’s file name: the Blueprint’s or “All Blueprints”, the day, and Demo in Demo Mode.
+    func reportName(_ id: UUID?, day: Date = Date()) -> String {
+        let name = id.flatMap { tracked($0)?.blueprintName } ?? "All Blueprints"
+        return "\(name) Report \(day.formatted(.iso8601.year().month().day()))\(isDemo ? " (Demo)" : "").pdf"
+    }
+
+    // MARK: Find a device
+
+    /// What Find a Device searches: each tracked Blueprint’s refresh of this
+    /// session, else the newest in its history. Nothing is read from Jamf.
+    func searchSources() -> [DeviceSearch.Source] {
+        trackedBlueprints.map { tracked in
+            if let result = results[tracked.id] { return DeviceSearch.Source(tracked: tracked, devices: result.devices, date: result.date) }
+            let last = newestSaved(tracked.id)
+            return DeviceSearch.Source(tracked: tracked, devices: last?.devices ?? [], date: last?.date)
+        }
+    }
+
+    /// A device the device list is asked to show and select (Find a Device).
+    var deviceToShow: DeviceKey?
+
+    /// Opens a device in its Blueprint’s device list.
+    func show(_ match: DeviceSearch.Match) {
+        selection = .blueprint(match.trackedID)
+        deviceToShow = DeviceKey(tracked: match.trackedID, device: match.device.id)
     }
 
     // MARK: Open in Jamf Pro
@@ -418,7 +541,8 @@ final class DashboardModel {
 
     func summary(_ id: UUID) -> String? {
         guard let result = results[id] else { return nil }
-        let previous = StatusSummary.previous(history?.latest(for: id, before: result.date), target: result.rule, ruleKey: result.ruleKey)
+        // the refresh saved before this one, kept in memory by the refresh (no reading here)
+        let previous = StatusSummary.previous(previousSnapshots[id], target: result.rule, ruleKey: result.ruleKey)
         var notes: [String] = []
         if let change = result.scopeChange { notes.append(change.text) }
         if let line = BlueprintHealth.dashboardLine(result.notCoveredCount) { notes.append(line) }
@@ -440,6 +564,9 @@ final class DashboardModel {
     /// When the connection in use changes, nothing of the previous one stays.
     func connectionChanged() {
         results = [:]
+        historyEntries = [:]
+        newestSnapshots = [:]
+        previousSnapshots = [:]
         errors = [:]
         inspections = [:]
         forgetReleaseData()

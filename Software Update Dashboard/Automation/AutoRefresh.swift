@@ -104,9 +104,15 @@ final class AutoRefresh {
         let problems = await task.value
         current = nil
         lastRun = now()
-        lastError = problems.isEmpty ? nil : problems.joined(separator: "\n")
+        // a Stop is no problem: said as such, not as an error
+        wasStopped = task.isCancelled
+        let errors = problems.filter { !$0.hasSuffix(": Stopped.") }
+        lastError = errors.isEmpty ? nil : errors.joined(separator: "\n")
         isRunning = false
     }
+
+    /// The last run was stopped by Stop.
+    private(set) var wasStopped = false
 
     @ObservationIgnored private var current: Task<[String], Never>?
 

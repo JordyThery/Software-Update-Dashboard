@@ -88,11 +88,11 @@ struct DeviceListView: View {
                     .accessibilityLabel("Remove filter: \(readiness.title)")
                 }
                 Spacer()
-                Button("Inspect Devices Needing Attention") {
+                Button("Inspect Devices to Check") {
                     inspect(Set(InspectWorkflow.select(result.devices).map(\.id)))
                 }
                 .disabled(InspectWorkflow.select(result.devices).isEmpty || model.isInspecting(in: result.tracked.id))
-                .help("Look for the likely cause on every device whose diagnosis needs attention")
+                .help("Look for the likely cause on every device to check: those whose diagnosis needs someone to look at it")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -115,7 +115,10 @@ struct DeviceListView: View {
         .onChange(of: result.tracked.id) {
             // another Blueprint’s devices: nothing of the one before stays selected
             selection = []
+            showRequestedDevice()
         }
+        .onAppear(perform: showRequestedDevice)
+        .onChange(of: model.deviceToShow) { showRequestedDevice() }
         .toolbar {
             ToolbarItem {
                 Button {
@@ -131,6 +134,17 @@ struct DeviceListView: View {
     /// The selection, without devices that aren’t in this refresh.
     private var selected: Set<DeviceStatus.ID> {
         selection.intersection(result.devices.map(\.id))
+    }
+
+    /// Find a Device asked for one of these devices: every filter off, the device selected.
+    private func showRequestedDevice() {
+        guard let wanted = model.deviceToShow, wanted.tracked == result.tracked.id else { return }
+        model.deviceToShow = nil
+        category = nil
+        readiness = nil
+        search = ""
+        selection = [wanted.device]
+        showsDetail = true
     }
 
     private func pages(_ ids: Set<DeviceStatus.ID>) -> [URL] {
@@ -280,6 +294,9 @@ struct DeviceDetailView: View {
                         Text("Likely cause").font(.subheadline).foregroundStyle(.secondary)
                         Text(inspection.cause).font(.headline)
                         Text(inspection.detail).foregroundStyle(.secondary)
+                        if !inspection.onTarget, let problem = HelpContent.problem(forCause: inspection.cause, detail: inspection.detail) {
+                            KnownProblemLink(problem: problem)
+                        }
                     }
                     let others = inspection.alsoFound
                     if !others.isEmpty {
@@ -289,6 +306,9 @@ struct DeviceDetailView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(finding.cause)
                                 Text(finding.detail).foregroundStyle(.secondary)
+                                if let problem = HelpContent.problem(forCause: finding.cause, detail: finding.detail, likely: false) {
+                                    KnownProblemLink(problem: problem)
+                                }
                             }
                         }
                     }

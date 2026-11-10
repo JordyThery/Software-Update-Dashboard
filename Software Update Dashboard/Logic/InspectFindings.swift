@@ -367,8 +367,19 @@ nonisolated enum InspectFindings {
         }
         // the battery matters only for an install: downloaded or installing, not a download
         let installing = status?.installState == .prepared || status?.installState == .installing
-        if installing, let level = member.batteryLevel, level < 50 {
-            add("Low battery", "\(level)% at the last inventory; installs need 50% or a charger")
+        // Apple's minimums (Help › Known Problems): 20% for a user-initiated install on iPhone
+        // and iPad, 30% for an automatic one; Apple gives no figure for an enforced update. So
+        // low only with a battery error or under 20%; under 30% an automatic install may wait
+        let batteryError = [status?.failure?.reason, row?.error].compactMap { $0 }.joined(separator: " ")
+            .range(of: "[Bb]attery", options: .regularExpression) != nil
+        if batteryError {
+            add("Low battery", "The device reported a battery error"
+                + (member.batteryLevel.map { " (\($0)% at the last inventory)" } ?? "") + "; it installs once it’s charged or on power")
+        } else if installing, let level = member.batteryLevel, level < 20 {
+            add("Low battery", "\(level)% at the last inventory, under the 20% Apple asks for to install an update")
+        } else if installing, member.kind == .mobileDevice, let level = member.batteryLevel, level < 30 {
+            add("Battery under the automatic minimum",
+                "\(level)% at the last inventory: an automatic install may wait for charging (Apple asks for 30% on iPhone and iPad)")
         }
         if member.roaming == true {
             add("Roaming on mobile data", "Updates are normally downloaded over Wi-Fi: check that the device has a Wi-Fi network")

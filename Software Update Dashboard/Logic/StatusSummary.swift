@@ -108,7 +108,7 @@ nonisolated enum StatusSummary {
         }
         let attention = devices.filter(\.needsAttention)
         if !attention.isEmpty {
-            lines.append("  Needs attention: \(attention.count) \(attention.count == 1 ? "device" : "devices")"
+            lines.append("  Devices to check: \(attention.count) \(attention.count == 1 ? "device" : "devices")"
                          + (attention.count > 10 ? " (first 10; all in the CSV)" : ""))
             for device in attention.prefix(10) {
                 lines.append("    \(device.name)  \(device.modelIdentifier)  \(device.osName) \(device.currentOS.isEmpty ? "?" : device.currentOS)"

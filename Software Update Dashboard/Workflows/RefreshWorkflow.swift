@@ -105,6 +105,18 @@ nonisolated struct RefreshResult: Sendable {
     var pastDeadline: Int { devices.filter { $0.pastDeadline == true }.count }
 }
 
+/// Where a refresh is: the step, and how far it is when it counts something.
+nonisolated struct RefreshProgress: Sendable, Hashable {
+    var step: String
+    var done = 0
+    var total = 0
+    /// What it counts, in the plural (“devices”, “declarations”, “groups”).
+    var unit = ""
+
+    /// “Reading Blueprint health, 3 of 18 declarations”.
+    var text: String { total > 0 ? "\(step), \(done) of \(total) \(unit)" : step }
+}
+
 /// Apple’s release data couldn’t be read at all: no device’s target is
 /// known, so the refresh stops and the previous one is kept.
 nonisolated struct AppleDataUnavailable: LocalizedError, Equatable {
@@ -126,13 +138,15 @@ nonisolated struct RefreshWorkflow: Sendable {
     var parallel = 4
 
     func run(_ tracked: TrackedBlueprint, previousScope: [GroupReference]? = nil, now: Date = Date(),
-             progress: @Sendable (Int, Int) -> Void = { _, _ in }) async throws -> RefreshResult {
+             progress: @Sendable (RefreshProgress) -> Void = { _ in }) async throws -> RefreshResult {
         guard let catalog else { throw AppleDataUnavailable() }
+        progress(RefreshProgress(step: "Reading the Blueprint"))
         let (blueprint, blocks) = try await JamfPlatform.Blueprints(client: client).softwareUpdate(blueprintID: tracked.blueprintID)
         var problems = catalog.problems
         if blocks.isEmpty { problems.append("The Blueprint has no software update.") }
 
         // the scope, read on every refresh
+        progress(RefreshProgress(step: "Reading the Blueprint’s scope"))
         let platformGroups = try await client.platformGroups()
         let groups = try await client.jamfProGroups()
         let keys = GroupChoice.scope(platformGroupIDs: blueprint.scopeDeviceGroups, platformGroups: platformGroups)
@@ -146,16 +160,20 @@ nonisolated struct RefreshWorkflow: Sendable {
         // each device once, also when it is in several scope groups
         var members: [JamfPro.GroupMember] = []
         var seen = Set<String>()
-        for group in scope {
+        for (number, group) in scope.enumerated() {
+            progress(RefreshProgress(step: "Reading group members", done: number, total: scope.count, unit: "groups"))
             for member in try await client.members(of: group.group) where seen.insert(Self.key(member)).inserted {
                 members.append(member)
             }
         }
 
-        var inputs = try await statuses(members, progress: progress)
+        progress(RefreshProgress(step: "Reading status reports", done: 0, total: members.count, unit: "devices"))
+        var inputs = try await statuses(members) { done, total in
+            progress(RefreshProgress(step: "Reading status reports", done: done, total: total, unit: "devices"))
+        }
         // the Blueprint's update declarations, as the devices list them: each read once, for every device
         let identifiers = BlueprintHealth.identifiers(blueprintID: tracked.blueprintID, statuses: inputs.map(\.status), blocks: blocks)
-        let declarations = try await declarationReports(identifiers, inputs: &inputs)
+        let declarations = try await declarationReports(identifiers, inputs: &inputs, progress: progress)
         var deviceIDs: [String: String] = [:]
         for input in inputs {
             if let platformID = input.platformDeviceID?.lowercased() { deviceIDs[platformID] = Self.key(input.member) }
@@ -204,6 +222,7 @@ nonisolated struct RefreshWorkflow: Sendable {
 
         var coverage: Coverage?
         if let compare = tracked.compareGroup {
+            progress(RefreshProgress(step: "Reading the comparison group"))
             let compared = try await client.members(of: compare.group)
             coverage = Coverage(group: compare, members: compared.count,
                                 notReached: compared.filter { !seen.contains(Self.key($0)) })
@@ -228,9 +247,10 @@ nonisolated struct RefreshWorkflow: Sendable {
     /// refusal or a failed read stops the reading and is returned as the
     /// problem (never as “serial not found”); a declaration nothing reported
     /// gives none. A stop is thrown, so a stopped refresh is never saved.
-    func declarationReports(_ identifiers: [String],
-                            inputs: inout [DeviceInput]) async throws -> (reports: [JamfPlatform.DeclarationReport], problem: String?) {
+    func declarationReports(_ identifiers: [String], inputs: inout [DeviceInput],
+                            progress: @Sendable (RefreshProgress) -> Void = { _ in }) async throws -> (reports: [JamfPlatform.DeclarationReport], problem: String?) {
         guard !identifiers.isEmpty else { return ([], nil) }
+        progress(RefreshProgress(step: "Reading the device list"))
         let platformDevices: [JamfPlatform.Device]
         do {
             platformDevices = try await client.devices()
@@ -258,8 +278,12 @@ nonisolated struct RefreshWorkflow: Sendable {
                     group.addTask { try await client.declarationReports(declarationIdentifier: identifier) ?? [] }
                 }
                 for _ in 0..<max(1, parallel) { start() }
+                var read = 0
+                progress(RefreshProgress(step: "Reading Blueprint health", done: 0, total: identifiers.count, unit: "declarations"))
                 while let found = try await group.next() {
                     reports += found
+                    read += 1
+                    progress(RefreshProgress(step: "Reading Blueprint health", done: read, total: identifiers.count, unit: "declarations"))
                     start()
                 }
             }

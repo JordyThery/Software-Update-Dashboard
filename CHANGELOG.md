@@ -1,22 +1,24 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-11-10
 
-- **Automatic refresh** in a new Automation tab in Settings: off, or every 1, 4 or 8 hours. Every tracked Blueprint is read one after another and each refresh is kept in its history. The Overview shows the last and next refresh, any problem, and a Stop button while it runs. A refresh that fails keeps the previous one and is tried again at the next interval.
-- **Keep this Mac awake** while automatic refresh is on, only while the Mac is on power (off by default). After a sleep, automatic refresh catches up once.
+- **Readiness** on the dashboard: how many devices can’t get an enforced update as they are: iPhones and iPads enrolled with User Enrollment, Macs that aren’t supervised, devices on an OS too old for update declarations (iOS and iPadOS 16 or earlier, macOS 13 or earlier), devices without declarative device management, and devices that never reported. Each number shows those devices in the list.
+- **Help** (Help › Software Update Dashboard Help, ⌘?): how each category is decided, where a device’s target and deadline come from, what an earlier step of the Blueprint is, what Readiness counts and what Inspect does. Known Problems describes reasons an update doesn’t install, each with a link to Apple’s own page about it, and Inspect links to the problem it finds.
+- **Find a Device** (⇧⌘F, also in the toolbar and the Device menu): a device by serial number or name in every tracked Blueprint, from its last refresh, opened in its Blueprint’s device list.
+- **Open in Jamf Pro:** a device’s page (from its detail, the device list’s context menu, or Device › Open in Jamf Pro, ⌥⌘O) or the Blueprint’s page, in your browser. Device pages open read-only, and opening more than 10 devices at once asks first. It uses the Jamf Pro web address you add to the connection in Settings › Connections.
+- **Export Report as PDF:** for the Blueprint on screen or all tracked Blueprints, with what the dashboard shows and the devices to check, from each Blueprint’s last refresh.
+- **Automatic refresh** in a new Automation tab in Settings: off, or every 1, 4 or 8 hours. Every tracked Blueprint is read one after another and each refresh is kept in its history. The Overview shows the last and next refresh, any problem, and a Stop button while it runs. A refresh that fails keeps the previous one and is tried again at the next interval. It can keep this Mac awake while it’s on power (off by default); after a sleep it catches up once.
 - **Open at login** and **Show in menu bar** in Settings › General. The menu bar item shows each tracked Blueprint’s share on target with a colored dot, Refresh All and Open Window.
-- **Notifications per tracked Blueprint** (Blueprint › Notifications…): when the share on target reaches or drops below a level you choose, and when devices are newly failed or stuck. Only a change between two refreshes notifies, never the first refresh. Permission is asked when you turn a notification on.
-- **Readiness** now counts iPhones and iPads enrolled with User Enrollment and Macs that aren’t supervised, the devices that can’t get an enforced update. An unsupervised iPhone or iPad with a device enrollment no longer counts.
-- **A device reporting an older pending version with the deadline of the Blueprint’s newer version** is measured against the newer version and its deadline, with the older one shown as the earlier step it installs first.
-- **Past the deadline:** Deadline per Time Zone lists a device at an earlier step’s passed deadline only when it counts as past that deadline, also when the step failed; a device still installing the step stays at its current deadline. The dashboard’s number and the table agree.
-- **Hardware to Replace** lists a device only when it can’t run the version the Blueprint gives it: for minor updates, a Mac that can’t run the newest major but runs its own major’s newest release is no longer marked.
-- **The device detail** shows a pending version the device already runs as “already installed, ignored”.
-- **Open in Jamf Pro:** open a device’s page (from its detail, the device list’s context menu, or Device › Open in Jamf Pro, ⌥⌘O) or the Blueprint’s page in your browser. Device pages open read-only, and opening more than 10 devices at once asks first. It uses the Jamf Pro web address you add to the connection in Settings › Connections.
-- **Readiness** on the dashboard: how many devices aren’t supervised (iPhones and iPads), don’t use declarative device management, or have never reported; each number shows those devices in the list.
-- **A device that has the Blueprint’s current version pending with the deadline of its earlier step** (for example 27.2.1 due on 27.2’s deadline) is no longer counted as past its deadline: the Blueprint’s current deadline counts, and the earlier deadline is shown and labeled, also in Deadline per Time Zone.
-- **An earlier step whose deadline Jamf counted from another posting date of the same version** is now recognized as this Blueprint’s earlier step.
-- **A device with update failures since the update started** and nothing in progress counts as Failed, not Not started.
+- **Notifications per tracked Blueprint** (Blueprint › Notifications…): when the share on target reaches or drops below a level you choose, and when devices are newly failed or stuck. Only a change between two refreshes notifies. Permission is asked when you turn a notification on.
+- **Refreshing** shows each step as it goes, for example “Reading Blueprint health, 3 of 18 declarations”, and can be stopped; the previous refresh stays.
+- **The history** stays small and quick to read with frequent refreshes: counts are kept for 180 days, full refreshes for 7 days and then the newest of each day.
+- **Earlier steps of the Blueprint** are recognized in more cases: a device that reports the older version pending with the newer version’s deadline, or the current version with the earlier step’s deadline, is measured against the Blueprint’s current version and deadline, with the earlier step shown. Deadline per Time Zone lists a device at an earlier step’s passed deadline only when it counts as past that deadline, so the dashboard’s number and the table agree.
+- **Hardware to Replace** no longer lists a device that runs the newest release of its own major that Apple ships for its model, under a Blueprint for minor updates.
+- **A device with update failures since the update started** and nothing in progress now counts as Failed instead of Not started.
+- **Clearer diagnoses:** a download declined over a cellular connection (the device needs Wi-Fi), a passcode that has to be entered to install (also while the update downloads), and an OS too old for update declarations.
+- **Battery** in Inspect follows Apple’s minimums: low under 20% or with a battery error; under 30% on iPhone and iPad an automatic install may wait for charging.
 - **Inspect** no longer lists update errors from before a device on target installed its target.
+- **The device detail** shows a pending version the device already runs as “already installed, ignored”.
 
 ## 0.2.0 — 2026-11-10
 
