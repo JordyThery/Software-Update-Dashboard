@@ -34,12 +34,13 @@ struct InspectFindingsTests {
     func ordering() {
         var member = Sample.iPad()
         member.supervised = false
+        member.appleEnrollmentType = "user"
         member.availableSpaceMB = 2_100
         member.batteryLevel = 35
         // downloaded, waiting to install: the battery matters
         let result = evaluate(member, status: Sample.status([("device.operating-system.version", "26.7.1"),
                                                              ("softwareupdate.install-state", "prepared")]))
-        #expect(result.cause == "Not supervised")
+        #expect(result.cause == "User Enrollment")
         let all = result.findings.map { "\($0.cause): \($0.detail)" }
         #expect(all.contains("Low storage: 2.1 GB free of 62.5 GB"))
         #expect(all.contains("Low battery: 35% at the last inventory; installs need 50% or a charger"))

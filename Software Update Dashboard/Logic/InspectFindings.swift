@@ -146,7 +146,13 @@ nonisolated enum InspectFindings {
 
         if let problem = input.problem { add("Could not be inspected", problem) }
         if member.managed == false { add("Not managed", "Jamf Pro lists the device as unmanaged") }
-        if isMobile && member.supervised == false { add("Not supervised", "The update enforcement needs a supervised device") }
+        // Apple's enforced update: supervised or device enrollments on iOS and iPadOS, supervised Macs only
+        if isMobile && member.isUserEnrollment == true {
+            add("User Enrollment", "The device is enrolled with User Enrollment, which doesn’t get an enforced software update")
+        }
+        if !isMobile && member.supervised == false {
+            add("Not supervised", "A Mac gets an enforced software update only when it’s supervised")
+        }
         if member.ddmEnabled == false {
             add("Declarative management off", "The device doesn’t use declarative device management, so the Blueprint can’t reach it")
         }
@@ -735,9 +741,20 @@ nonisolated struct DeclarationPair: Sendable, Hashable {
 
 /// Texts the device detail and Inspect share.
 nonisolated enum DeviceDetailText {
-    /// Why a target shows in orange: the model can’t run the newest release of its OS.
+    /// Why a target shows in orange: the model can’t run the version the
+    /// Blueprint’s rule gives, so it is measured against the newest it can.
     static func hardwareLimit(_ device: DeviceStatus) -> String {
-        "This model can’t run the newest \(device.osName): it is on the hardware to replace"
+        "This model can’t run the \(device.osName) version the Blueprint asks for, so it is measured against the newest it can run; "
+            + "it is on the hardware to replace"
+    }
+
+    /// The pending version, said to be ignored when the device already runs it or a newer one.
+    static func pendingVersion(_ device: DeviceStatus) -> String {
+        guard let pending = device.pendingVersion else { return "–" }
+        if let version = OSVersion(pending), let current = OSVersion(device.currentOS), version <= current {
+            return "\(pending) (already installed, ignored)"
+        }
+        return pending
     }
 
     /// A Mac’s bootstrap token as Jamf Pro reports it.

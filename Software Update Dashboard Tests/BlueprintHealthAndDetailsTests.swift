@@ -415,9 +415,9 @@ struct DemoFeatureTests {
     func macHealth() async throws {
         let (model, result) = try await refreshed("Contoso – Mac Update")
         let health = try #require(result.health)
-        // the ranges for macOS 26 and 15 apply to no Studio Mac: collapsed into one line
-        #expect(health.declarations.map(\.name) == ["Contoso – Mac Update, macOS 27.0 to 27.0.1"])
-        #expect(health.inapplicable == 2)
+        // the range for macOS 26 applies to no Studio Mac: collapsed into one line (Studio Mac 11 is on 15.7.3)
+        #expect(health.declarations.map(\.name) == ["Contoso – Mac Update, macOS 27.0 to 27.0.1", "Contoso – Mac Update, macOS 15.0 to 15.7.3"])
+        #expect(health.inapplicable == 1)
         #expect(health.declarations.first?.awaitingSync == 1)
         #expect(health.unmatchedDevices == 0 && health.devicesWithoutPlatformID == 0)
         let byName = Dictionary(uniqueKeysWithValues: result.devices.map { ($0.name, $0) })
@@ -701,20 +701,23 @@ struct HandCheckFixTests {
         #expect(result.findings.contains { $0.cause == "Not evaluated since the update started" })
     }
 
-    @Test("Deadline per Time Zone: an earlier step past its own deadline is listed under that step, for any major and also while installing")
+    @Test("Deadline per Time Zone: an earlier step is listed at its passed deadline only when the device counts as past it")
     func earlierStepZone() {
         var device = InspectCurrentDeclarationsTests.row().2
         device.targetVersion = "27.2.1"
         device.deadlineLocal = "2026-11-23T23:59:00"
         device.earlierStepVersion = "27.2"
         device.earlierStepDeadline = Sample.date("2026-11-04T22:59:00")
+        // still installing the step (not lapsed): at its current target's deadline
         device.earlierStepLapsed = nil
+        device.pastDeadline = false
+        #expect(DeadlineZones.zones(devices: [device], now: Sample.now).map(\.target) == ["27.2.1"])
+        // lapsed and counted as past: at the step and its deadline, for any major
+        device.earlierStepLapsed = true
+        device.pastDeadline = true
         let zones = DeadlineZones.zones(devices: [device], now: Sample.now)
         #expect(zones.map(\.target) == ["27.2, earlier step"])
         #expect(zones.first?.deadline == device.earlierStepDeadline)
-        // before the step's own deadline: the current target and its deadline
-        let before = DeadlineZones.zones(devices: [device], now: Sample.date("2026-11-04T12:00:00"))
-        #expect(before.map(\.target) == ["27.2.1"])
     }
 
     @Test("Another Blueprint’s declaration is named without its ID")

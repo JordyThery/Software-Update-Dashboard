@@ -277,24 +277,25 @@ nonisolated enum TargetRules {
             }
             return DeviceTarget(reason: "Apple’s release data has no \(osName) \(current.major) release", unknown: .noReleaseForPlatform)
         }
-        let newestMajor = knownMajors.first ?? current.major
-        let limited = newestMajor > current.major
-            && catalog.supports(model: model, boardID: boardID, major: newestMajor, ctx.platform) == false
+        // the rule gives the newest release of the device's own major: limited by its
+        // hardware only when it can't run that one (never for a newer major it can't run)
+        let newestOwn = releases(catalog, ctx.platform, days: 0, now: ctx.now).first { $0.version.major == current.major }
         guard let pick = newestRelease(catalog, ctx.platform, model: model, boardID: boardID, days: 0, now: ctx.now,
                                        major: current.major) else {
             // nothing in this major is public yet: the version it runs is what it’s held to
-            var held = DeviceTarget(version: current.description, reason: "No public \(osName) \(current.major) release yet",
-                                    limitedByHardware: limited)
+            var held = DeviceTarget(version: current.description, reason: "No public \(osName) \(current.major) release yet")
             held.heldToCurrent = true
             return held
         }
         if let unknown = runsNewer(current, than: pick, catalog, ctx.platform, days: 0, now: ctx.now, osName: osName) { return unknown }
+        let limited = newestOwn.map { pick.version < $0.version } ?? false
         let due = basis(pick, catalog, model: model, boardID: boardID).map { deadline(released: $0.date, days: days, time: time) }
         return DeviceTarget(
             version: pick.version.description, build: catalog.build(of: pick, model: model, boardID: boardID), released: pick.releaseDate, activityFrom: pick.releaseDate,
             deadlineLocal: due,
             deadlineSource: basis(pick, catalog, model: model, boardID: boardID)?.source,
-            reason: "The newest public \(osName) \(current.major) release: \(pick.version)" + (due.map { "; installs by \(day($0))" } ?? ""),
+            reason: "The newest public \(osName) \(current.major) release: \(pick.version)" + (due.map { "; installs by \(day($0))" } ?? "")
+                + (limited ? " (the newest this model can run; it can’t run \(osName) \(newestOwn?.version.description ?? ""))" : ""),
             limitedByHardware: limited)
     }
 
@@ -321,16 +322,6 @@ nonisolated enum TargetRules {
                       boardID: String?) -> (date: Date, source: DeadlineSource)? {
         if let posted = catalog.publicPosting(of: release, model: model, boardID: boardID)?.date { return (posted, .postingDate) }
         return release.releaseDate.map { ($0, .releaseDate) }
-    }
-
-    /// The model can’t run the platform’s newest major: it belongs on the
-    /// hardware to replace, measured against its own target. The same
-    /// recognition as the targets (`runs`, by the major when the release
-    /// lists don’t know the device).
-    static func cannotRunNewestMajor(_ catalog: AppleReleases.Catalog, _ platform: AppleReleases.Platform,
-                                     model: String?, boardID: String?) -> Bool {
-        guard let newest = catalog.majors(platform).first else { return false }
-        return catalog.supports(model: model, boardID: boardID, major: newest, platform) == false
     }
 
     /// A device already on a release Apple shipped to it, old enough for
@@ -398,6 +389,16 @@ nonisolated enum TargetRules {
                 return rule
             }
         }
+        // the other way round: Jamf already sent the rule's version, with its deadline,
+        // and the device still reports this older version of the same major pending;
+        // only when Apple's data lists the rule's version for this device
+        func movedOn() -> Bool {
+            guard let ruleVersion = rule.osVersion, ruleVersion.major == version.major, let ruleDue = rule.deadlineLocal,
+                  let catalog, let ruleRelease = catalog.release(ruleVersion, platform),
+                  catalog.supports(release: ruleRelease, model: model, boardID: boardID) == true else { return false }
+            return sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: ruleDue)
+                && sameClock(reported: pending.targetDate, reportedLocal: reportedLocal, expected: ruleDue, timeZone: timeZone)
+        }
         // this Blueprint's earlier step: sent before Apple posted the newer
         // version its rule now gives, recognized by the deadline it came with
         func isEarlierStep() -> Bool {
@@ -408,7 +409,7 @@ nonisolated enum TargetRules {
                 sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected)
                     && sameClock(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected, timeZone: timeZone)
             }) { return true }
-            return awaitingSync && !window.isEmpty
+            return awaitingSync && !window.isEmpty || movedOn()
         }
         if !rule.namedByBlueprint, let ruleVersion = rule.osVersion, version < ruleVersion, isEarlierStep() {
             // its own deadline as a moment: reported, or its local time in the device's zone (this Mac's for a Mac)

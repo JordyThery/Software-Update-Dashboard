@@ -172,6 +172,8 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var supervised: Bool?
     var ddmEnabled: Bool?
     var neverReported: Bool?
+    /// An iPhone or iPad enrolled with User Enrollment (Jamf Pro’s inventory).
+    var userEnrollment: Bool?
 
     /// The device by kind and number: a Mac and an iPad can share a number.
     var id: String { "\(isComputer ? "computer" : "mobileDevice")/\(jamfID)" }
@@ -240,6 +242,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case supervised
         case ddmEnabled
         case neverReported
+        case userEnrollment
     }
 
     /// The newer of the version the device reports and the one in its
@@ -409,7 +412,8 @@ nonisolated enum Classifier {
             batteryHealth: status?.batteryHealth ?? member.batteryHealth,
             supervised: member.supervised, ddmEnabled: member.ddmEnabled,
             // no report at all (none, or one without a single item); a report that couldn't be read isn't that
-            neverReported: input.statusProblem == nil && (status.map { $0.itemCount == 0 && $0.osVersion == nil } ?? true))
+            neverReported: input.statusProblem == nil && (status.map { $0.itemCount == 0 && $0.osVersion == nil } ?? true),
+            userEnrollment: member.kind == .mobileDevice ? member.isUserEnrollment : nil)
     }
 
     /// One device measured against its own target (`TargetRules`): its

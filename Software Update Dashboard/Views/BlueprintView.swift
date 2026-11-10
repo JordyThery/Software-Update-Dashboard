@@ -381,7 +381,7 @@ struct ReadinessSection: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Readiness").font(.headline)
             if ReadinessCheck.allCases.allSatisfy({ ReadinessCheck.count($0, in: devices) == 0 }) {
-                Text("Every device is supervised where needed, uses declarative device management and has reported.")
+                Text("No device is enrolled with User Enrollment, every Mac is supervised, and every device uses declarative device management and has reported.")
                     .foregroundStyle(.secondary)
             } else {
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 6) {

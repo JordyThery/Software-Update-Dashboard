@@ -64,11 +64,11 @@ struct CarriedDeadlineTests {
         #expect(device.pastDeadline == false)
         #expect(device.diagnosis == "Downloaded, holds the deadline of the earlier step 27.2")
         #expect(!device.needsAttention)
-        // Deadline per Time Zone lists it at the kept deadline, labeled
+        // Deadline per Time Zone labels it, at the deadline that counts (0.3 round 2: the rows agree with the count)
         let zones = DeadlineZones.zones(devices: [device], here: Sample.utc, now: Self.now)
         let row = try #require(zones.first)
-        #expect(row.target == "27.2.1, with the deadline of earlier step 27.2")
-        #expect(row.deadline == Sample.date("2026-11-02T22:59:06"))
+        #expect(row.target == "27.2.1, still holds the deadline of earlier step 27.2")
+        #expect(row.deadline == Sample.date("2026-11-16T23:59:00"))
         // Inspect says it
         let found = InspectFindings.evaluate(
             InspectInput(member: Sample.mac(os: "27.2", model: "iMac21,2"), status: status, device: device, platformDeviceID: "P-1", reports: []),
@@ -228,25 +228,33 @@ struct OpenAndReadinessTests {
         #expect(ContentView.demoPagesText([page]).contains(page.absoluteString))
     }
 
-    @Test("Readiness: not supervised (iPhones and iPads), no declarative management, never reported")
+    @Test("Readiness: User Enrollment (iPhones and iPads), Macs not supervised, no declarative management, never reported")
     func readiness() {
-        var unsupervised = Sample.iPad("1")
-        unsupervised.supervised = false
-        var noDDM = Sample.iPad("2")
+        // an unsupervised iPad with a device enrollment is fine: Apple allows the enforced update
+        var deviceEnrolled = Sample.iPad("1")
+        deviceEnrolled.supervised = false
+        deviceEnrolled.appleEnrollmentType = "device"
+        var userEnrolled = Sample.iPad("2")
+        userEnrolled.supervised = false
+        userEnrolled.deviceOwnershipType = "AccountDrivenUserEnrollment"
+        var noDDM = Sample.iPad("3")
         noDDM.ddmEnabled = false
-        var mac = Sample.mac("3")
+        var mac = Sample.mac("4")
         mac.supervised = false
+        let os = Sample.status([("device.operating-system.version", "26.7.1")])
         let devices = [
-            Sample.classify(unsupervised, Sample.status([("device.operating-system.version", "26.7.1")])),
-            Sample.classify(noDDM, Sample.status([("device.operating-system.version", "26.7.1")])),
-            // a Mac doesn't need supervision; it never reported
+            Sample.classify(deviceEnrolled, os), Sample.classify(userEnrolled, os), Sample.classify(noDDM, os),
+            // a Mac that isn't supervised; it never reported
             Sample.classify(mac, nil),
             // a report that couldn't be read isn't "never reported"
-            Sample.classify(Sample.iPad("4"), nil, problem: "HTTP 403"),
+            Sample.classify(Sample.iPad("5"), nil, problem: "HTTP 403"),
         ]
-        #expect(ReadinessCheck.count(.notSupervised, in: devices) == 1)
-        #expect(ReadinessCheck.count(.noDeclarativeManagement, in: devices) == 1)
-        #expect(devices.filter(ReadinessCheck.neverReported.applies).map(\.jamfID) == ["3"])
+        #expect(devices.filter(ReadinessCheck.userEnrollment.applies).map(\.jamfID) == ["2"])
+        #expect(devices.filter(ReadinessCheck.macNotSupervised.applies).map(\.jamfID) == ["4"])
+        #expect(devices.filter(ReadinessCheck.noDeclarativeManagement.applies).map(\.jamfID) == ["3"])
+        #expect(devices.filter(ReadinessCheck.neverReported.applies).map(\.jamfID) == ["4"])
+        // without the enrollment in the inventory, nothing is guessed
+        #expect(!ReadinessCheck.userEnrollment.applies(to: Sample.classify(Sample.iPad("6"), os)))
     }
 
     @Test("Demo Mode’s sample devices give every readiness count something to open")
@@ -259,6 +267,8 @@ struct OpenAndReadinessTests {
             await model.refresh(tracked.id)
             devices += model.results[tracked.id]?.devices ?? []
         }
-        #expect(ReadinessCheck.count(.notSupervised, in: devices) > 0)
+        #expect(devices.filter(ReadinessCheck.userEnrollment.applies).map(\.name) == ["Field iPad 14"])
+        #expect(devices.filter(ReadinessCheck.macNotSupervised.applies).map(\.name) == ["Studio Mac 11"])
+        #expect(ReadinessCheck.count(.neverReported, in: devices) > 0)
     }
 }

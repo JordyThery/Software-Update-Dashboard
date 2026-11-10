@@ -143,10 +143,10 @@ struct TargetRulesTests {
         #expect(Self.target(.semantic(minorEnforceAfterDays: 0, deploymentTime: nil), os: "26.7.1", now: "2026-10-26T01:00:00").version == "26.7.2")
     }
 
-    @Test("Minor updates on hardware that stops at an older major: its own major, and noted")
+    @Test("Minor updates on hardware that stops at an older major: its own major, not marked (it runs what the rule gives)")
     func minorLimited() {
         let target = Self.target(.semantic(minorEnforceAfterDays: 14, deploymentTime: nil), os: "15.8.2", model: "MacBookPro15,2")
-        #expect(target.version == "15.8.2" && target.limitedByHardware)
+        #expect(target.version == "15.8.2" && !target.limitedByHardware)
     }
 
     @Test("Minor updates without releases of the device’s major, or without Apple’s data")

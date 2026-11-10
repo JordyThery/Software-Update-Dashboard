@@ -288,7 +288,7 @@ nonisolated struct RefreshWorkflow: Sendable {
                                          blueprintChanged: blueprint.overview.updatedDate, updateStarted: tracked.updateStarted,
                                          now: now))
         // what Jamf actually sent the device comes first, when it reports it
-        var target = TargetRules.fromDevice(rule, status: input.status, os: os, osName: osName, catalog: catalog,
+        let target = TargetRules.fromDevice(rule, status: input.status, os: os, osName: osName, catalog: catalog,
                                             platform: platform, serverTimeZone: serverTimeZone, model: model,
                                             boardID: input.status?.deviceID, blueprintChanged: blueprint.overview.updatedDate,
                                             earlierStepDeadline: { [catalog] version in
@@ -301,12 +301,6 @@ nonisolated struct RefreshWorkflow: Sendable {
                                             },
                                             awaitingSync: awaitingSync,
                                             timeZone: member.timeZone, now: now)
-        // hardware that can't run the newest major stays on the list to
-        // replace, whichever source gave its target
-        if target.unknown == nil, !target.noApplicableRelease, let catalog {
-            target.limitedByHardware = target.limitedByHardware
-                || TargetRules.cannotRunNewestMajor(catalog, platform, model: model, boardID: input.status?.deviceID)
-        }
         let base = ClassificationContext(target: nil, since: nil, serverTimeZone: serverTimeZone, now: now, staleDays: staleDays,
                                          catalog: catalog, platform: platform)
         return Classifier.classify(input, target: target, context: base)

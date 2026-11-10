@@ -76,7 +76,7 @@ struct GroupChoiceTests {
         let mobile = try #require(choice.group(.init(kind: .mobileDevice, groupID: DemoSoftwareUpdate.macGroupID)))
         #expect(computer.name == "Studio Macs" && mobile.name == "Spare iPads")
         let members = try await client.members(of: computer)
-        #expect(members.count == 8 && members.allSatisfy { $0.kind == .computer })
+        #expect(members.count == 11 && members.allSatisfy { $0.kind == .computer })
         #expect(try await client.members(of: mobile).isEmpty)
 
         // the Blueprint's scope, mapped through the Platform API's groups

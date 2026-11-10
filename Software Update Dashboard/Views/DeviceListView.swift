@@ -252,7 +252,7 @@ struct DeviceDetailView: View {
             }
             Section("Software Update") {
                 LabeledContent("Install state", value: DeviceDetailText.installState(device.installState))
-                LabeledContent("Pending version", value: device.pendingVersion ?? "–")
+                LabeledContent("Pending version", value: DeviceDetailText.pendingVersion(device))
                 if device.installReason != nil {
                     LabeledContent("Started by", value: DeviceDetailText.installReason(device.installReason))
                 }

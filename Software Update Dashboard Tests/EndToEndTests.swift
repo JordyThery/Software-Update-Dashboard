@@ -49,13 +49,15 @@ struct EndToEndTests {
             ("Field iPad 12", .inProgress, "Installing 27.1 for more than 4 hours; the device checks in but hasn’t reported a new status"),
             // its update declaration failed (the iPad isn't supervised): the list says it
             ("Field iPad 13", .notStarted, "Update declaration failed: Error.ConfigurationFailed: Software update enforcement needs a supervised device."),
+            // a personal iPad with User Enrollment: listed under readiness
+            ("Field iPad 14", .notStarted, "Online, update not started (no error)"),
         ]
         #expect(result.devices.count == expected.count)
         for (name, category, diagnosis) in expected {
             #expect(byName[name]?.category == category, "\(name)")
             #expect(byName[name]?.diagnosis == diagnosis, "\(name)")
         }
-        #expect(result.counts.percentOnTarget == 20.0)
+        #expect(result.counts[.onTarget] == 2 && result.counts.updatable == 11)
         // the deadline is in the future: nobody is late yet
         #expect(result.pastDeadline == 0)
     }
@@ -66,17 +68,34 @@ struct EndToEndTests {
         #expect(result.rule == "Minor updates, \(DemoSoftwareUpdate.macDelayDays) days after their release")
         #expect(result.scope.map(\.name) == ["Studio Macs"])
         let byName = Dictionary(uniqueKeysWithValues: result.devices.map { ($0.name, $0) })
-        #expect(result.devices.count == 8)
+        #expect(result.devices.count == 11)
         #expect(byName["Studio Mac 01"]?.category == .onTarget)
         #expect(byName["Studio Mac 02"]?.targetVersion == "27.1")
         #expect(byName["Studio Mac 02"]?.category == .inProgress)
-        // the old Mac stays on its own major: on target there, and listed to replace
+        // the old Macs stay on their own major: the rule gives them its newest, which they can run,
+        // so they aren't marked and aren't listed to replace (though they can't run macOS 27)
         let old = try #require(byName["Studio Mac 04"])
         #expect(old.targetVersion == "15.7.4")
         #expect(old.category == .onTarget)
-        #expect(old.limitedByHardware == true)
-        #expect(result.replacements.first?.modelIdentifier == "MacBookPro15,2")
-        #expect(result.replacements.first?.note.localizedCaseInsensitiveContains("measured against 15.7.4") == true)
+        #expect(old.limitedByHardware != true)
+        let older = try #require(byName["Studio Mac 11"])
+        #expect(older.targetVersion == "15.7.4" && older.limitedByHardware != true)
+        #expect(older.targetSource == "From Apple’s data and the Blueprint’s rule")
+        #expect(result.replacements.isEmpty)
+        // 27.0.2 still pending with the deadline Jamf gives 27.1: an earlier step, measured against 27.1
+        let moved = try #require(byName["Studio Mac 09"])
+        #expect(moved.targetVersion == "27.1" && moved.earlierStepVersion == "27.0.2" && moved.targetFromDevice != true)
+        #expect(moved.category == .otherUpdate)
+        // the failed earlier step past its own deadline: failed, and past its deadline
+        let failed = try #require(byName["Studio Mac 10"])
+        #expect(failed.category == .failed && failed.earlierStepVersion == "27.0.2")
+        #expect(failed.earlierStepLapsed == true && failed.pastDeadline == true)
+        // the dashboard's number and Deadline per Time Zone agree: a step row holds only devices counted as past
+        let stepRows = result.zones.filter { $0.target?.hasSuffix("earlier step") == true }
+        #expect(stepRows.map(\.deviceCount).reduce(0, +) <= result.pastDeadline)
+        #expect(stepRows.contains { $0.target == "27.0.2, earlier step" })
+        let listedAtStep = DeadlineZones.zones(devices: result.devices.filter { $0.earlierStepLapsed == true }, now: Date())
+        #expect(listedAtStep.allSatisfy { $0.target?.hasSuffix("earlier step") == true })
         // 27.1 came out 12 days ago, 7 days' delay: its deadline has passed for the Macs not on it
         #expect(byName["Studio Mac 02"]?.pastDeadline == true)
         #expect(byName["Studio Mac 01"]?.pastDeadline == false)
@@ -134,14 +153,14 @@ struct EndToEndTests {
         #expect(snapshots.last?.counts[.onTarget] == 2)
         #expect(snapshots.last?.scope?.map(\.name) == ["Field iPads"])
         let summary = try #require(model.summary(result.tracked.id))
-        #expect(summary.contains("Devices:    13 (Version 27.1"))
+        #expect(summary.contains("Devices:    14 (Version 27.1"))
         #expect(summary.contains("Changes since the previous refresh"))
         // compared with the refresh before, never with itself
         let refreshed = try #require(model.results[result.tracked.id])
         #expect(abs((snapshots.last?.date ?? .distantPast).timeIntervalSince(refreshed.date)) < 0.001)
         #expect(model.history?.latest(for: result.tracked.id, before: refreshed.date)?.date != refreshed.date)
         let csv = try #require(model.csv(result.tracked.id))
-        #expect(csv.split(separator: "\n").count == 14)
+        #expect(csv.split(separator: "\n").count == 15)
         #expect(csv.hasPrefix(DeviceStatus.csvColumns.joined(separator: ",")))
     }
 

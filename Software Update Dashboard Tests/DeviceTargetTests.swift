@@ -193,11 +193,22 @@ struct DeviceTargetTests {
                 == "The version the Blueprint names")
     }
 
-    @Test("A Mac that can’t run the newest major stays on the list to replace, with the target Jamf sent")
-    func replacement() {
+    @Test("Minor updates: a Mac that can’t run the newest major but runs its own major’s newest isn’t marked or listed")
+    func notLimitedOnMinor() {
+        // the 2019 MacBook Pro on 26.7.1: the rule gives 26.7.2, which it can run
         let rule = Self.rule(os: "26.7.1", model: "MacBookPro16,1", boardID: "X86LEGACYAP")
-        #expect(rule.limitedByHardware)
-        #expect(TargetRules.cannotRunNewestMajor(Self.catalog, .macOS, model: "MacBookPro16,1", boardID: "X86LEGACYAP"))
+        #expect(rule.version == "26.7.2" && !rule.limitedByHardware)
+        #expect(rule.source == "From Apple’s data and the Blueprint’s rule")
+        let device = Sample.classify(Sample.mac(os: "26.7.1", model: "MacBookPro16,1"), nil, target: rule)
+        #expect(device.limitedByHardware != true)
+        #expect(Replacement.list([device]) { _ in "26.7.2" }.isEmpty)
+    }
+
+    @Test("Latest: a Mac that can’t run the newest release is marked and listed, also with the target Jamf sent")
+    func replacementOnLatest() {
+        let latest = JamfPlatform.SoftwareUpdateBlock.Enforcement.latest(enforceAfterDays: 14, deploymentTime: "23:59")
+        let rule = Self.rule(os: "26.7.1", model: "MacBookPro16,1", boardID: "X86LEGACYAP", latest)
+        #expect(rule.version == "26.7.2" && rule.limitedByHardware)
         let sent = TargetRules.fromDevice(rule, status: Self.status(pending: "26.7.2", reason: "declaration"), os: "26.7.1",
                                           osName: "macOS", catalog: Self.catalog, platform: .macOS, serverTimeZone: Sample.utc)
         #expect(sent.fromDevice && sent.limitedByHardware)
