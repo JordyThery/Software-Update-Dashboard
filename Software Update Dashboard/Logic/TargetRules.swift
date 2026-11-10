@@ -353,10 +353,24 @@ nonisolated enum TargetRules {
     /// show; once it can’t be under way any more (not installing, its own
     /// deadline plus `installGrace` passed), it is marked late, and the
     /// device counts as past that deadline.
+    ///
+    /// Apple’s public catalog keeps current versions only, so once it posts
+    /// a newer one the step’s own posting date can be gone from it.
+    /// `earlierStepWindow` gives the deadlines this Blueprint’s rule could
+    /// have given the version while it was the rule’s target (`ruleWindow`):
+    /// the one from Apple’s own posting date when its list still has it,
+    /// else one per day of the window. A reported deadline that is one of
+    /// them at the Blueprint’s time of day is the step’s too: the full clock
+    /// time when the device’s zone is known (iPads, iPhones); for a Mac,
+    /// which writes its deadline in UTC, only the minutes can be checked.
+    /// `awaitingSync` (the Blueprint’s update declaration for the device’s
+    /// own OS says awaiting sync) supports it: with it, a version the rule
+    /// targeted in that window is the step whatever the deadline reads.
     static func fromDevice(_ rule: DeviceTarget, status: JamfPro.SoftwareUpdateStatus?, os: String?, osName: String,
                            catalog: AppleReleases.Catalog?, platform: AppleReleases.Platform, serverTimeZone: TimeZone,
                            model: String? = nil, boardID: String? = nil, blueprintChanged: Date? = nil,
                            earlierStepDeadline: ((OSVersion) -> String?)? = nil,
+                           earlierStepWindow: ((OSVersion) -> [String])? = nil, awaitingSync: Bool = false,
                            timeZone: String? = nil, now: Date = Date()) -> DeviceTarget {
         guard let status, let pending = status.pendingVersion, let version = pending.osVersion.flatMap(OSVersion.init),
               status.installReasons.contains(where: { $0.caseInsensitiveCompare("declaration") == .orderedSame }),
@@ -377,9 +391,17 @@ nonisolated enum TargetRules {
         }
         // this Blueprint's earlier step: sent before Apple posted the newer
         // version its rule now gives, recognized by the deadline it came with
-        if !rule.namedByBlueprint, let ruleVersion = rule.osVersion, version < ruleVersion,
-           let expected = earlierStepDeadline?(version),
-           sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected) {
+        func isEarlierStep() -> Bool {
+            if let expected = earlierStepDeadline?(version),
+               sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected) { return true }
+            let window = earlierStepWindow?(version) ?? []
+            if window.contains(where: { expected in
+                sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected)
+                    && sameClock(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected, timeZone: timeZone)
+            }) { return true }
+            return awaitingSync && !window.isEmpty
+        }
+        if !rule.namedByBlueprint, let ruleVersion = rule.osVersion, version < ruleVersion, isEarlierStep() {
             // its own deadline as a moment: reported, or its local time in the device's zone (this Mac's for a Mac)
             let due = pending.targetDate ?? deadlineDate(reportedLocal, timeZone: timeZone ?? TimeZone.current.identifier)
             var target = rule
@@ -466,6 +488,76 @@ nonisolated enum TargetRules {
         guard let catalog, let release = catalog.release(version, platform),
               let basis = basis(release, catalog, model: model, boardID: boardID) else { return nil }
         return deadline(released: basis.date, days: days, time: time)
+    }
+
+    /// The deadlines this Blueprint’s rule could have given a version while
+    /// it was the rule’s target. When Apple’s list still has the version’s
+    /// posting date (public or not), the one deadline from it; otherwise
+    /// one per day from its release to the posting of the next release the
+    /// rule moves to (in its own major for minor updates), at the Blueprint’s
+    /// time. Empty for a specific version, a version Apple’s data doesn’t
+    /// know, or one nothing has followed yet (then it is the rule’s target).
+    static func ruleWindow(for version: OSVersion, block: JamfPlatform.SoftwareUpdateBlock?, catalog: AppleReleases.Catalog?,
+                           platform: AppleReleases.Platform, model: String?, boardID: String?, now: Date) -> [String] {
+        let days: Int, time: String?, sameMajor: Bool
+        switch block?.enforcement {
+        case .latest(let delay, let clock)?: (days, time, sameMajor) = (delay ?? 0, clock, false)
+        case .semantic(let delay, let clock)?: (days, time, sameMajor) = (delay ?? 0, clock, true)
+        default: return []
+        }
+        guard let catalog, let release = catalog.release(version, platform),
+              let start = basis(release, catalog, model: model, boardID: boardID)?.date else { return [] }
+        // the next release the rule moved to: the oldest offered one newer than it that the device runs
+        let next = releases(catalog, platform, days: 0, now: now, model: model, boardID: boardID)
+            .filter { $0.version > version && (!sameMajor || $0.version.major == version.major)
+                && runs($0, model: model, boardID: boardID, catalog, platform) }
+            .min { $0.version < $1.version }
+        guard let next, let end = basis(next, catalog, model: model, boardID: boardID)?.date, end >= start else { return [] }
+        // Apple's own posting date, when its list still has one: that day only
+        if let posted = posting(of: release, model: model, boardID: boardID) {
+            return [deadline(released: posted, days: days, time: time)]
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+        var day = calendar.startOfDay(for: start)
+        var deadlines: [String] = []
+        // at most two months: a window longer than that says nothing
+        while day <= end && deadlines.count < 62 {
+            deadlines.append(deadline(released: day, days: days, time: time))
+            day = calendar.date(byAdding: .day, value: 1, to: day) ?? end.addingTimeInterval(1)
+        }
+        return deadlines
+    }
+
+    /// Apple’s posting date of a release, public or not, meant for this
+    /// device (by its board ID or model), else for any device; nil when its
+    /// list has none.
+    static func posting(of release: AppleReleases.Release, model: String?, boardID: String?) -> Date? {
+        let dated = release.postings.filter { $0.date != nil }
+        let ids = [boardID, model].compactMap { $0 }
+        let meant = dated.filter { posting in ids.contains { posting.devices.contains($0) } }
+        return (meant.isEmpty ? dated : meant).compactMap(\.date).min()
+    }
+
+    /// Whether a reported deadline is at the expected time of day: a local
+    /// date-time by its clock; a moment in the device’s own zone, when it is
+    /// known, by its full date and clock time; otherwise a moment, which can
+    /// be any zone’s local time (a Mac writes UTC), by its minutes only
+    /// (zones are whole quarter hours apart).
+    static func sameClock(reported: Date?, reportedLocal: String?, expected: String, timeZone: String? = nil) -> Bool {
+        let expectedClock = expected.dropFirst(11).prefix(5)
+        if let reported, let zone = timeZone.flatMap(TimeZone.init(identifier:)) {
+            return localText(reported, offset: zone.secondsFromGMT(for: reported)).prefix(16) == expected.prefix(16)
+        }
+        if let reported {
+            guard let minute = Int(expectedClock.suffix(2)) else { return false }
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = .gmt
+            let reportedMinute = calendar.component(.minute, from: reported)
+            return ((reportedMinute - minute) % 15 + 15) % 15 == 0
+        }
+        if let reportedLocal { return reportedLocal.dropFirst(11).prefix(5) == expectedClock }
+        return false
     }
 
     /// Whether a reported deadline is the one expected, in the device’s

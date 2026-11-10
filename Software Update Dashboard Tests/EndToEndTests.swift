@@ -47,13 +47,15 @@ struct EndToEndTests {
             ("Field iPad 11", .notStarted, "Online, update not started (no error)"),
             // the demo device reported installing days ago and checks in since
             ("Field iPad 12", .inProgress, "Installing 27.1 for more than 4 hours; the device checks in but hasn’t reported a new status"),
+            // its update declaration failed (the iPad isn't supervised): the list says it
+            ("Field iPad 13", .notStarted, "Update declaration failed: Error.ConfigurationFailed: Software update enforcement needs a supervised device."),
         ]
         #expect(result.devices.count == expected.count)
         for (name, category, diagnosis) in expected {
             #expect(byName[name]?.category == category, "\(name)")
             #expect(byName[name]?.diagnosis == diagnosis, "\(name)")
         }
-        #expect(result.counts.percentOnTarget == 22.2)
+        #expect(result.counts.percentOnTarget == 20.0)
         // the deadline is in the future: nobody is late yet
         #expect(result.pastDeadline == 0)
     }
@@ -64,7 +66,7 @@ struct EndToEndTests {
         #expect(result.rule == "Minor updates, \(DemoSoftwareUpdate.macDelayDays) days after their release")
         #expect(result.scope.map(\.name) == ["Studio Macs"])
         let byName = Dictionary(uniqueKeysWithValues: result.devices.map { ($0.name, $0) })
-        #expect(result.devices.count == 6)
+        #expect(result.devices.count == 8)
         #expect(byName["Studio Mac 01"]?.category == .onTarget)
         #expect(byName["Studio Mac 02"]?.targetVersion == "27.1")
         #expect(byName["Studio Mac 02"]?.category == .inProgress)
@@ -82,8 +84,10 @@ struct EndToEndTests {
         let released = try #require(byName["Studio Mac 02"]?.activityFrom)
         #expect(abs(Date().timeIntervalSince(released) / 86_400 - 12) < 1.1)
         // by major release
-        #expect(result.majors.map(\.id) == ["macOS 27", "macOS 15"])
-        #expect(result.majors.first?.targets == ["27.1"])
+        // the beta of macOS 28 has a row of its own, without a target
+        #expect(result.majors.map(\.id) == ["macOS 28", "macOS 27", "macOS 15"])
+        #expect(result.majors.first?.targets == [])
+        #expect(result.majors.dropFirst().first?.targets == ["27.1"])
     }
 
     @Test("Deadlines per time zone point out the unusual ones")
@@ -130,14 +134,14 @@ struct EndToEndTests {
         #expect(snapshots.last?.counts[.onTarget] == 2)
         #expect(snapshots.last?.scope?.map(\.name) == ["Field iPads"])
         let summary = try #require(model.summary(result.tracked.id))
-        #expect(summary.contains("Devices:    12 (Version 27.1"))
+        #expect(summary.contains("Devices:    13 (Version 27.1"))
         #expect(summary.contains("Changes since the previous refresh"))
         // compared with the refresh before, never with itself
         let refreshed = try #require(model.results[result.tracked.id])
         #expect(abs((snapshots.last?.date ?? .distantPast).timeIntervalSince(refreshed.date)) < 0.001)
         #expect(model.history?.latest(for: result.tracked.id, before: refreshed.date)?.date != refreshed.date)
         let csv = try #require(model.csv(result.tracked.id))
-        #expect(csv.split(separator: "\n").count == 13)
+        #expect(csv.split(separator: "\n").count == 14)
         #expect(csv.hasPrefix(DeviceStatus.csvColumns.joined(separator: ",")))
     }
 
@@ -179,7 +183,8 @@ struct EndToEndTests {
         let started = Date().addingTimeInterval(-2 * 86_400)
         model.setUpdateStarted(started, for: tracked.id)
         let (_, result) = try await refreshed(Self.macs, model: model)
-        #expect(result.devices.allSatisfy { $0.activityFrom == started })
+        // every device with a target (the beta has none)
+        #expect(result.devices.filter { $0.category != .targetUnknown }.allSatisfy { $0.activityFrom == started })
         #expect(result.tracked.updateStarted == started)
         model.setUpdateStarted(nil, for: tracked.id)
         let (_, removed) = try await refreshed(Self.macs, model: model)

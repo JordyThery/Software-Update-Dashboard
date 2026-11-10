@@ -15,6 +15,9 @@ nonisolated struct InspectInput: Sendable {
     var reportsProblem: String?
     /// Why the device couldn’t be inspected at all.
     var problem: String?
+    /// When the device last changed its install state (the item’s
+    /// `lastUpdateTime`, in the Jamf Pro server’s time zone); nil when not known.
+    var installStateChanged: Date?
 
     init(member: JamfPro.GroupMember, status: JamfPro.SoftwareUpdateStatus? = nil, device: DeviceStatus? = nil,
          platformDeviceID: String? = nil, reports: [JamfPlatform.DeclarationReport]? = nil, reportsProblem: String? = nil,
@@ -50,6 +53,9 @@ nonisolated struct InspectContext: Sendable {
     /// Apple’s release data: when set, the majors and support of each
     /// device’s own platform (a Blueprint can reach iPads and Macs).
     var catalog: AppleReleases.Catalog?
+    /// The Blueprint’s current update declarations (Blueprint health); nil
+    /// when the refresh couldn’t read them: then the device’s own report is used.
+    var current: [BlueprintHealth.Current]?
 }
 
 /// One reason a device may not update.
@@ -58,6 +64,13 @@ nonisolated struct Finding: Sendable, Hashable, Codable {
     var detail: String
     /// From before the update started (an earlier error): listed, never the likely cause.
     var earlier: Bool?
+}
+
+/// One of the Blueprint’s declarations on one device: its name (never an
+/// ID) and how it stands there.
+nonisolated struct DeclarationLine: Sendable, Hashable, Codable {
+    var name: String
+    var state: String
 }
 
 /// Every reason a device may not update, most likely first.
@@ -70,6 +83,12 @@ nonisolated struct InspectResult: Sendable, Hashable, Identifiable {
     var diagnosis: String
     var onTarget: Bool
     var findings: [Finding]
+    /// The Blueprint’s current declarations for the device’s own platform
+    /// by name, with how each stands on the device.
+    var declarations: [DeclarationLine] = []
+    /// The others, which don’t apply to this device (other platforms, other
+    /// versions or hardware): one line.
+    var otherDeclarations = 0
 
     /// The likely cause: the first finding that isn’t from before the update started.
     var likely: Finding? { findings.first { $0.earlier != true } }
@@ -145,8 +164,9 @@ nonisolated enum InspectFindings {
         let pairs = DeclarationPair.pairs(mine)
         let applicable = pairs.filter { !$0.isNotForThisDevice }
         let active = pairs.filter(\.isActive)
+        // each declaration by its own platform: an iPadOS range is never named macOS
         func label(_ pair: DeclarationPair) -> String {
-            pair.label(blueprint: ctx.blueprintName, osName: osName, deviceMajor: version?.major)
+            pair.label(blueprint: ctx.blueprintName, osName: pair.family ?? osName, deviceMajor: version?.major)
         }
         let updated = status?.newestUpdate.flatMap { JamfPro.serverDate($0, timeZone: ctx.serverTimeZone) }
         if input.platformDeviceID == nil && reports == nil {
@@ -163,7 +183,9 @@ nonisolated enum InspectFindings {
                                 detail: "The device last reported its update declarations on \(day(evaluated)), before the update "
                                     + "started (\(day(start))), so its report doesn’t cover the current declarations. It reports "
                                     + "again after its next check-in")
-            if updated.map({ $0 >= start }) == true { findings.append(stale) } else { findings.insert(stale, at: 0) }
+            // an offline device is offline first: that is why it hasn't reported
+            let offlineFirst = member.lastSeen.map { ctx.now.timeIntervalSince($0) > Double(ctx.staleDays) * 86_400 } ?? false
+            if updated.map({ $0 >= start }) == true || offlineFirst { findings.append(stale) } else { findings.insert(stale, at: 0) }
         } else {
             let pending = applicable.flatMap(\.reports).filter { $0.status == .pending }
             if !pending.isEmpty { add("Update declarations not applied yet", "\(pending.count) still pending on the device") }
@@ -174,8 +196,19 @@ nonisolated enum InspectFindings {
                 add("New declaration not fetched yet",
                     "Jamf sent \(label(waiting)); the device hasn’t fetched it yet (awaiting sync). It fetches it at its next check-in")
             }
-            // a device on target needs no declaration to apply
-            if active.isEmpty && category != .onTarget {
+            // the refresh measured the device against the Blueprint's current declarations: that counts
+            if row?.declarationsChecked == true {
+                if let ranges = row?.notCoveredBy, let version {
+                    add("Jamf’s update doesn’t cover \(osName) \(version) yet",
+                        "The Blueprint’s current update declarations for this hardware cover \(ranges), not \(version), so none "
+                            + "applies. Jamf sets these ranges and can widen them; until it does, the device gets no update from this Blueprint")
+                } else if row?.notFetched == true, !findings.contains(where: { $0.cause == "New declaration not fetched yet" }) {
+                    let last = row?.notFetchedSince.map { " The device last reported its declarations on \(day($0))." } ?? ""
+                    add("Hasn’t fetched Jamf’s current declarations yet",
+                        "One of the Blueprint’s current update declarations covers \(osName) \(os), but the device hasn’t fetched it."
+                            + last + " It fetches it at its next check-in")
+                }
+            } else if active.isEmpty && category != .onTarget {
                 // the device's own ID against the predicates' lists
                 let ids = [status?.deviceID ?? row?.boardID, modelID.isEmpty ? nil : modelID].compactMap { $0 }
                 let listing = own.filter { pair in ids.contains { pair.lists($0) } }
@@ -309,7 +342,9 @@ nonisolated enum InspectFindings {
             let present = (status?.passcodePresent ?? member.passcodePresent).map { $0 ? "yes" : "no" } ?? "?"
             add("Passcode", "Passcode present: \(present); the update installs once the passcode is entered on the device, or after it’s cleared")
         }
-        if member.batteryHealth == "SERVICE_RECOMMENDED" { add("Battery needs service", "Battery health: service recommended") }
+        if DeviceDetailText.batteryNeedsService(status?.batteryHealth ?? member.batteryHealth) {
+            add("Battery needs service", "Battery health: service recommended")
+        }
         // the battery matters only for an install: downloaded or installing, not a download
         let installing = status?.installState == .prepared || status?.installState == .installing
         if installing, let level = member.batteryLevel, level < 50 {
@@ -327,7 +362,7 @@ nonisolated enum InspectFindings {
         let others = otherPairs.flatMap(\.reports)
             .filter { $0.validity == .invalid || $0.reasons.contains(where: { ($0.code ?? "").hasPrefix("Error.") }) }
         for other in others.prefix(3) {
-            add("Other declaration with a problem", "\(readableName(other.declarationIdentifier, names: [:])): \(why(other, names: [:]))"
+            add("Other declaration with a problem", "\(otherName(other)): \(why(other, names: [:]))"
                 + (other.validity == .invalid ? " (invalid)" : ""))
         }
 
@@ -369,12 +404,88 @@ nonisolated enum InspectFindings {
                                     detail: "\(errorBefore.reason) (\(errorBefore.when), before the update started)", earlier: true))
         }
 
+        // an update error is the likely cause only when the device isn't downloading or
+        // installing, or the error is newer than its last install-state change; an older
+        // error during an install says nothing about that install
+        let failedAt = status?.failure?.timestamp.flatMap { JamfPro.serverDate($0, timeZone: ctx.serverTimeZone) }
+        let working = status?.installState == .downloading || status?.installState == .installing
+        let errorLeads = !working || (failedAt.flatMap { at in input.installStateChanged.map { at > $0 } } ?? false)
+        if !errorLeads, let error = findings.firstIndex(where: { $0.cause == "Update error" }),
+           findings.firstIndex(where: { $0.earlier != true }) == error, error + 1 < findings.count {
+            findings.insert(findings.remove(at: error), at: error + 1)
+        }
+        // an update error since the update started ranks above what the declarations say
+        if errorLeads, let error = findings.firstIndex(where: { $0.cause == "Update error" }),
+           let declarations = findings.firstIndex(where: { finding in
+               ["Jamf’s update doesn’t cover", "Hasn’t fetched Jamf’s", "No update declaration applies", "Not evaluated since"]
+                   .contains { finding.cause.hasPrefix($0) }
+           }), declarations < error {
+            findings.insert(findings.remove(at: error), at: declarations)
+        }
+
+        // the Blueprint's declarations for this device's own platform, by name; the rest in one line
+        let names = [ctx.blueprintID.lowercased(): ctx.blueprintName]
+        let listed = Self.declarationLines(current: ctx.current, mine: pairs, osName: osName, version: version,
+                                           ids: [status?.deviceID ?? row?.boardID, modelID.isEmpty ? nil : modelID].compactMap { $0 },
+                                           names: names, label: label)
         return InspectResult(id: RefreshWorkflow.key(member), name: row?.name ?? member.name ?? "", serial: member.serialNumber ?? "",
                              modelIdentifier: modelID, os: os, diagnosis: diagnosis, onTarget: category == .onTarget,
-                             findings: findings)
+                             findings: findings, declarations: listed.lines, otherDeclarations: listed.others)
+    }
+
+    /// The lines of Inspect’s declaration list: the Blueprint’s current
+    /// declarations (from the refresh) for the device’s own platform, each
+    /// with how it stands on the device (“Not fetched yet” without a report
+    /// of it); those that don’t apply to it are counted instead. Pairs for the
+    /// same range (one per hardware group) are one line. Without the current
+    /// declarations, the device’s own report is listed the same way.
+    static func declarationLines(current: [BlueprintHealth.Current]?, mine: [DeclarationPair], osName: String, version: OSVersion?,
+                                 ids: [String], names: [String: String],
+                                 label: (DeclarationPair) -> String) -> (lines: [DeclarationLine], others: Int) {
+        var lines: [DeclarationLine] = []
+        var others = 0
+        guard let current else {
+            for pair in mine {
+                let state = pair.state(names: names)
+                if (pair.family.map { $0 != osName } ?? false) || state == "Not for this device" { others += 1 } else {
+                    lines.append(DeclarationLine(name: label(pair), state: state))
+                }
+            }
+            return (BlueprintHealth.uniqueNames(lines), others)
+        }
+        var order: [String] = []
+        var byName: [String: [BlueprintHealth.Current]] = [:]
+        for declaration in current {
+            if byName[declaration.name] == nil { order.append(declaration.name) }
+            byName[declaration.name, default: []].append(declaration)
+        }
+        for name in order {
+            let group = byName[name] ?? []
+            let states = group.flatMap { declaration in mine.filter { $0.key == declaration.key }.map { $0.state(names: names) } }
+            let applies = version.map { version in group.contains { $0.applies(osName: osName, ids: ids, version: version) != false } } ?? true
+            if group.allSatisfy({ ($0.family.map { $0 != osName }) ?? false }) {
+                others += 1
+            } else if let state = BlueprintHealth.deviceState(states) {
+                if state == "Not for this device" { others += 1 } else { lines.append(DeclarationLine(name: name, state: state)) }
+            } else if applies {
+                lines.append(DeclarationLine(name: name, state: "Not fetched yet"))
+            } else {
+                others += 1
+            }
+        }
+        return (lines, others)
     }
 
     // MARK: Helpers
+
+    /// A declaration that isn’t the tracked Blueprint’s, without its ID: “A
+    /// declaration from another Blueprint”, else its readable name, else
+    /// “Another declaration”.
+    static func otherName(_ report: JamfPlatform.DeclarationReport) -> String {
+        if report.blueprintID != nil { return "A declaration from another Blueprint" }
+        let readable = readableName(report.declarationIdentifier, names: [:])
+        return readable.contains("‹ID›") || readable.isEmpty ? "Another declaration" : readable
+    }
 
     /// The device’s update error when it is from before the update started.
     static func earlierError(_ status: JamfPro.SoftwareUpdateStatus?, since: Date?,
@@ -475,9 +586,13 @@ nonisolated struct DeclarationPair: Sendable, Hashable {
     }
 
     /// The OS family the predicate asks for (`operating-system.family == "macOS"`); nil without one.
-    var family: String? {
-        // both forms: status.device.operating-system.family == "macOS" and @status(device.operating-system.family) == 'macOS'
-        predicate?.firstMatch(of: #/operating-system\.family\)?\s*==\s*["']([^"']+)["']/#).map { String($0.output.1) }
+    var family: String? { predicate.flatMap(Self.family(in:)) }
+
+    /// The OS family a predicate asks for; nil without one. Both forms:
+    /// `status.device.operating-system.family == "macOS"` and
+    /// `@status(device.operating-system.family) == 'macOS'`.
+    static func family(in predicate: String) -> String? {
+        predicate.firstMatch(of: #/operating-system\.family\)?\s*==\s*["']([^"']+)["']/#).map { String($0.output.1) }
     }
 
     /// The newest version the predicate’s version condition takes; nil without one.
@@ -494,7 +609,30 @@ nonisolated struct DeclarationPair: Sendable, Hashable {
     func label(blueprint: String, osName: String, deviceMajor: Int?) -> String {
         if let range = predicate.flatMap(Self.versionRange) { return "\(blueprint), \(osName) \(range)" }
         if isActive, let deviceMajor { return "\(blueprint), \(osName) \(deviceMajor) (applies to this device)" }
+        // a step for one OS family, without a version condition
+        if let family { return "\(blueprint), \(family)" }
         return number.map { "\(blueprint), update declaration \($0)" } ?? blueprint
+    }
+
+    /// How this device stands with the pair, in plain words: not for it,
+    /// applied, pending, awaiting sync, failed or invalid (with the reason).
+    func state(names: [String: String]) -> String {
+        if isNotForThisDevice { return "Not for this device" }
+        let configuration = reports.first { $0.type == "CONFIGURATION" } ?? reports.first
+        guard let report = configuration else { return "Not reported" }
+        if reports.contains(where: { $0.validity == .invalid }) {
+            return "Invalid: " + InspectFindings.why(reports.first { $0.validity == .invalid } ?? report, names: names)
+        }
+        if let failed = reports.first(where: { $0.reasons.contains { ($0.code ?? "").hasPrefix("Error.") } }) {
+            return "Failed: " + InspectFindings.why(failed, names: names)
+        }
+        switch report.status {
+        case .successful: return "Applied"
+        case .pending: return "Pending"
+        case .awaitingSync: return "Awaiting sync"
+        case .unsuccessful: return "Not applied"
+        case .unknown, .other: return "Unknown"
+        }
     }
 
     /// The versions a predicate’s `MATCHES "^(26[.][0-6]([.][0-9]+)*|26[.]7([.][0-1]([.][0-9]+)*)?)$"`
@@ -590,6 +728,70 @@ nonisolated enum DeviceDetailText {
         case nil: "Not reported"
         default: status ?? "Not reported"
         }
+    }
+
+    /// “3, last 9 Nov 2026 at 10:00”: the failure count and when it last
+    /// failed, in this Mac’s time. With no failures, no date: “0”. Nil
+    /// without either.
+    static func failures(count: Int?, time: String?, serverTimeZone: TimeZone) -> String? {
+        if count == 0 { return "0" }
+        let when = time.flatMap { JamfPro.serverDate($0, timeZone: serverTimeZone) }
+            .map { "last \($0.formatted(date: .abbreviated, time: .shortened))" }
+        let parts = [count.map(String.init), when].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
+
+    /// A beta program as the device names it; nil when it is in none.
+    static func betaProgram(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        return trimmed.range(of: "^(none|null|false|)$", options: [.regularExpression, .caseInsensitive]) == nil ? trimmed : nil
+    }
+
+    /// A Mac’s FileVault: “On”, “Off”, “Encrypting”, “Decrypting”; “Not
+    /// reported” without a value.
+    static func fileVault(_ state: String?) -> String {
+        switch state?.uppercased() {
+        case "ENCRYPTED": "On"
+        case "UNENCRYPTED", "DECRYPTED": "Off"
+        case "ENCRYPTING": "Encrypting"
+        case "DECRYPTING": "Decrypting"
+        case nil, "", "UNKNOWN": "Not reported"
+        default: words(state ?? "")
+        }
+    }
+
+    /// Battery health as words, whichever way it was written: `NORMAL` and
+    /// `normal` read “Normal”, `service-recommended` and
+    /// `SERVICE_RECOMMENDED` “Service recommended”.
+    static func batteryHealth(_ health: String?) -> String {
+        guard let health, !health.isEmpty else { return "Not reported" }
+        return words(health)
+    }
+
+    /// Whether the battery needs service, however it was written.
+    static func batteryNeedsService(_ health: String?) -> Bool {
+        words(health ?? "") == "Service recommended"
+    }
+
+    /// Why the pending update was started, in plain words: `declaration`
+    /// “A declaration”, `mdm` “An MDM command”, `system-settings` “Software
+    /// Update settings on the device”; others as words.
+    static func installReason(_ reasons: String?) -> String {
+        guard let reasons, !reasons.isEmpty else { return "–" }
+        return reasons.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.map { reason in
+            switch reason.lowercased() {
+            case "declaration": "A declaration"
+            case "mdm": "An MDM command"
+            case "system-settings": "Software Update settings on the device"
+            default: words(reason)
+            }
+        }.joined(separator: "; ")
+    }
+
+    /// `SERVICE_RECOMMENDED` or `service-recommended` as “Service recommended”.
+    static func words(_ text: String) -> String {
+        let spaced = text.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ").lowercased()
+        return spaced.prefix(1).uppercased() + spaced.dropFirst()
     }
 
     /// An install state as a capitalized word: “Failed”, “None”; “–” when

@@ -30,7 +30,7 @@ nonisolated struct InspectWorkflow: Sendable {
                 let member = members[index]
                 next += 1
                 group.addTask {
-                    let input = await inspectInput(member, row: rowsByID[RefreshWorkflow.key(member)])
+                    let input = await inspectInput(member, row: rowsByID[RefreshWorkflow.key(member)], serverTimeZone: context.serverTimeZone)
                     return (index, InspectFindings.evaluate(input, context: context))
                 }
             }
@@ -44,11 +44,15 @@ nonisolated struct InspectWorkflow: Sendable {
     }
 
     /// One device’s reads; what can’t be read is written into the input.
-    func inspectInput(_ member: JamfPro.GroupMember, row: DeviceStatus?) async -> InspectInput {
+    func inspectInput(_ member: JamfPro.GroupMember, row: DeviceStatus?, serverTimeZone: TimeZone = .gmt) async -> InspectInput {
         var input = InspectInput(member: member, device: row)
         do {
-            if let managementID = member.managementID {
-                input.status = try await client.softwareUpdateStatus(managementID: managementID, kind: member.kind)
+            if let managementID = member.managementID,
+               let items = try await client.statusItems(managementID: managementID, kind: member.kind) {
+                // the raw items, for when the install state last changed; one request, as before
+                input.status = JamfPro.SoftwareUpdateStatus(items: items)
+                input.installStateChanged = items.last { $0.key == "softwareupdate.install-state" }?.lastUpdateTime
+                    .flatMap { JamfPro.serverDate($0, timeZone: serverTimeZone) }
             }
             guard let serial = member.serialNumber, let device = try await client.device(serial: serial) else { return input }
             input.platformDeviceID = device.id
