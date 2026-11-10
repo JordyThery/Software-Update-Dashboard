@@ -15,7 +15,7 @@ import Testing
 // its integration, not SUD's own, which has another client ID), and only
 // when that role reaches the tenant of SUD's saved connection (same region
 // and environment ID). For every tracked Blueprint of that
-// connection it reads what a refresh reads, the raw status items and the
+// connection it reads what a refresh reads, the status items SUD reads and the
 // declaration reports, plus Apple's release data, and adds SUD's own
 // result per device. Everything is anonymized (SnapshotAnonymizer) before
 // the one file is written to the app's temporary folder; the script moves
@@ -111,7 +111,7 @@ struct LiveSnapshot {
             // every identifier first, so free text anywhere can replace it
             for member in result.members { Self.register(member, platformID: member.serialNumber.flatMap { platformBySerial[$0.uppercased()] }, anonymizer) }
 
-            // the raw status items, as Inspect reads them, and the declaration reports of this Blueprint
+            // the status items, as Inspect reads them, and the declaration reports of this Blueprint
             let raw = try await Self.statusItems(result.members, client: client)
             let statuses = result.members.map { raw[RefreshWorkflow.key($0)].map(JamfPro.SoftwareUpdateStatus.init(items:)) }
             let identifiers = BlueprintHealth.identifiers(blueprintID: item.blueprintID, statuses: statuses, blocks: result.blocks)
@@ -125,13 +125,8 @@ struct LiveSnapshot {
                 let key = RefreshWorkflow.key(member)
                 let platformID = member.serialNumber.flatMap { platformBySerial[$0.uppercased()] }
                 var device = Self.inventory(member, anonymizer)
-                device["statusItems"] = (raw[key] ?? []).map { item -> [String: Any] in
-                    var out: [String: Any] = ["key": item.key]
-                    out["value"] = anonymizer.scrub(item.value)
-                    out["lastUpdateTime"] = item.lastUpdateTime
-                    out["valueKind"] = item.valueKind.map { String(describing: $0) }
-                    return out
-                }
+                // only the items SUD reads; the others are dropped unread
+                device["statusItems"] = anonymizer.statusItems(raw[key] ?? [])
                 device["declarationReports"] = reports.filter { platformID != nil && $0.deviceID?.lowercased() == platformID?.lowercased() }
                     .map { Self.report($0, anonymizer) }
                 device["sud"] = rows[key].map { Self.sud($0, anonymizer) }
@@ -185,10 +180,11 @@ struct LiveSnapshot {
         let data = try JSONSerialization.data(withJSONObject: snapshot, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         let text = String(decoding: data, as: UTF8.self)
 
-        // nothing it replaced may be left in the file
-        // nothing it replaced may be left in the file; a device name only where it isn't a model's name too ("MacBook Air")
+        // nothing it replaced may be left in the file; a device name only where it isn't a model's name too ("MacBook Air");
+        // and no Mac's Bonjour name (`….local`), which the anonymizer never registered
         let models = blueprints.flatMap { ($0["devices"] as? [[String: Any]] ?? []).compactMap { $0["model"] as? String } }
-        let leaks = anonymizer.leaks(in: text, allowingNamesIn: Array(Set(models)))
+        let bonjour = text.range(of: #"(?i)[a-z0-9-]\.local\b"#, options: .regularExpression) != nil
+        let leaks = anonymizer.leaks(in: text, allowingNamesIn: Array(Set(models))) + (bonjour ? [".local host name"] : [])
         run.record(step: "snapshot: anonymized", passed: leaks.isEmpty,
                    note: leaks.isEmpty ? "no replaced value is left in the file"
                        : "\(leaks.count) replaced values still in the file: not written ("

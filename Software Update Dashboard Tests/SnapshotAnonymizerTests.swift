@@ -1,4 +1,5 @@
 import Foundation
+import JTKit
 import Testing
 @testable import Software_Update_Dashboard
 
@@ -71,6 +72,35 @@ struct SnapshotAnonymizerTests {
         let anonymizer = SnapshotAnonymizer(key: Self.key)
         _ = anonymizer.token("26", kind: "JamfID")
         #expect(anonymizer.scrub("macOS 26.7.2, 2026-11-26") == "macOS 26.7.2, 2026-11-26")
+    }
+
+    @Test("Only the status items SUD reads are kept: a push token and a .local name never survive")
+    func statusItemsKept() {
+        let anonymizer = SnapshotAnonymizer(key: Self.key)
+        let pushToken = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+        let items = [JamfPro.StatusItem(key: "mdm.push-token", value: pushToken),
+                     JamfPro.StatusItem(key: "services.background-task", value: "{host=Test-Persons-MacBook.local, label=x}"),
+                     JamfPro.StatusItem(key: "device.identifier.serial-number", value: "ZZTESTX9Q12"),
+                     JamfPro.StatusItem(key: "management.client-capabilities", value: "{}"),
+                     JamfPro.StatusItem(key: "softwareupdate.install-state", value: "installing", lastUpdateTime: "2026-11-10T12:00:00"),
+                     JamfPro.StatusItem(key: "softwareupdate.pending-version.os-version", value: "26.7.2"),
+                     JamfPro.StatusItem(key: "device.operating-system.version", value: "26.7.1"),
+                     JamfPro.StatusItem(key: "device.model.identifier", value: "Mac15,3"),
+                     JamfPro.StatusItem(key: "device.power.battery-health", value: "normal"),
+                     JamfPro.StatusItem(key: "passcode.is-present", value: "true"),
+                     JamfPro.StatusItem(key: "management.declarations", value: #"{"identifier":"com.example.update"}"#),
+                     JamfPro.StatusItem(key: "management.declarations.configurations.identifier", value: "com.example.x")]
+        let kept = anonymizer.statusItems(items)
+        #expect(kept.compactMap { $0["key"] as? String } == ["softwareupdate.install-state", "softwareupdate.pending-version.os-version",
+                                                            "device.operating-system.version", "device.model.identifier",
+                                                            "device.power.battery-health", "passcode.is-present",
+                                                            "management.declarations", "management.declarations.configurations.identifier"])
+        let text = String(describing: kept)
+        #expect(!text.contains(pushToken) && !text.localizedCaseInsensitiveContains(".local") && !text.contains("ZZTESTX9Q12"))
+        #expect(kept.first?["value"] as? String == "installing" && kept.first?["lastUpdateTime"] as? String == "2026-11-10T12:00:00")
+        // even inside a kept item, free text loses a .local name and a long hex token
+        let scrubbed = anonymizer.scrub("seen on Test-Persons-MacBook.local with \(pushToken)") ?? ""
+        #expect(!scrubbed.localizedCaseInsensitiveContains(".local") && !scrubbed.contains(pushToken))
     }
 
     @Test("Snapshot labels and key: A to Z then AA; the key must be hex of at least 16 bytes")

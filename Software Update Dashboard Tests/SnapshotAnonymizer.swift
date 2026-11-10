@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import JTKit
 
 /// Development tool, in the test target only (never in the shipped app):
 /// turns what identifies a device, a person or the tenant into stable
@@ -143,6 +144,29 @@ final class SnapshotAnonymizer {
             match.hasSuffix("AP") ? match : self.token(match, kind: "Serial", remember: false) ?? "Serial"
         }
         return text
+    }
+
+    /// Only the status items SUD's code reads (JTKit's
+    /// `JamfPro.SoftwareUpdateStatus(items:)` and Inspect): every other item
+    /// (`mdm.push-token`, `services.background-task`, …) is dropped before
+    /// anything is anonymized, so what it holds never reaches a snapshot.
+    static let statusItemPrefixes = ["softwareupdate.", "device.operating-system.", "management.declarations."]
+    static let statusItemKeys: Set<String> = ["device.model.identifier", "device.power.battery-health",
+                                              "passcode.is-present", "management.declarations"]
+
+    static func keeps(statusItem key: String) -> Bool {
+        statusItemKeys.contains(key) || statusItemPrefixes.contains { key.hasPrefix($0) }
+    }
+
+    /// The status items a snapshot holds: only those SUD reads, their values scrubbed.
+    func statusItems(_ items: [JamfPro.StatusItem]) -> [[String: Any]] {
+        items.filter { Self.keeps(statusItem: $0.key) }.map { item in
+            var out: [String: Any] = ["key": item.key]
+            out["value"] = scrub(item.value)
+            out["lastUpdateTime"] = item.lastUpdateTime
+            out["valueKind"] = item.valueKind.map { String(describing: $0) }
+            return out
+        }
     }
 
     private static func pattern(_ text: String) -> NSRegularExpression {
