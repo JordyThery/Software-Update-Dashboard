@@ -96,6 +96,17 @@ final class SnapshotAnonymizer {
         return String(key.output.1)
     }
 
+    /// The organisation’s own words, taken at run time from the tenant’s
+    /// host names (never written down), shown as “Org” everywhere.
+    func organisation(fromHosts hosts: [String]) {
+        let generic: Set<String> = ["jamf", "jamfcloud", "jamfpro", "www", "api", "mdm", "com", "net", "org", "be", "nl", "eu", "io", "cloud"]
+        for host in hosts {
+            for word in host.lowercased().split(separator: ".").map(String.init) where word.count >= 3 && !generic.contains(word) {
+                alias(word, as: "Org")
+            }
+        }
+    }
+
     /// A name shown as a label instead (“Blueprint A”, “Group 1”), also in free text.
     func alias(_ original: String?, as label: String) {
         guard let original = original?.trimmingCharacters(in: .whitespacesAndNewlines), original.count >= 3 else { return }
@@ -107,6 +118,10 @@ final class SnapshotAnonymizer {
     /// Free text with every identifier replaced and every address dropped.
     func scrub(_ text: String?) -> String? {
         guard var text, !text.isEmpty else { return text }
+        // emails, then host names first: a name or serial inside one would otherwise be replaced and hide it
+        text = replace(Self.email, in: text) { self.token($0, kind: "Email", remember: false) ?? "Email" }
+        text = replace(Self.address, in: text) { _ in "[address]" }
+        text = replace(Self.host, in: text) { _ in "[host]" }
         // what was seen as an identifier, longest first (a name containing a shorter one), in one pass
         if knownPattern == nil, !known.isEmpty {
             let alternatives = known.keys.sorted { $0.count > $1.count }.map(NSRegularExpression.escapedPattern(for:))
@@ -115,15 +130,12 @@ final class SnapshotAnonymizer {
         if let knownPattern {
             text = replace(knownPattern, in: text) { self.known[$0.lowercased()] ?? $0 }
         }
-        text = replace(Self.email, in: text) { self.token($0, kind: "Email", remember: false) ?? "Email" }
         // a Mac's account name in a path (/Users/<account>/…): a person's name, often
         text = replace(Self.homeFolder, in: text) { match in
             let account = String(match.dropFirst("/Users/".count))
             guard account != "Shared", account.range(of: #"^[A-Z][a-z]+-[0-9a-f]{8}$"#, options: .regularExpression) == nil else { return match }
             return "/Users/" + (self.token(account, kind: "User", remember: false) ?? "User")
         }
-        text = replace(Self.address, in: text) { _ in "[address]" }
-        text = replace(Self.host, in: text) { _ in "[host]" }
         text = replace(Self.uuid, in: text) { self.token($0, kind: "ID", remember: false) ?? "ID" }
         text = replace(Self.hex, in: text) { self.token($0, kind: "Token", remember: false) ?? "Token" }
         // a serial number: 10 to 12 capitals and digits, both; board IDs (…AP) stay
@@ -139,7 +151,9 @@ final class SnapshotAnonymizer {
     private static let email = pattern(#"(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}"#)
     private static let homeFolder = pattern(#"/Users/[^/,;}\]\s"']+(?=/)"#)
     private static let address = pattern(#"(?i)\b[a-z][a-z0-9+.-]*://[^\s"'<>,;)}\]]+"#)
-    private static let host = pattern(#"(?i)(?<![\w.-])(?:[a-z0-9-]+\.)+(?:com|net|org|be|nl|fr|de|eu|io|cloud|local|lan|internal|corp)(?![\w.-])"#)
+    /// A host name: labels ending in a common top-level domain, `.local` (a
+    /// Mac’s Bonjour name, often its owner’s) or a company network’s.
+    private static let host = pattern(#"(?i)\b(?:[a-z0-9_-]+\.)+(?:com|net|org|be|nl|fr|de|eu|uk|io|co|cloud|local|lan|internal|corp|home|intra)\b(?![.-]?[a-z0-9])"#)
     private static let uuid = pattern(#"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"#)
     /// A long hex token; never an Intel Mac’s board ID (`Mac-` and 16 hex digits), which stays.
     private static let hex = pattern(#"(?i)(?<!Mac-)\b[0-9a-f]{16,}\b"#)

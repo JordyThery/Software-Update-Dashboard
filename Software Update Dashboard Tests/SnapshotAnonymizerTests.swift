@@ -41,6 +41,15 @@ struct SnapshotAnonymizerTests {
         let path = anonymizer.scrub("{path=/Users/someone/Library/LaunchAgents/com.example.agent.plist}, /Users/Shared/x") ?? ""
         #expect(!path.contains("someone") && path.contains("/Users/User-") && path.contains("/Users/Shared/x"))
         #expect(anonymizer.originals.contains("someone"))
+        // hosts that hold a name, a Bonjour name, and the organisation's own words
+        let other = SnapshotAnonymizer(key: Self.key)
+        _ = other.token("Some Laptop", kind: "Name")
+        other.organisation(fromHosts: ["mdm.example-org.be", "jamf.examplecorp.com"])
+        let hosts = other.scrub("server=some-laptop.example-org.be, bonjour Somebodys-MacBook.local, ntp time.example.org, "
+                                + "agent com.examplecorp.helper.plist, app /Applications/ExampleCorp Tools.app, version 26.7.2") ?? ""
+        #expect(!hosts.lowercased().contains("example") && !hosts.contains("Somebodys") && !hosts.contains("some-laptop"))
+        #expect(hosts.contains("com.Org.helper.plist") && hosts.contains("/Applications/Org Tools.app") && hosts.contains("version 26.7.2"))
+        #expect(hosts.components(separatedBy: "[host]").count - 1 == 3)
         // an Intel Mac's board ID is a board ID, not a token
         #expect(anonymizer.scrub("board Mac-06F11F11946D27C5") == "board Mac-06F11F11946D27C5")
         for kept in ["macOS 26.7.2 (25G332)", "J457AP", "X86LEGACYAP", "2026-11-10T12:00:00"] {

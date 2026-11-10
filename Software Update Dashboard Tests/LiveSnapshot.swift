@@ -62,6 +62,10 @@ struct LiveSnapshot {
             Issue.record("no matching saved connection")
             return
         }
+        // the organisation's name, from the role's Jamf Pro host names on the allow-list (read at run time only)
+        if let pro = try? run.entry(role: snapshotRole, service: .jamfPro) {
+            anonymizer.organisation(fromHosts: [pro.host].compactMap { $0 } + (pro.aliases ?? []))
+        }
         let tracked = saved.tracked.filter { $0.connectionID == record.id }
         run.record(step: "snapshot: SUD's saved connection", passed: !tracked.isEmpty,
                    note: "the production role reaches the tenant of SUD's saved connection; \(tracked.count) tracked Blueprints")
