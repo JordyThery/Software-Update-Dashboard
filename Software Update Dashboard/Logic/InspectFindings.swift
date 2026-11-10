@@ -174,7 +174,8 @@ nonisolated enum InspectFindings {
                 add("New declaration not fetched yet",
                     "Jamf sent \(label(waiting)); the device hasn’t fetched it yet (awaiting sync). It fetches it at its next check-in")
             }
-            if active.isEmpty {
+            // a device on target needs no declaration to apply
+            if active.isEmpty && category != .onTarget {
                 // the device's own ID against the predicates' lists
                 let ids = [status?.deviceID ?? row?.boardID, modelID.isEmpty ? nil : modelID].compactMap { $0 }
                 let listing = own.filter { pair in ids.contains { pair.lists($0) } }
@@ -190,10 +191,12 @@ nonisolated enum InspectFindings {
                     return upper < version
                 }
                 if below, let version, let target, target > version {
+                    // the ranges as the device last reported them: Jamf can widen them later
+                    let when = mine.compactMap(\.lastReportTime).max().map { "When the device last reported, on \(day($0)), the" } ?? "The"
                     add("Jamf’s update doesn’t cover \(osName) \(version) yet",
-                        "The Blueprint’s update declarations for this hardware cover \(ranges(sameMajor).joined(separator: "; ")), "
-                            + "not \(version), so none applies. Jamf sets these ranges; until Jamf extends them, the device gets "
-                            + "no update from this Blueprint")
+                        "\(when) Blueprint’s update declarations for this hardware covered \(ranges(sameMajor).joined(separator: "; ")), "
+                            + "not \(version), so none applied. Jamf sets these ranges and can widen them; until it does, the device "
+                            + "gets no update from this Blueprint")
                 } else {
                     let ranges = ranges(listing)
                     let lists = listing.isEmpty
@@ -272,10 +275,17 @@ nonisolated enum InspectFindings {
             }
         }
         // this Blueprint's earlier step, sent before Apple posted the version its rule now gives
-        if let step = row?.earlierStepVersion, row?.earlierStepLapsed != true, let target = row?.targetVersion {
+        if let step = row?.earlierStepVersion, let target = row?.targetVersion {
             let due = DeadlineZones.text(local: row?.deadlineLocal, reported: row?.deadlineDate).map { ", due \($0)" } ?? ""
-            add("Earlier step of this Blueprint",
-                "\(osName) \(step) was sent before Apple posted \(target); the device installs \(step) first, then \(target)\(due)")
+            if row?.earlierStepLapsed == true {
+                let stepDue = DeadlineZones.text(local: row?.earlierStepLocal, reported: row?.earlierStepDeadline).map { " (\($0))" } ?? ""
+                add("Earlier step past its deadline",
+                    "\(osName) \(step), an earlier step of this Blueprint, wasn’t installed by its deadline\(stepDue); "
+                        + "\(target) follows\(due)")
+            } else {
+                add("Earlier step of this Blueprint",
+                    "\(osName) \(step) was sent before Apple posted \(target); the device installs \(step) first, then \(target)\(due)")
+            }
         }
         if category == .notStarted, status?.installState == JamfPro.SoftwareUpdateStatus.InstallState.none,
            status?.pendingVersion == nil, status?.failure == nil {

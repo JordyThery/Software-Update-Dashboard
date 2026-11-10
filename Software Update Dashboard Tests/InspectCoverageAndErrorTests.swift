@@ -40,7 +40,23 @@ struct InspectCoverageAndErrorTests {
     func notCoveredYet() throws {
         let result = evaluate(Self.mac, status: Self.status, reports: pair(12, versions: Self.below, lists: ["J314sAP"]))
         #expect(result.cause == "Jamf’s update doesn’t cover macOS 26.7.2 yet")
-        #expect(result.detail.contains("cover macOS 26.0 to 26.7.1, not 26.7.2"))
+        // said with the date of the report it is based on: Jamf can widen the ranges later
+        #expect(result.detail.hasPrefix("When the device last reported, on \(InspectFindings.day(Sample.date("2026-11-05T09:00:00"))), the"))
+        #expect(result.detail.contains("covered macOS 26.0 to 26.7.1, not 26.7.2"))
+    }
+
+    @Test("A device on target lists no declaration that doesn’t apply")
+    func onTargetListsNothing() {
+        let status = Sample.status([("device.operating-system.version", "26.7.3"), ("softwareupdate.device-id", "J314sAP")])
+        let mac = Sample.mac(os: "26.7.3", model: "MacBookPro18,3")
+        let row = Sample.classify(mac, status).with(category: .onTarget, diagnosis: "On target")
+        let result = InspectFindings.evaluate(
+            InspectInput(member: mac, status: status, device: row, platformDeviceID: "P-1",
+                         reports: pair(12, versions: Self.below, lists: ["J314sAP"])),
+            context: InspectContext(blueprintID: blueprint, target: OSVersion("26.7.3"), since: Sample.updateStarted,
+                                    now: Sample.now, serverTimeZone: Sample.utc))
+        #expect(result.cause == "On target")
+        #expect(!result.findings.contains { $0.cause == "No update declaration applies" || $0.cause.hasPrefix("Jamf’s update doesn’t cover") })
     }
 
     @Test("Only the declarations for the device’s own OS are counted")

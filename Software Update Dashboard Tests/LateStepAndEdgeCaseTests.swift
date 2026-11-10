@@ -15,13 +15,14 @@ struct LateStepAndEdgeCaseTests {
 
     // MARK: Earlier steps
 
-    @Test("Downloaded 26.7.2, its deadline long passed, then Apple posts 26.7.3: past its deadline, named as the earlier step")
+    @Test("Downloaded 26.7.2, its deadline long passed, then Apple posts 26.7.3: the target stays 26.7.3, past the step’s deadline")
     func lateEarlierStep() {
         let status = Self.prepared()
         let target = Step.target(status, now: "2026-11-11T09:00:00")
-        #expect(target.version == "26.7.2" && target.fromDevice && target.earlierStepLapsed)
-        #expect(target.source == "Sent by Jamf: an earlier step of this Blueprint, past its deadline")
+        #expect(target.version == "26.7.3" && target.deadlineLocal == "2026-11-23T23:59:00")
+        #expect(!target.fromDevice && target.earlierStepVersion == "26.7.2" && target.earlierStepLapsed)
         let device = Sample.classify(Step.member, status, target: target, now: "2026-11-11T09:00:00")
+        #expect(device.targetVersion == "26.7.3")
         #expect(device.pastDeadline == true)
         #expect(device.diagnosis == "26.7.2 downloaded but not installed after its deadline")
         #expect(device.needsAttention)
@@ -31,14 +32,18 @@ struct LateStepAndEdgeCaseTests {
             context: InspectContext(blueprintID: "6a2f0000-1111-4000-8000-00000000c0de", target: nil, since: nil,
                                     now: Sample.date("2026-11-11T09:00:00"), serverTimeZone: Sample.utc))
         #expect(inspected.findings.contains { $0.cause == "Update stuck" })
+        #expect(inspected.findings.contains { $0.cause == "Earlier step past its deadline" })
         #expect(!inspected.findings.contains { $0.cause == "Earlier step of this Blueprint" })
+        // By Major Release and Deadline per Time Zone show the current target and deadline only
+        #expect(MajorRow.rows([device]).first?.targets == ["26.7.3"])
+        #expect(DeadlineZones.zones(devices: [device]).allSatisfy { $0.localDeadline == "2026-11-23T23:59:00" })
     }
 
     @Test("Downloading or failed days after the step’s deadline: late as well")
     func lateOtherStates() {
         for state in ["downloading", "failed"] {
             let target = Step.target(Self.prepared(state: state), now: "2026-11-12T09:00:00")
-            #expect(target.version == "26.7.2" && target.earlierStepLapsed, "\(state)")
+            #expect(target.version == "26.7.3" && target.earlierStepLapsed, "\(state)")
             let device = Sample.classify(Step.member, Self.prepared(state: state), target: target, now: "2026-11-12T09:00:00")
             #expect(device.pastDeadline == true, "\(state)")
         }
@@ -48,15 +53,42 @@ struct LateStepAndEdgeCaseTests {
     func stepUnderWay() {
         let installing = Step.target(Self.prepared(state: "installing"), now: "2026-11-12T09:00:00")
         #expect(installing.version == "26.7.3" && installing.earlierStepVersion == "26.7.2" && !installing.earlierStepLapsed)
-        // 22:59 UTC plus 4 hours is 02:59
-        #expect(Step.target(Self.prepared(), now: "2026-11-10T02:30:00").version == "26.7.3")
-        #expect(Step.target(Self.prepared(), now: "2026-11-10T03:00:00").version == "26.7.2")
+        // 22:59 UTC plus 4 hours is 02:59; the target stays 26.7.3 either way
+        let within = Step.target(Self.prepared(), now: "2026-11-10T02:30:00")
+        #expect(within.version == "26.7.3" && !within.earlierStepLapsed)
+        let after = Step.target(Self.prepared(), now: "2026-11-10T03:00:00")
+        #expect(after.version == "26.7.3" && after.earlierStepLapsed)
     }
 
-    @Test("A late step reported before the update started still counts as sent: its deadline is the evidence")
+    @Test("A pending version reported before the update started is no earlier step: target and deadline are the Blueprint’s")
     func lateStepOldReport() {
-        let target = Step.target(Self.prepared(time: "2026-11-05T08:00:00"), now: "2026-11-11T09:00:00")
-        #expect(target.version == "26.7.2" && target.earlierStepLapsed)
+        let status = Self.prepared(time: "2026-11-05T08:00:00")
+        let target = Step.target(status, now: "2026-11-11T09:00:00")
+        #expect(target.version == "26.7.3" && target.deadlineLocal == "2026-11-23T23:59:00")
+        #expect(target.earlierStepVersion == nil && !target.earlierStepLapsed && !target.fromDevice)
+        let device = Sample.classify(Step.member, status, target: target, now: "2026-11-11T09:00:00")
+        #expect(device.pastDeadline == false)
+    }
+
+    @Test("An offline Mac with a two-month-old report: no September target or deadline anywhere")
+    func oldReportOffline() {
+        var member = Sample.mac(os: "26.6.2", model: "MacBookPro18,3")
+        member.lastContact = Sample.date("2026-09-20T08:00:00")
+        let status = Sample.status([("device.operating-system.version", "26.6.2"), ("softwareupdate.device-id", "J314sAP"),
+                                    ("softwareupdate.install-state", "prepared"),
+                                    ("softwareupdate.pending-version.os-version", "26.7"),
+                                    ("softwareupdate.pending-version.target-local-date-time", "2026-09-28 21:59:00 +0000"),
+                                    ("softwareupdate.install-reason.reason", "declaration")], time: "2026-09-20T08:00:00")
+        let rule = TargetRules.target(os: "26.6.2", model: "MacBookPro18,3", boardID: "J314sAP", osName: "macOS", context: .init(
+            block: Step.block, catalog: Step.catalog, platform: .macOS, blueprintChanged: nil, updateStarted: nil,
+            now: Sample.date("2026-11-10T09:00:00")))
+        let target = TargetRules.fromDevice(rule, status: status, os: "26.6.2", osName: "macOS", catalog: Step.catalog,
+                                            platform: .macOS, serverTimeZone: Sample.utc, now: Sample.date("2026-11-10T09:00:00"))
+        #expect(target.version == "26.7.3" && target.deadlineLocal == "2026-11-23T23:59:00" && target.deadlineDate == nil)
+        let device = Sample.classify(member, status, target: target, now: "2026-11-10T09:00:00")
+        #expect(device.category == .offline)
+        #expect(MajorRow.rows([device]).first?.targets == ["26.7.3"])
+        #expect(!DeadlineZones.zones(devices: [device]).contains { $0.localDeadline.hasPrefix("2026-09") })
     }
 
     @Test("The step installed per the inventory: no step, no install state, no long install")
@@ -171,7 +203,7 @@ struct LateStepAndEdgeCaseTests {
             + tests.pair(12, versions: InspectCoverageAndErrorTests.below, lists: ["J314sAP"])
         let result = tests.evaluate(InspectCoverageAndErrorTests.mac, status: InspectCoverageAndErrorTests.status, reports: reports)
         #expect(result.cause == "Jamf’s update doesn’t cover macOS 26.7.2 yet")
-        #expect(result.detail.contains("cover macOS 26.0 to 26.7.1, not 26.7.2") && !result.detail.contains("27.0"))
+        #expect(result.detail.contains("covered macOS 26.0 to 26.7.1, not 26.7.2") && !result.detail.contains("27.0"))
         // a device already on what the Blueprint asks for: nothing to cover
         let current = InspectFindings.evaluate(
             InspectInput(member: InspectCoverageAndErrorTests.mac, status: InspectCoverageAndErrorTests.status,

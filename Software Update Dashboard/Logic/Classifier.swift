@@ -203,9 +203,11 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
 
     /// Past the deadline by more than an install gets (`installGrace`): a
     /// downloaded update that still hasn’t installed is stuck. Without a
-    /// moment to measure from, past is past.
+    /// moment to measure from, past is past. A late earlier step is past
+    /// its own deadline by the grace already.
     func pastDeadlineByGrace(now: Date) -> Bool {
-        pastDeadline == true && (deadlineMoment.map { now >= $0.addingTimeInterval(TargetRules.installGrace) } ?? true)
+        if earlierStepLapsed == true { return true }
+        return pastDeadline == true && (deadlineMoment.map { now >= $0.addingTimeInterval(TargetRules.installGrace) } ?? true)
     }
 
     /// iPadOS, iOS or macOS.
@@ -370,10 +372,11 @@ nonisolated enum Classifier {
         status.earlierStepDeadline = target.earlierStepDeadline
         status.earlierStepLocal = target.earlierStepLocal
         status.earlierStepLapsed = target.earlierStepLapsed ? true : nil
-        if let step = target.earlierStepVersion, !target.earlierStepLapsed, status.category == .otherUpdate,
+        if let step = target.earlierStepVersion, status.category == .otherUpdate,
            let range = status.diagnosis.range(of: " (intermediate version \(step))") {
             // the intermediate version is this Blueprint's own earlier step
-            status.diagnosis.replaceSubrange(range, with: " \(step) first (an earlier step of this Blueprint)")
+            status.diagnosis.replaceSubrange(range, with: " \(step) first (an earlier step of this Blueprint"
+                                                 + (target.earlierStepLapsed ? ", past its deadline)" : ")"))
             status.diagnosis = status.diagnosis.replacingOccurrences(of: "Installing now ", with: "Installing ")
         }
         if target.fromDevice {
@@ -395,12 +398,13 @@ nonisolated enum Classifier {
         status.deadlineDate = target.deadlineDate
         status.deadlineOffset = target.deadlineOffset
         status.pastDeadline = status.category == .onTarget ? false
+            // a late earlier step: past that step's deadline, whatever the Blueprint's current one
+            : target.earlierStepLapsed ? true
             : target.deadlineDate.map { $0 <= base.now }
                 ?? TargetRules.isPastDeadline(target.deadlineLocal, timeZone: input.member.timeZone, now: base.now)
         // downloaded and past the deadline by more than an install takes:
         // it didn't install when it should have; just past it, it installs now
-        if target.earlierStepLapsed, let step = target.earlierStepVersion, status.pastDeadlineByGrace(now: base.now),
-           status.diagnosis.hasPrefix("Downloaded") {
+        if target.earlierStepLapsed, let step = target.earlierStepVersion, status.diagnosis.hasPrefix("Downloaded") {
             // this Blueprint's earlier step, downloaded and left past its own deadline
             status.diagnosis = "\(step) downloaded but not installed after its deadline"
         } else if status.pastDeadline == true, status.diagnosis.hasPrefix("Downloaded"), status.diagnosis.hasSuffix("installs at the deadline") {

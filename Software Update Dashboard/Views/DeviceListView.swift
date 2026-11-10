@@ -161,25 +161,24 @@ struct DeviceDetailView: View {
                 if let line = device.targetSource ?? device.targetReason { Text(line).foregroundStyle(.secondary) }
                 if device.limitedByHardware == true { WarningLabel(DeviceDetailText.hardwareLimit(device)) }
                 // this Blueprint's earlier step, still pending: shown, not counted
-                if let step = device.earlierStepVersion, device.earlierStepLapsed != true {
+                if let step = device.earlierStepVersion {
+                    let late = device.earlierStepLapsed == true
                     LabeledContent("Installs first", value: step)
                     Text("An earlier step of this Blueprint, sent before Apple posted \(device.targetVersion ?? "the target")")
                         .foregroundStyle(.secondary)
                     if let text = DeadlineZones.text(local: device.earlierStepLocal, reported: device.earlierStepDeadline) {
                         LabeledContent("Its deadline", value: text)
-                        Text("Not counted: the Blueprint’s current deadline counts").foregroundStyle(.secondary)
+                        if late {
+                            WarningLabel("Not installed by its deadline: the device counts as past its deadline")
+                        } else {
+                            Text("Not counted: the Blueprint’s current deadline counts").foregroundStyle(.secondary)
+                        }
                     }
                 }
                 if device.targetFromDevice == true, device.targetDiffersFromRule == true {
                     LabeledContent("Blueprint’s rule gives", value: device.ruleTarget ?? "No version")
                     if let rule = device.ruleReason { Text(rule).foregroundStyle(.secondary) }
-                    if device.earlierStepLapsed == true {
-                        // this Blueprint's own earlier step, left past its deadline
-                        WarningLabel("An earlier step of this Blueprint, past its deadline: it installs \(device.targetVersion ?? "it") "
-                                     + "before \(device.ruleTarget ?? "the Blueprint’s version")")
-                    } else {
-                        WarningLabel("Another declaration may be enforcing this: the device’s pending version differs from the Blueprint’s rule")
-                    }
+                    WarningLabel("Another declaration may be enforcing this: the device’s pending version differs from the Blueprint’s rule")
                 }
                 if let released = device.targetReleased {
                     LabeledContent("Released by Apple", value: Self.releaseDay(released))

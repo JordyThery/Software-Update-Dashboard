@@ -435,7 +435,7 @@ struct InspectStaleAndStuckTests {
         // the range that lists this Mac ends below its version: Jamf's update doesn't cover it yet
         let finding = try #require(evaluate(member, status: status, row: row, reports: reports).findings
             .first { $0.cause == "Jamf’s update doesn’t cover macOS 15.8.2 yet" })
-        #expect(finding.detail.hasPrefix("The Blueprint’s update declarations for this hardware cover macOS 15.0 to 15.8.1, not 15.8.2"))
+        #expect(finding.detail.contains("Blueprint’s update declarations for this hardware covered macOS 15.0 to 15.8.1, not 15.8.2"))
         // a range above its version: the condition excludes it
         let above = pair(14, versions: "^(15[.]9([.][0-9]+)*)$", lists: ["J313AP"], reported: "2026-11-05T09:00:00")
         let excluded = try #require(evaluate(member, status: status, row: row, reports: above).findings

@@ -128,8 +128,8 @@ nonisolated struct DeviceTarget: Sendable, Hashable, Codable {
     var earlierStepDeadline: Date?
     var earlierStepLocal: String?
     /// The step’s own deadline (plus the grace an install gets) has passed
-    /// and it isn’t installing: it counts again as what Jamf sent, with its
-    /// own deadline, past it, as any late update.
+    /// and it isn’t installing: the target stays the rule’s, and the device
+    /// counts as past the step’s deadline.
     var earlierStepLapsed = false
 
     var osVersion: OSVersion? { version.flatMap(OSVersion.init) }
@@ -141,7 +141,6 @@ nonisolated struct DeviceTarget: Sendable, Hashable, Codable {
     var source: String? {
         guard version != nil, unknown == nil else { return nil }
         if fromDevice {
-            if earlierStepLapsed { return "Sent by Jamf: an earlier step of this Blueprint, past its deadline" }
             return differsFromRule ? "Sent by Jamf: the device reports it pending from a declaration"
                 : "Sent by Jamf, matches the Blueprint’s rule"
         }
@@ -348,11 +347,12 @@ nonisolated enum TargetRules {
     /// `earlierStepDeadline` gives this Blueprint’s own deadline for a
     /// version (`ruleDeadline`): a pending version older than the rule’s,
     /// reported with that deadline, is this Blueprint’s earlier step (Jamf’s
-    /// status items don’t name the declaration that sent it). While the
-    /// step can still be under way (installing, or its own deadline plus
-    /// `installGrace` not passed), the rule’s version and deadline count and
-    /// the step is kept to show. After that it is what Jamf sent, past its
-    /// own deadline, marked as this Blueprint’s earlier step.
+    /// status items don’t name the declaration that sent it), and only when
+    /// reported after the update started, like any pending version. The
+    /// rule’s version and deadline always count and the step is kept to
+    /// show; once it can’t be under way any more (not installing, its own
+    /// deadline plus `installGrace` passed), it is marked late, and the
+    /// device counts as past that deadline.
     static func fromDevice(_ rule: DeviceTarget, status: JamfPro.SoftwareUpdateStatus?, os: String?, osName: String,
                            catalog: AppleReleases.Catalog?, platform: AppleReleases.Platform, serverTimeZone: TimeZone,
                            model: String? = nil, boardID: String? = nil, blueprintChanged: Date? = nil,
@@ -368,29 +368,27 @@ nonisolated enum TargetRules {
         let reportedLocal = pending.targetLocalDateTime?.replacingOccurrences(of: " ", with: "T")
             .range(of: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$", options: .regularExpression)
             .flatMap { _ in pending.targetLocalDateTime?.replacingOccurrences(of: " ", with: "T") }
+        // a pending version from a report older than the update's start says
+        // nothing about this update: neither its target nor its deadline
+        if let start = rule.activityFrom {
+            guard let reported = pending.updated.flatMap({ JamfPro.serverDate($0, timeZone: serverTimeZone) }), reported >= start else {
+                return rule
+            }
+        }
         // this Blueprint's earlier step: sent before Apple posted the newer
         // version its rule now gives, recognized by the deadline it came with
-        var lapsedStep = false
         if !rule.namedByBlueprint, let ruleVersion = rule.osVersion, version < ruleVersion,
            let expected = earlierStepDeadline?(version),
            sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected) {
             // its own deadline as a moment: reported, or its local time in the device's zone (this Mac's for a Mac)
             let due = pending.targetDate ?? deadlineDate(reportedLocal, timeZone: timeZone ?? TimeZone.current.identifier)
-            let lapsed = status.installState != .installing && due.map { now >= $0.addingTimeInterval(installGrace) } == true
-            if !lapsed {
-                var target = rule
-                target.earlierStepVersion = version.description
-                target.earlierStepDeadline = pending.targetDate
-                target.earlierStepLocal = pending.targetDate == nil ? reportedLocal : nil
-                return target
-            }
-            lapsedStep = true
-        }
-        // a lapsed earlier step counts as sent, whenever it was reported: the evidence is its deadline
-        if let start = rule.activityFrom, !lapsedStep {
-            guard let reported = pending.updated.flatMap({ JamfPro.serverDate($0, timeZone: serverTimeZone) }), reported >= start else {
-                return rule
-            }
+            var target = rule
+            target.earlierStepVersion = version.description
+            target.earlierStepDeadline = pending.targetDate
+            target.earlierStepLocal = pending.targetDate == nil ? reportedLocal : nil
+            target.earlierStepLapsed = status.installState != .installing
+                && due.map { now >= $0.addingTimeInterval(installGrace) } == true
+            return target
         }
         let release = catalog?.release(version, platform)
         var target = DeviceTarget(version: version.description, build: pending.buildVersion ?? release?.build,
@@ -398,11 +396,6 @@ nonisolated enum TargetRules {
                                   reason: "Jamf sent \(osName) \(version): the device reports it pending from a declaration",
                                   startSetByHand: rule.startSetByHand)
         target.fromDevice = true
-        if lapsedStep {
-            target.earlierStepVersion = version.description
-            target.earlierStepLapsed = true
-            target.reason = "Jamf sent \(osName) \(version) as an earlier step of this Blueprint; its deadline has passed"
-        }
         // the deadline as the device reports it: a moment with its offset,
         // or a local date-time; false when it reports none that reads
         func takeReported() -> Bool {
