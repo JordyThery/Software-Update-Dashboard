@@ -57,7 +57,8 @@ nonisolated struct HistorySnapshot: Sendable, Hashable, Codable, Identifiable {
     var rules: Int?
 
     /// The target rules of this version.
-    static let currentRules = 2
+    /// 3 (0.1.1): this Blueprint’s earlier step, and the newer of the reported and inventory versions.
+    static let currentRules = 3
 
     var id: Date { date }
 
@@ -101,7 +102,10 @@ nonisolated struct HistoryMark: Sendable, Hashable, Identifiable {
             var parts: [String] = []
             if !previous.measures(target: next.target, ruleKey: next.ruleKey) {
                 kinds.append(.rule)
-                parts.append("the Blueprint’s software update changed to “\(next.target ?? "unknown")”")
+                // the same text with other values: only its time of day or build changed
+                parts.append(previous.target == next.target
+                             ? "the Blueprint’s software update “\(next.target ?? "unknown")” changed its time of day or build"
+                             : "the Blueprint’s software update changed to “\(next.target ?? "unknown")”")
             } else if previous.rules != next.rules {
                 kinds.append(.counting)
                 parts.append("targets are worked out differently after an app update")
@@ -124,8 +128,9 @@ nonisolated struct HistoryMark: Sendable, Hashable, Identifiable {
     }
 
     /// The versions that became a target from Apple’s release data between
-    /// two refreshes, newer than every earlier target of their platform and
-    /// major: “macOS 27.2.1 and 26.7.3”. Nil when there are none.
+    /// two refreshes: a lower target of the same platform and major came
+    /// before, and none as high (a device new to a major isn’t a release):
+    /// “macOS 27.2.1 and 26.7.3”. Nil when there are none.
     static func newTargets(from previous: HistorySnapshot, to next: HistorySnapshot) -> String? {
         func targets(_ snapshot: HistorySnapshot) -> [(os: String, version: OSVersion)] {
             snapshot.devices.filter { $0.targetFromDevice != true }
@@ -136,8 +141,9 @@ nonisolated struct HistoryMark: Sendable, Hashable, Identifiable {
         var seen = Set<String>()
         var new: [(os: String, version: OSVersion)] = []
         for item in targets(next) {
-            let known = before.contains { $0.os == item.os && $0.version.major == item.version.major && !($0.version < item.version) }
-            if !known && seen.insert("\(item.os) \(item.version)").inserted { new.append(item) }
+            let sameMajor = before.filter { $0.os == item.os && $0.version.major == item.version.major }
+            let released = sameMajor.contains { $0.version < item.version } && !sameMajor.contains { !($0.version < item.version) }
+            if released && seen.insert("\(item.os) \(item.version)").inserted { new.append(item) }
         }
         guard !new.isEmpty else { return nil }
         var parts: [String] = []

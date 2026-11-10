@@ -41,7 +41,7 @@ struct EarlierStepAndInstallTests {
                                       earlierStepDeadline: { version in
                                           TargetRules.ruleDeadline(for: version, block: block, catalog: catalog, platform: .macOS,
                                                                    model: "MacBookPro18,3", boardID: "J314sAP")
-                                      })
+                                      }, now: Sample.date(now))
     }
 
     @Test("This Blueprint’s earlier step: the rule’s version and deadline count, the step is shown")

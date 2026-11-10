@@ -379,15 +379,19 @@ struct MajorsSection: View {
                         Text(row.targets.isEmpty ? "–" : row.targets.joined(separator: ", "))
                         Text("\(row.onTarget) of \(row.updatable)").monospacedDigit()
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(row.deadlines.isEmpty ? "–"
-                                 : row.deadlines.joined(separator: "; ")
-                                   + (row.pastDeadline > 0 ? " (\(row.pastDeadline) past)" : ""))
+                            Text(row.deadlines.isEmpty ? "–" : row.deadlines.joined(separator: "; "))
                             if row.otherDeadlineDevices > 0 {
                                 Text("\(Plural.count(row.otherDeadlineDevices, "device")) \(row.otherDeadlineDevices == 1 ? "reports" : "report") another deadline")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .help(row.otherDeadlines.joined(separator: "\n"))
                                     .accessibilityHint(row.otherDeadlines.joined(separator: "; "))
+                            }
+                            // for the whole row, whichever deadline each device has
+                            if row.pastDeadline > 0 {
+                                Text("\(Plural.count(row.pastDeadline, "device")) past \(row.pastDeadline == 1 ? "its" : "their") deadline")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                     }

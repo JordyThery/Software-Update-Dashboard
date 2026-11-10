@@ -27,7 +27,7 @@ struct InspectCoverageAndErrorTests {
                   reports: [JamfPlatform.DeclarationReport]) -> InspectResult {
         InspectFindings.evaluate(InspectInput(member: member, status: status, device: Sample.classify(member, status),
                                               platformDeviceID: "P-1", reports: reports),
-                                 context: InspectContext(blueprintID: blueprint, blueprintName: "Test Mac Updates", target: nil,
+                                 context: InspectContext(blueprintID: blueprint, blueprintName: "Test Mac Updates", target: OSVersion("26.7.3"),
                                                          since: Sample.updateStarted, now: Sample.now, serverTimeZone: Sample.utc))
     }
 

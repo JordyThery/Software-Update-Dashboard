@@ -192,7 +192,8 @@ nonisolated struct RefreshWorkflow: Sendable {
                                             earlierStepDeadline: { [catalog] version in
                                                 TargetRules.ruleDeadline(for: version, block: block, catalog: catalog, platform: platform,
                                                                          model: model, boardID: input.status?.deviceID)
-                                            })
+                                            },
+                                            timeZone: member.timeZone, now: now)
         // hardware that can't run the newest major stays on the list to
         // replace, whichever source gave its target
         if target.unknown == nil, !target.noApplicableRelease, let catalog {

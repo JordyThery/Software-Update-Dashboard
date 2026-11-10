@@ -135,6 +135,8 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var earlierStepVersion: String?
     var earlierStepDeadline: Date?
     var earlierStepLocal: String?
+    /// The step’s own deadline has passed: it is the target again, late.
+    var earlierStepLapsed: Bool?
 
     /// The device by kind and number: a Mac and an iPad can share a number.
     var id: String { "\(isComputer ? "computer" : "mobileDevice")/\(jamfID)" }
@@ -186,6 +188,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case earlierStepVersion
         case earlierStepDeadline
         case earlierStepLocal
+        case earlierStepLapsed
     }
 
     /// The newer of the version the device reports and the one in its
@@ -209,7 +212,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var osName: String { Classifier.osName(isComputer: isComputer, modelIdentifier: modelIdentifier) }
 
     /// The diagnoses that need someone to look (summary, Inspect’s default selection).
-    static let attentionPattern = "^Downloaded, not installed|[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check|^Installing .*for more than"
+    static let attentionPattern = "^Downloaded.*not installed after|downloaded but not installed after|[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check|^Installing .*for more than"
 
     var needsAttention: Bool { diagnosis.range(of: Self.attentionPattern, options: .regularExpression) != nil }
 
@@ -249,17 +252,20 @@ nonisolated enum Classifier {
         let status = input.status
         let target = ctx.target
         let ddmOS = status?.osVersion
-        let state = status?.installState
         let pending = status?.pendingVersion?.osVersion
+        // the newer of what the device reports and its inventory
+        let osText = newer(ddmOS, member.osVersion) ?? ""
+        let os = OSVersion(osText)
+        // an install state for a version the device already runs is left over
+        // from that install: not busy, not failed
+        let pendingIsNewer = pending.flatMap(OSVersion.init).map { version in os.map { version > $0 } ?? true } ?? true
+        let state = pendingIsNewer ? status?.installState : nil
         let failTime = status?.failure?.timestamp
         let failAt = failTime.flatMap { JamfPro.serverDate($0, timeZone: ctx.serverTimeZone) }
         let failedSince = failAt.map { at in ctx.since.map { at >= $0 } ?? true } ?? false
         let updated = status?.newestUpdate.flatMap { JamfPro.serverDate($0, timeZone: ctx.serverTimeZone) }
         let fresh = ctx.since.map { since in updated.map { $0 >= since } ?? false } ?? true
         let ours = pending.flatMap(OSVersion.init).map { version in target.map { !(version < $0) } ?? true } ?? true
-        // the newer of what the device reports and its inventory
-        let osText = newer(ddmOS, member.osVersion) ?? ""
-        let os = OSVersion(osText)
         let modelID = member.modelIdentifier.flatMap { $0.isEmpty ? nil : $0 }
         let unsupportedHardware = target.map { ctx.supports(modelID ?? status?.modelIdentifier, status?.deviceID, $0.major) == false } ?? false
         let busy = state?.isBusy ?? false
@@ -269,7 +275,9 @@ nonisolated enum Classifier {
         // installing for hours: with contact since, the device checks in
         // but sends no new status; without, it may be asleep
         let installingLong = state == .installing && updated.map { ctx.now.timeIntervalSince($0) > TargetRules.longInstall } == true
-        let contactSince = member.lastSeen.map { seen in updated.map { seen > $0 } ?? false } ?? false
+        let contactSince = member.lastSeen.map { seen in
+            updated.map { seen >= $0.addingTimeInterval(TargetRules.laterContact) } ?? false
+        } ?? false
 
         let category: StatusCategory
         if let target, let os, !(os < target) { category = .onTarget }
@@ -361,7 +369,8 @@ nonisolated enum Classifier {
         status.earlierStepVersion = target.earlierStepVersion
         status.earlierStepDeadline = target.earlierStepDeadline
         status.earlierStepLocal = target.earlierStepLocal
-        if let step = target.earlierStepVersion, status.category == .otherUpdate,
+        status.earlierStepLapsed = target.earlierStepLapsed ? true : nil
+        if let step = target.earlierStepVersion, !target.earlierStepLapsed, status.category == .otherUpdate,
            let range = status.diagnosis.range(of: " (intermediate version \(step))") {
             // the intermediate version is this Blueprint's own earlier step
             status.diagnosis.replaceSubrange(range, with: " \(step) first (an earlier step of this Blueprint)")
@@ -390,7 +399,11 @@ nonisolated enum Classifier {
                 ?? TargetRules.isPastDeadline(target.deadlineLocal, timeZone: input.member.timeZone, now: base.now)
         // downloaded and past the deadline by more than an install takes:
         // it didn't install when it should have; just past it, it installs now
-        if status.pastDeadline == true, status.diagnosis.hasPrefix("Downloaded"), status.diagnosis.hasSuffix("installs at the deadline") {
+        if target.earlierStepLapsed, let step = target.earlierStepVersion, status.pastDeadlineByGrace(now: base.now),
+           status.diagnosis.hasPrefix("Downloaded") {
+            // this Blueprint's earlier step, downloaded and left past its own deadline
+            status.diagnosis = "\(step) downloaded but not installed after its deadline"
+        } else if status.pastDeadline == true, status.diagnosis.hasPrefix("Downloaded"), status.diagnosis.hasSuffix("installs at the deadline") {
             status.diagnosis = status.diagnosis.replacingOccurrences(
                 of: "installs at the deadline",
                 with: status.pastDeadlineByGrace(now: base.now) ? "not installed after the deadline" : "installs now (the deadline has just passed)")

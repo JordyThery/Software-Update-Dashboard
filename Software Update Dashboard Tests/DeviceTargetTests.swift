@@ -130,7 +130,7 @@ struct DeviceTargetTests {
     // MARK: Deadline per time zone
 
     @Test("A reported deadline is a moment, never a time zone; computed ones stay in local time, told apart by target")
-    func zones() {
+    func zones() throws {
         func mac(_ id: String, target: String?, local: String, reported: String?) -> DeviceStatus {
             var device = Sample.classify(Sample.mac(id), nil)
             device.targetVersion = target
@@ -139,22 +139,30 @@ struct DeviceTargetTests {
             device.deadlineOffset = reported == nil ? nil : 0
             return device
         }
+        let here = TimeZone(identifier: "Europe/Amsterdam")!
         let zones = DeadlineZones.zones(devices: [
             // written in UTC by the device: 22:59 UTC is 23:59 in Amsterdam
             mac("1", target: "27.2", local: "2026-11-19T22:59:06", reported: "2026-11-19T22:59:06"),
             mac("2", target: "27.2", local: "2026-11-19T22:59:09", reported: "2026-11-19T22:59:09"),
             mac("3", target: "27.2", local: "2026-11-09T22:59:06", reported: "2026-11-09T22:59:06"),
             mac("4", target: "26.7.2", local: "2026-11-09T23:59:00", reported: nil),
+            // computed 23:59 in this Mac's zone is the moment Mac 3 reports: one row
             mac("5", target: "27.2", local: "2026-11-09T23:59:00", reported: nil),
-        ])
+            // 23:59 six hours west: the same deadline in another zone
+            mac("6", target: "27.2", local: "2026-11-10T05:59:00", reported: "2026-11-10T05:59:00"),
+        ], here: here)
         #expect(zones.count == 4)
-        #expect(zones.allSatisfy { !$0.label.contains("UTC") })
-        let reported = zones.filter { $0.reported != nil }
-        #expect(reported.map(\.deviceCount).sorted() == [1, 2])
-        #expect(reported.allSatisfy { $0.unusual == nil && $0.deadline == $0.reported })
-        let computed = zones.filter { $0.reported == nil }
-        #expect(Set(computed.compactMap(\.target)) == ["26.7.2", "27.2"])
-        #expect(computed.allSatisfy { $0.unusual?.hasPrefix("Jamf Pro has no time zone for Macs") == true })
+        #expect(zones.allSatisfy { !$0.label.contains("UTC") && $0.reported != nil && $0.deadline == $0.reported })
+        // to the minute: Mac 3 reports 22:59:06
+        let same = try #require(zones.first { $0.target == "27.2"
+            && abs(($0.reported ?? .distantPast).timeIntervalSince(Sample.date("2026-11-09T22:59:00"))) < 60 })
+        #expect(same.deviceCount == 2 && same.unusual == DeadlineZones.macNote)
+        let later = try #require(zones.first { $0.target == "27.2" && $0.deviceCount == 2 && $0 != same })
+        // ten days off is another deadline, not another zone
+        #expect(later.unusual == nil)
+        let west = try #require(zones.first { $0.reported == Sample.date("2026-11-10T05:59:00") })
+        #expect(west.unusual == "+7 h from most of the devices")
+        #expect(zones.first { $0.target == "26.7.2" }?.unusual == DeadlineZones.macNote)
 
         // shown the same way everywhere
         let amsterdam = TimeZone(identifier: "Europe/Amsterdam")!
@@ -420,6 +428,8 @@ struct InspectStaleAndStuckTests {
         let status = Sample.status([("device.operating-system.version", "15.8.2"), ("softwareupdate.device-id", "J313AP")])
         var row = Sample.classify(member, status)
         row.activityFrom = Sample.date("2026-10-26T00:00:00")
+        // the Blueprint asks for a newer version than the Mac runs
+        row.targetVersion = "15.8.3"
         let reports = pair(14, versions: "^(15[.][0-8]([.][0-1])?)$", lists: ["J313AP", "J274AP"], reported: "2026-11-05T09:00:00")
             + pair(2, versions: "^(26[.][0-7]([.][0-9]+)*)$", lists: ["J414sAP"], reported: "2026-11-05T09:00:00")
         // the range that lists this Mac ends below its version: Jamf's update doesn't cover it yet

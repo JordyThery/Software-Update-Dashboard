@@ -161,7 +161,7 @@ struct DeviceDetailView: View {
                 if let line = device.targetSource ?? device.targetReason { Text(line).foregroundStyle(.secondary) }
                 if device.limitedByHardware == true { WarningLabel(DeviceDetailText.hardwareLimit(device)) }
                 // this Blueprint's earlier step, still pending: shown, not counted
-                if let step = device.earlierStepVersion {
+                if let step = device.earlierStepVersion, device.earlierStepLapsed != true {
                     LabeledContent("Installs first", value: step)
                     Text("An earlier step of this Blueprint, sent before Apple posted \(device.targetVersion ?? "the target")")
                         .foregroundStyle(.secondary)
@@ -173,7 +173,13 @@ struct DeviceDetailView: View {
                 if device.targetFromDevice == true, device.targetDiffersFromRule == true {
                     LabeledContent("Blueprint’s rule gives", value: device.ruleTarget ?? "No version")
                     if let rule = device.ruleReason { Text(rule).foregroundStyle(.secondary) }
-                    WarningLabel("Another declaration may be enforcing this: the device’s pending version differs from the Blueprint’s rule")
+                    if device.earlierStepLapsed == true {
+                        // this Blueprint's own earlier step, left past its deadline
+                        WarningLabel("An earlier step of this Blueprint, past its deadline: it installs \(device.targetVersion ?? "it") "
+                                     + "before \(device.ruleTarget ?? "the Blueprint’s version")")
+                    } else {
+                        WarningLabel("Another declaration may be enforcing this: the device’s pending version differs from the Blueprint’s rule")
+                    }
                 }
                 if let released = device.targetReleased {
                     LabeledContent("Released by Apple", value: Self.releaseDay(released))

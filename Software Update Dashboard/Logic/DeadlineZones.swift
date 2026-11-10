@@ -12,7 +12,8 @@ nonisolated struct DeadlineZone: Sendable, Hashable, Identifiable {
     var zone: String?
     /// The deadline in the devices’ local time (computed from the rule).
     var localDeadline: String
-    /// The deadline the devices reported, as a moment; nil when computed.
+    /// The row’s moment when it is placed by its moment (no time zone, or a
+    /// reported deadline): shown in this Mac’s time zone; nil for a zone’s row.
     var reported: Date?
     /// The devices’ target, which tells rows without a zone apart.
     var target: String?
@@ -33,49 +34,72 @@ nonisolated enum DeadlineZones {
     /// Why a Mac’s row has no time zone: shown once under the table.
     static let macNote = "Jamf Pro has no time zone for Macs: the deadline is each Mac’s own local time"
 
-    /// Per zone and deadline, most devices first. A reported deadline is
-    /// its own row (to the minute); a computed one is per zone and local
-    /// time, and without a zone per local time and target. A computed row
-    /// stands out when its zone’s offset differs from the most common one,
-    /// when it isn’t a whole hour from UTC, or when it has no zone.
-    static func zones(devices: [DeviceStatus]) -> [DeadlineZone] {
+    /// One row per target and deadline moment, most devices first. A device
+    /// with a time zone and a computed deadline gets its zone’s row; one
+    /// without a zone (a Mac) or with a reported moment is placed by its
+    /// moment: a computed deadline in this Mac’s time zone, a reported one
+    /// as reported (written in UTC, so its offset says nothing about where
+    /// the device is). So a computed 23:59 and a reported 23:59 here are one
+    /// row. A row stands out when its zone’s offset differs from the most
+    /// common one, when it isn’t a whole hour from UTC, when its moment is
+    /// hours off the most common one for its target, or when it has no zone.
+    static func zones(devices: [DeviceStatus], here: TimeZone = .current) -> [DeadlineZone] {
         let withDeadline = devices.filter { $0.deadlineLocal != nil || $0.deadlineDate != nil }
         guard !withDeadline.isEmpty else { return [] }
         func offset(_ zone: String?, at local: String) -> Int? {
             guard let zone, let timeZone = TimeZone(identifier: zone) else { return nil }
             return timeZone.secondsFromGMT(for: JamfPlatform.SoftwareUpdateBlock.deadline(local, in: timeZone) ?? Date())
         }
-        let computed = withDeadline.filter { $0.deadlineDate == nil }
-        let common = Dictionary(grouping: computed.compactMap { offset($0.timeZone, at: $0.deadlineLocal ?? "") }) { $0 }
+        // the zone a device’s row belongs to: its own for a computed deadline, none when placed by its moment
+        func rowZone(_ device: DeviceStatus) -> String? { device.deadlineDate == nil ? device.timeZone : nil }
+        func moment(_ device: DeviceStatus) -> Date? {
+            device.deadlineDate ?? TargetRules.deadlineDate(device.deadlineLocal, timeZone: rowZone(device) ?? here.identifier)
+        }
+        let zoned = withDeadline.filter { rowZone($0) != nil }
+        let common = Dictionary(grouping: zoned.compactMap { offset($0.timeZone, at: $0.deadlineLocal ?? "") }) { $0 }
             .max { $0.value.count != $1.value.count ? $0.value.count < $1.value.count : $0.key > $1.key }?.key
         let groups = Dictionary(grouping: withDeadline) { device -> String in
-            if let moment = device.deadlineDate {
-                return "reported|\(device.timeZone ?? "")|\(Int(moment.timeIntervalSince1970 / 60))"
-            }
-            let target = device.timeZone == nil ? device.targetVersion ?? "" : ""
-            return "computed|\(device.timeZone ?? "")|\(device.deadlineLocal ?? "")|\(target)"
+            let minute = moment(device).map { String(Int($0.timeIntervalSince1970 / 60)) } ?? device.deadlineLocal ?? ""
+            return "\(rowZone(device) ?? "")|\(device.targetVersion ?? "")|\(minute)"
+        }
+        // per target, the moment most devices without a zone share
+        let placed = groups.values.filter { rowZone($0[0]) == nil }
+        var usual: [String: Date] = [:]
+        // most devices first; on a tie, the earliest moment
+        for group in placed.sorted(by: { $0.count != $1.count ? $0.count > $1.count
+                                         : (moment($0[0]) ?? .distantFuture) < (moment($1[0]) ?? .distantFuture) }) {
+            let target = group[0].targetVersion ?? ""
+            if usual[target] == nil, let at = moment(group[0]) { usual[target] = at }
+        }
+        func hoursText(_ seconds: Double) -> String {
+            let hours = seconds / 3_600
+            return "\(hours > 0 ? "+" : "")\(hours.formatted(.number.precision(.fractionLength(0...1)))) h from most of the devices"
         }
         return groups.values.map { group -> DeadlineZone in
             let first = group[0]
-            let zone = first.timeZone
-            let local = first.deadlineLocal ?? ""
-            if let moment = first.deadlineDate {
-                return DeadlineZone(zone: zone, localDeadline: local, reported: moment, target: zone == nil ? first.targetVersion : nil,
-                                    deviceCount: group.count, deadline: moment, unusual: nil)
-            }
+            let zone = rowZone(first)
+            let local = group.first { $0.deadlineDate == nil }?.deadlineLocal ?? first.deadlineLocal ?? ""
+            let at = moment(first)
             var unusual: String?
             if zone == nil {
-                unusual = first.isComputer ? macNote : "No time zone reported"
+                // placed by its moment: hours off the rest for its target (in some other zone),
+                // else a Mac’s note; days off is another deadline, not another zone
+                if let at, let reference = usual[first.targetVersion ?? ""],
+                   (3_600...(26 * 3_600)).contains(abs(at.timeIntervalSince(reference))) {
+                    unusual = hoursText(at.timeIntervalSince(reference))
+                } else if group.contains(where: { $0.deadlineDate == nil }) {
+                    unusual = first.isComputer ? macNote : "No time zone reported"
+                }
             } else if TimeZone(identifier: zone!) == nil {
                 unusual = "Not a time zone the Mac knows"
             } else if let seconds = offset(zone, at: local), seconds % 3_600 != 0 {
                 unusual = "Not a whole hour from UTC"
             } else if let seconds = offset(zone, at: local), let common, seconds != common {
-                let hours = Double(seconds - common) / 3_600
-                unusual = "\(hours > 0 ? "+" : "")\(hours.formatted(.number.precision(.fractionLength(0...1)))) h from most of the devices"
+                unusual = hoursText(Double(seconds - common))
             }
-            return DeadlineZone(zone: zone, localDeadline: local, target: zone == nil ? first.targetVersion : nil,
-                                deviceCount: group.count, deadline: TargetRules.deadlineDate(local, timeZone: zone), unusual: unusual)
+            return DeadlineZone(zone: zone, localDeadline: local, reported: zone == nil ? at : nil,
+                                target: zone == nil ? first.targetVersion : nil, deviceCount: group.count,
+                                deadline: at, unusual: unusual)
         }
         .sorted { $0.deviceCount != $1.deviceCount ? $0.deviceCount > $1.deviceCount
                   : ($0.label, $0.deadline ?? .distantFuture, $0.localDeadline, $0.target ?? "")
