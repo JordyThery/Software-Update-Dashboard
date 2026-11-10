@@ -69,6 +69,8 @@ struct BlueprintCommands: Commands {
                 .disabled(selectedID == nil)
             Button("Remove Update Start") { if let id = selectedID { focus?.model.setUpdateStarted(nil, for: id) } }
                 .disabled(selectedID.flatMap { focus?.model.tracked($0)?.updateStarted } == nil)
+            Button("Notifications…") { if let id = selectedID { focus?.sheet.wrappedValue = .notifications(id) } }
+                .disabled(selectedID == nil)
             Divider()
             Button("Inspect Devices Needing Attention") {
                 guard let id = selectedID, let model = focus?.model, let result else { return }

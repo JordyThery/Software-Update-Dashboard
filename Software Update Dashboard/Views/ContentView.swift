@@ -5,7 +5,8 @@ import SwiftUI
 /// the selected one in the detail, and the connection in use in the toolbar.
 struct ContentView: View {
     let connections: ConnectionsModel
-    @State private var model: DashboardModel
+    let model: DashboardModel
+    let automation: AutoRefresh
     @State private var sheet: BlueprintSheet?
     @State private var page: BlueprintView.Page = .dashboard
     /// Set by the menu or the toolbar: true for the CSV, false for the summary.
@@ -13,9 +14,10 @@ struct ContentView: View {
     /// The tracked Blueprint whose Stop Tracking waits for confirmation.
     @State private var stopTracking: UUID?
 
-    init(connections: ConnectionsModel) {
+    init(connections: ConnectionsModel, model: DashboardModel, automation: AutoRefresh) {
         self.connections = connections
-        _model = State(initialValue: DashboardModel(connections: connections))
+        self.model = model
+        self.automation = automation
     }
 
     var body: some View {
@@ -29,7 +31,7 @@ struct ContentView: View {
                 } else if case .blueprint(let id)? = model.selection, let tracked = model.tracked(id) {
                     BlueprintView(model: model, tracked: tracked, page: $page, exportRequest: $exportRequest, sheet: $sheet)
                 } else {
-                    OverviewView(model: model, sheet: $sheet)
+                    OverviewView(model: model, automation: automation, sheet: $sheet)
                 }
             }
             .safeAreaInset(edge: .top) {
@@ -48,6 +50,7 @@ struct ContentView: View {
             case .track: AddBlueprintSheet(model: model)
             case .compare(let id): CompareGroupSheet(model: model, trackedID: id)
             case .updateStarted(let id): UpdateStartedSheet(model: model, trackedID: id)
+            case .notifications(let id): NotificationSheet(model: model, trackedID: id)
             }
         }
         .confirmationDialog(stopTrackingTitle, isPresented: Binding(get: { stopTracking != nil }, set: { if !$0 { stopTracking = nil } }),
@@ -110,12 +113,14 @@ enum BlueprintSheet: Identifiable, Hashable {
     case track
     case compare(UUID)
     case updateStarted(UUID)
+    case notifications(UUID)
 
     var id: String {
         switch self {
         case .track: "track"
         case .compare(let id): "compare \(id)"
         case .updateStarted(let id): "started \(id)"
+        case .notifications(let id): "notifications \(id)"
         }
     }
 }
@@ -139,6 +144,7 @@ struct SidebarView: View {
                             Button("Refresh") { Task { await model.refresh(tracked.id) } }
                             Button("Compare with a Group…") { sheet = .compare(tracked.id) }
                             Button("Set Update Start…") { sheet = .updateStarted(tracked.id) }
+                            Button("Notifications…") { sheet = .notifications(tracked.id) }
                             Divider()
                             Button("Open in Jamf Pro") { model.page(of: tracked.id).map { model.open([$0]) } }
                                 .disabled(model.page(of: tracked.id) == nil)
@@ -209,5 +215,7 @@ struct NoConnectionView: View {
 }
 
 #Preview {
-    ContentView(connections: .preview())
+    let connections = ConnectionsModel.preview()
+    let model = DashboardModel(connections: connections)
+    ContentView(connections: connections, model: model, automation: AutoRefresh(model: model, defaults: connections.defaults))
 }

@@ -181,6 +181,16 @@ Order: A, B with C and M, L, D, G, I, J, K (as planned for 0.2 before the renumb
 - The “27.2.1, 9 Nov 23:59” device: a Mac on 27.2 reporting 27.2.1 pending with 27.2’s deadline (its release on 26 Oct plus the Blueprint’s days); the earlier step was looked for only when the pending version is older than the target. Now the Blueprint’s current deadline counts and the kept deadline is shown, in Deadline per Time Zone as “27.2.1, with the deadline of earlier step 27.2”. Also: an earlier step’s deadline counts from every posting date Apple’s list still has for the version (Jamf counted 27.2 from 5 Nov, another build’s posting).
 - G: not supervised (iPhones and iPads only), no declarative device management, never reported (no status report at all).
 
+**Round 2** (on branch `0.3`, 2026-11-10, after Jordy’s hand check of round 1; with JTKit 1.7.0 on its branch `release-1.7.0`, decided by Jordy):
+
+- Readiness: Apple’s `com.apple.configuration.softwareupdate.enforcement.specific` allows supervised and device enrollments on iOS and iPadOS and supervised enrollments only on macOS. “Not supervised” is replaced by iPhones and iPads enrolled with User Enrollment (JTKit 1.7.0 reads `deviceOwnershipType` and `appleEnrollmentType` from the inventory it already reads; Apple’s type first) and Macs that aren’t supervised. Checked on the live tenant: every iPad Institutional, none with User Enrollment, every Mac supervised.
+- An older pending version of the rule’s major, reported with exactly the deadline the rule gives the rule’s version, while Apple’s data lists that version for the device: the rule’s version and deadline are the target, the pending version this Blueprint’s earlier step (seen on the live tenant: two iPads with 27.2 pending, due 16 Nov, the 27.2.1 deadline).
+- Past the deadline: the live tenant had two Macs at “26.7.2, earlier step, 9 Nov”: one downloaded and late (counted), one still installing (not counted, listed anyway). Deadline per Time Zone now lists a device at a passed step deadline only when it counts as past it (also when the step failed); a device still installing is listed at its current target’s deadline. A device holding an earlier step’s deadline for its current target is labeled at the deadline that counts.
+- Hardware to Replace: a device is marked only when it can’t run what the rule gives it (latest: the newest release; minor: its own major’s newest; a specific version: that version).
+- The device detail shows a pending version already installed as ignored.
+- B, C, M, L and D in SUD. The Stop button stops the automatic refresh that runs; automatic refresh stays on. Demo Mode’s notification rules are kept in memory and Demo Mode sends nothing (it writes what it would send in the activity log); the demo data doesn’t change between refreshes, so no notification is shown there.
+- Demo data (JTKit 1.7.0): Studio Mac 09 (27.0.2 pending with 27.1’s deadline), Studio Mac 10 (27.0.2 failed, past its deadline), Studio Mac 11 (a 2018 MacBook Pro on 15.7.3, not supervised), Field iPad 14 (User Enrollment).
+
 ### Later
 
 - Computer groups end to end (the readers are in JTKit 1.5.0).

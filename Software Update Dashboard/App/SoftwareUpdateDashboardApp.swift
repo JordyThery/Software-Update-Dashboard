@@ -4,7 +4,13 @@ import SwiftUI
 
 @main
 struct SoftwareUpdateDashboardApp: App {
-    @State private var connections = ConnectionsModel.forLaunch(activityLog: .app)
+    @State private var connections: ConnectionsModel
+    /// The dashboard, the automatic refresh and the login item live as long
+    /// as the app, so the menu bar item and the schedule work without the window.
+    @State private var model: DashboardModel
+    @State private var automation: AutoRefresh
+    @State private var loginItem = LoginItem()
+    @State private var menuBar: MenuBarSetting
     @State private var updates: UpdateChecker = {
         let logger = Logger(subsystem: "be.jordythery.softwareupdatedashboard", category: "Updates")
         return UpdateChecker(
@@ -14,9 +20,21 @@ struct SoftwareUpdateDashboardApp: App {
         )
     }()
 
+    init() {
+        let connections = ConnectionsModel.forLaunch(activityLog: .app)
+        let model = DashboardModel(connections: connections)
+        let automation = AutoRefresh(model: model, defaults: connections.defaults)
+        _connections = State(initialValue: connections)
+        _model = State(initialValue: model)
+        _automation = State(initialValue: automation)
+        _menuBar = State(initialValue: MenuBarSetting(defaults: connections.defaults))
+        // not as the unit-test host: tests start their own
+        if !TestRun.isUnitTestHost { automation.schedule() }
+    }
+
     var body: some Scene {
         Window("Software Update Dashboard", id: "main") {
-            ContentView(connections: connections)
+            ContentView(connections: connections, model: model, automation: automation)
                 .environment(updates)
                 .frame(minWidth: 900, minHeight: 560)
                 .confirmsDemoModeSwitch(connections.demo)
@@ -37,13 +55,26 @@ struct SoftwareUpdateDashboardApp: App {
             DeviceCommands()
         }
 
-        // JTKit's Settings window: Connections and Updates (no General tab:
-        // the app has no general settings; it follows the Mac's appearance).
+        // JTKit's Settings window: General (Open at Login, the menu bar item), Connections,
+        // Automation and Updates.
         SettingsWindow(updates: updates, opensTabsByName: true) {
+            GeneralSettingsSections(loginItem: loginItem, menuBar: menuBar)
+        } tabs: {
             SettingsView(connections: connections)
                 // Settings › Connections notes that these are the real connections.
                 .environment(connections.demo)
+            SettingsTab("Automation", systemImage: "clock.arrow.circlepath") {
+                AutomationSettingsSections(automation: automation)
+            }
         }
+
+        // the share on target of each tracked Blueprint, Refresh All, Open Window
+        MenuBarExtra(isInserted: Binding(get: { menuBar.isShown }, set: { menuBar.isShown = $0 })) {
+            MenuBarContent(model: model, automation: automation)
+        } label: {
+            Label("Software Update Dashboard", systemImage: "square.stack.3d.up")
+        }
+        .menuBarExtraStyle(.window)
 
         AboutWindow(configuration: .softwareUpdateDashboard)
 

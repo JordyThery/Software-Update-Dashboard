@@ -31,6 +31,8 @@ final class DashboardModel {
     }
 
     let connections: ConnectionsModel
+    /// Notifications per tracked Blueprint, after each refresh.
+    let notifier: Notifier
     var selection: Selection? = .overview
     private(set) var results: [UUID: RefreshResult] = [:]
     private(set) var refreshing: Set<UUID> = []
@@ -65,6 +67,7 @@ final class DashboardModel {
     init(connections: ConnectionsModel, history: StatusHistory? = nil,
          releases: (@Sendable () async throws -> AppleReleases.Catalog)? = nil) {
         self.connections = connections
+        notifier = Notifier(defaults: connections.defaults, activityLog: connections.activityLog)
         historyOverride = history
         releasesOverride = releases
         (saved, unreadableTrackedCopy) = TrackedBlueprintList.read(from: connections.defaults)
@@ -111,6 +114,7 @@ final class DashboardModel {
             save()
         }
         history?.remove(id)
+        if !isDemo { notifier.remove(id) }
         results[id] = nil
         inspections = inspections.filter { $0.key.tracked != id }
         if selection == .blueprint(id) { selection = .overview }
@@ -282,6 +286,11 @@ final class DashboardModel {
                                                   scope: result.scope),
                                   for: id)
             }
+            // what changed since the refresh before (this session's, else the history's): never on the first
+            let before = results[id]?.devices ?? previous?.devices
+            notifier.post(RefreshNotices.between(previous: before, current: result.devices, rule: notifier.rule(for: id, demo: isDemo),
+                                                 name: tracked.blueprintName),
+                          demo: isDemo)
             results[id] = result
         } catch is CancellationError {
             if connections.inUseKey == key { errors[id] = "Stopped." }

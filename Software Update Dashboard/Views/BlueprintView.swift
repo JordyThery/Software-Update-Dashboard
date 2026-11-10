@@ -389,6 +389,7 @@ struct ReadinessSection: View {
                         let count = ReadinessCheck.count(check, in: devices)
                         GridRow {
                             Label(check.title, systemImage: check.systemImage)
+                                .accessibilityHidden(true)
                             Button("\(count)") { showDevices(check) }
                                 .buttonStyle(.link)
                                 .monospacedDigit()
