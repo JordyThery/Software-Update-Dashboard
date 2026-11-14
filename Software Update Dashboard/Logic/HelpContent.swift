@@ -37,7 +37,7 @@ nonisolated enum HelpContent {
 
     static let targets = HelpTopic(id: "targets", title: "Where the Target and the Deadline Come From", paragraphs: [
         "A Blueprint that names a version: that version is the target, by the deadline the Blueprint sets, in each device’s own local time.",
-        "Latest: the newest release Apple offers publicly that the device’s model can run, from the day Apple posts it. Minor updates: the newest public release of the device’s own major release. The deadline is Apple’s public posting date plus the Blueprint’s days, at the Blueprint’s time of day, in the device’s local time.",
+        "Latest: the newest release Apple offers publicly that the device’s model can run, from the day Apple posts it. Minor updates: the newest public release of the device’s own major release. The deadline is Apple’s public posting date plus the Blueprint’s days, at the Blueprint’s time of day, in the device’s local time. When Apple later changes the posting date of a release that was already public, the deadline stays the one Jamf sent, as the Blueprint’s devices report it.",
         "What Jamf sent comes first: when a device reports a pending version from a declaration, after the update started, that version is its target, with the deadline the device reports. When it differs from the Blueprint’s rule, the device detail shows both.",
         "A deadline a device reports is a moment, shown in this Mac’s time. A deadline worked out from the rule is the device’s local time. Macs have no time zone in Jamf Pro, so their computed deadline is each Mac’s own local time.",
         "The device detail says where each target and deadline comes from.",
