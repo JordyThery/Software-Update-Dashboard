@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.1 — Unreleased
+## 0.3.1 — 2026-11-14
 
 - **Deadlines stay put when Apple re-dates a release.** When Apple changes the posting date of a release that was already public, the deadline no longer moves to the new date. The app uses the deadline Jamf sent, as the Blueprint’s devices report it, for every device of that Blueprint, including devices that haven’t reported it yet; their deadline says “As the Blueprint’s other devices report it”. Without such reports it counts from the first public posting date it saw. A deadline a device reported before the change is no longer marked as possibly out of date.
 
