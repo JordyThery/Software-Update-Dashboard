@@ -133,6 +133,8 @@ nonisolated struct RefreshWorkflow: Sendable {
     /// Apple’s release data; nil when it couldn’t be read (the refresh stops).
     let catalog: AppleReleases.Catalog?
     let serverTimeZone: TimeZone
+    /// The first public posting date this app saw of each build (`FirstPostings`).
+    var firstPosted: [String: Date] = [:]
     var staleDays = 30
     /// Status reports read at the same time.
     var parallel = 4
@@ -180,10 +182,11 @@ nonisolated struct RefreshWorkflow: Sendable {
         }
         let tied = BlueprintHealth.byDevice(declarations.reports, deviceIDs: deviceIDs)
         let current = BlueprintHealth.catalogue(declarations.reports, blocks: blocks, blueprintName: blueprint.overview.name)
+        let known = postingBasis(inputs, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now)
         var devices = inputs.map { input in
             let osName = Classifier.osName(isComputer: input.member.kind == .computer,
                                            modelIdentifier: input.member.modelIdentifier ?? input.status?.modelIdentifier ?? "")
-            return classify(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now,
+            return classify(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now, known: known,
                             awaitingSync: BlueprintHealth.isAwaitingSync(tied.reports[Self.key(input.member)] ?? [],
                                                                          osName: osName, current: current))
         }
@@ -295,9 +298,29 @@ nonisolated struct RefreshWorkflow: Sendable {
         }
     }
 
-    /// One device against its own target.
-    func classify(_ input: DeviceInput, blocks: [JamfPlatform.SoftwareUpdateBlock], blueprint: JamfPlatform.BlueprintDetail,
-                  tracked: TrackedBlueprint, now: Date, awaitingSync: Bool = false) -> DeviceStatus {
+    /// What the Blueprint’s computed deadlines count from: the first public
+    /// posting dates this app saw and, per platform and version, the posting
+    /// date the devices’ own reports say Jamf counted from (`TargetRules.reportedPosting`).
+    func postingBasis(_ inputs: [DeviceInput], blocks: [JamfPlatform.SoftwareUpdateBlock], blueprint: JamfPlatform.BlueprintDetail,
+                      tracked: TrackedBlueprint, now: Date) -> PostingBasis {
+        var known = PostingBasis(remembered: firstPosted)
+        let reports = inputs.compactMap { input -> (platform: AppleReleases.Platform, version: OSVersion, posted: Date)? in
+            let device = rule(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now, known: known)
+            guard let version = device.rule.osVersion,
+                  let posted = TargetRules.reportedPosting(device.rule, status: input.status, block: device.block, catalog: catalog,
+                                                           platform: device.platform, serverTimeZone: serverTimeZone,
+                                                           blueprintChanged: blueprint.overview.updatedDate,
+                                                           timeZone: input.member.timeZone) else { return nil }
+            return (device.platform, version, posted)
+        }
+        known.reported = TargetRules.reportedPostings(reports)
+        return known
+    }
+
+    /// The Blueprint’s rule for one device, and what it was read with.
+    private func rule(_ input: DeviceInput, blocks: [JamfPlatform.SoftwareUpdateBlock], blueprint: JamfPlatform.BlueprintDetail,
+                      tracked: TrackedBlueprint, now: Date, known: PostingBasis)
+        -> (rule: DeviceTarget, block: JamfPlatform.SoftwareUpdateBlock?, platform: AppleReleases.Platform, osName: String, os: String?) {
         let member = input.member
         let platform: AppleReleases.Platform = member.kind == .computer ? .macOS : .iOS
         let model = member.modelIdentifier ?? input.status?.modelIdentifier
@@ -310,20 +333,36 @@ nonisolated struct RefreshWorkflow: Sendable {
             os: os, model: model, boardID: input.status?.deviceID, osName: osName,
             context: TargetRules.Context(block: block, catalog: catalog, platform: platform,
                                          blueprintChanged: blueprint.overview.updatedDate, updateStarted: tracked.updateStarted,
-                                         now: now))
+                                         now: now, known: known))
+        return (rule, block, platform, osName, os)
+    }
+
+    /// One device against its own target.
+    func classify(_ input: DeviceInput, blocks: [JamfPlatform.SoftwareUpdateBlock], blueprint: JamfPlatform.BlueprintDetail,
+                  tracked: TrackedBlueprint, now: Date, known: PostingBasis? = nil, awaitingSync: Bool = false) -> DeviceStatus {
+        let member = input.member
+        let model = member.modelIdentifier ?? input.status?.modelIdentifier
+        let known = known ?? PostingBasis(remembered: firstPosted)
+        let (rule, block, platform, osName, os) = self.rule(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now,
+                                                            known: known)
         // what Jamf actually sent the device comes first, when it reports it
         let target = TargetRules.fromDevice(rule, status: input.status, os: os, osName: osName, catalog: catalog,
                                             platform: platform, serverTimeZone: serverTimeZone, model: model,
                                             boardID: input.status?.deviceID, blueprintChanged: blueprint.overview.updatedDate,
                                             earlierStepDeadline: { [catalog] version in
                                                 TargetRules.ruleDeadline(for: version, block: block, catalog: catalog, platform: platform,
-                                                                         model: model, boardID: input.status?.deviceID)
+                                                                         model: model, boardID: input.status?.deviceID, known: known)
                                             },
                                             earlierStepWindow: { [catalog] version in
                                                 TargetRules.ruleWindow(for: version, block: block, catalog: catalog, platform: platform,
-                                                                       model: model, boardID: input.status?.deviceID, now: now)
+                                                                       model: model, boardID: input.status?.deviceID, now: now, known: known)
                                             },
                                             awaitingSync: awaitingSync,
+                                            postingDeadlines: { [catalog] version, build in
+                                                TargetRules.postingDeadlines(for: version, build: build, block: block, catalog: catalog,
+                                                                             platform: platform).map(\.deadline)
+                                            },
+                                            known: known,
                                             timeZone: member.timeZone, now: now)
         let base = ClassificationContext(target: nil, since: nil, serverTimeZone: serverTimeZone, now: now, staleDays: staleDays,
                                          catalog: catalog, platform: platform)
