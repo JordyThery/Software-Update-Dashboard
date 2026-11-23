@@ -58,6 +58,6 @@ Follow the release gate in JTKit/ROADMAP.md.
 
 1. Bump `MARKETING_VERSION` in the project.
 2. Update the README if features changed (its screenshot must show no real identifiers).
-3. Archive from the app's own project, sign with Developer ID, notarize, and zip.
-4. Tag `vX.Y.Z`, create the GitHub release with notes and attach the zip. Release notes (CHANGELOG entries and GitHub release notes) are for the end user: professional and concise, saying what changed for them, and never mentioning the release check, reviews, tests, test targets, AI tools, JTKit step numbers or how a problem was found (decided by Jordy on 2026-11-01).
+3. Jordy does the Developer ID signing and notarization himself, archiving from the app's own project; Claude never signs or notarizes (JTKit/CLAUDE.md, “Releasing an app”). Check the notarized app he supplies: `CFBundleShortVersionString` matches the tag, `codesign --verify --deep --strict`, `spctl -a`, `xcrun stapler validate`. Zip it with `ditto -c -k --keepParent` as `Software-Update-Dashboard-X.Y.Z.zip`, unzip a copy elsewhere and check it again.
+4. After Jordy approves the notes, tag `vX.Y.Z` and create the GitHub release with the notes and the zip. Release notes (CHANGELOG entries and GitHub release notes) are for the end user: professional and concise, saying what changed for them, and never mentioning the release check, reviews, tests, test targets, AI tools, JTKit step numbers or how a problem was found (decided by Jordy on 2026-11-01).
 5. Website: follow ../jordythery.be/CLAUDE.md, section “When an app is released”.
