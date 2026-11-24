@@ -65,6 +65,8 @@ final class DashboardModel {
     /// Demo mode’s two, changed in memory only.
     @ObservationIgnored private var demoTracked: [TrackedBlueprint]?
     @ObservationIgnored private var catalog: (key: String, value: AppleReleases.Catalog, date: Date)?
+    /// Demo Mode’s first public posting dates (`FirstPostings`), in memory only.
+    @ObservationIgnored private var demoFirstPostings: [String: Date] = [:]
     @ObservationIgnored private let historyOverride: StatusHistory?
     /// Where Apple’s release data comes from; tests replace it.
     @ObservationIgnored private let releasesOverride: (@Sendable () async throws -> AppleReleases.Catalog)?
@@ -350,7 +352,8 @@ final class DashboardModel {
             if let newest = newestSnapshots[id] { previous = newest }
             else if let history { previous = await Task.detached(priority: .utility) { history.latest(for: id) }.value }
             else { previous = nil }
-            let workflow = RefreshWorkflow(client: client, catalog: catalog, serverTimeZone: connections.serverTimeZone)
+            var workflow = RefreshWorkflow(client: client, catalog: catalog, serverTimeZone: connections.serverTimeZone)
+            if let catalog { workflow.firstPosted = firstPostings(catalog, demo: isDemo) }
             var result = try await workflow.run(tracked, previousScope: previous?.scope) { step in
                 Task { @MainActor in if self.refreshing.contains(id) { self.progress[id] = step } }
             }
@@ -394,6 +397,14 @@ final class DashboardModel {
         guard let fetched = read else { return nil }
         catalog = (key, fetched, Date())
         return fetched
+    }
+
+    /// The first public posting date seen of each build, with the catalog’s
+    /// new ones added: saved, or in memory only in Demo Mode.
+    private func firstPostings(_ catalog: AppleReleases.Catalog, demo: Bool) -> [String: Date] {
+        guard demo else { return FirstPostings.remember(catalog, in: connections.defaults) }
+        demoFirstPostings = FirstPostings.merged(demoFirstPostings, with: catalog)
+        return demoFirstPostings
     }
 
     /// Five earlier days for demo mode, from JTKit’s samples
