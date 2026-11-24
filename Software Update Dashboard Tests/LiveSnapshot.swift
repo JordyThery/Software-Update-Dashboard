@@ -17,7 +17,8 @@ import Testing
 // and environment ID). For every tracked Blueprint of that
 // connection it reads what a refresh reads, the status items SUD reads and the
 // declaration reports, plus Apple's release data, and adds SUD's own
-// result per device. Everything is anonymized (SnapshotAnonymizer) before
+// result per device, counted from the first public posting dates SUD
+// remembers (`firstPublicPostings`, read only, never saved). Everything is anonymized (SnapshotAnonymizer) before
 // the one file is written to the app's temporary folder; the script moves
 // it out of the container. The report holds counts only.
 
@@ -79,6 +80,10 @@ struct LiveSnapshot {
         let client = try JamfPlatform.Client(connection: connection, secret: { secret }, recorder: recorder,
                                              permits: ConnectionsModel.permits)
         let catalog = try await AppleReleases.Client(recorder: recorder, userAgent: "Software Update Dashboard/snapshot").catalog()
+        // as a refresh in SUD counts them, with this read's new ones added in memory only
+        let firstPosted = FirstPostings.merged(saved.firstPostings, with: catalog)
+        run.record(step: "snapshot: first public posting dates", passed: true,
+                   note: "\(saved.firstPostings.count) remembered by SUD, \(firstPosted.count) with this read's")
         let platformDevices = try await client.devices()
         run.neverReport(platformDevices.flatMap { [$0.id, $0.serialNumber ?? ""] })
         var platformBySerial: [String: String] = [:]
@@ -98,7 +103,9 @@ struct LiveSnapshot {
         let now = Date()
         for item in tracked {
             let label = blueprintLabels[item.blueprintID] ?? "Blueprint"
-            let result = try await RefreshWorkflow(client: client, catalog: catalog, serverTimeZone: record.timeZone).run(item, now: now)
+            var workflow = RefreshWorkflow(client: client, catalog: catalog, serverTimeZone: record.timeZone)
+            workflow.firstPosted = firstPosted
+            let result = try await workflow.run(item, now: now)
             run.neverReport(LiveReadTests.identifiers(result.members) + result.scope.flatMap { [$0.group.groupID, $0.name] })
             anonymizer.alias(result.blueprintName, as: label)
             anonymizer.alias(item.blueprintName, as: label)
@@ -171,8 +178,9 @@ struct LiveSnapshot {
         }
 
         let snapshot: [String: Any] = [
-            "snapshot": ["taken": Self.iso(now) as Any, "anonymized": true, "tool": "Software Update Dashboard snapshot (0.3)",
-                         "serverTimeZone": record.serverTimeZone, "blueprints": blueprints.count, "devices": deviceCount],
+            "snapshot": ["taken": Self.iso(now) as Any, "anonymized": true, "tool": "Software Update Dashboard snapshot (0.3.1)",
+                         "serverTimeZone": record.serverTimeZone, "blueprints": blueprints.count, "devices": deviceCount,
+                         "firstPublicPostingsRemembered": saved.firstPostings.count],
             "appleReleases": catalog.releases.map(Self.release),
             "appleReleaseProblems": catalog.problems.map { anonymizer.scrub($0) ?? "" },
             "blueprints": blueprints,
@@ -207,19 +215,19 @@ struct LiveSnapshot {
 
     // MARK: Reading
 
-    /// SUD's saved connections and tracked Blueprints, read (never written)
-    /// from the app's own settings file in its container, through a
-    /// throwaway copy.
-    static func savedSUD() throws -> (connections: [AppConnection], tracked: [TrackedBlueprint]) {
+    /// SUD's saved connections, tracked Blueprints and first public posting
+    /// dates, read (never written) from the app's own settings file in its
+    /// container, through a throwaway copy.
+    static func savedSUD() throws -> (connections: [AppConnection], tracked: [TrackedBlueprint], firstPostings: [String: Date]) {
         let file = URL(filePath: NSHomeDirectory()).appending(path: "Library/Preferences/be.jordythery.softwareupdatedashboard.plist")
         let data = try Data(contentsOf: file)
         let values = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
         let copy = TestFiles.defaults("snapshot")
-        for key in [ConnectionsModel.connectionsKey, TrackedBlueprintList.key, "trackedGroups"] {
+        for key in [ConnectionsModel.connectionsKey, TrackedBlueprintList.key, "trackedGroups", FirstPostings.defaultsKey] {
             if let value = values[key] { copy.set(value, forKey: key) }
         }
         let connections = try UserDefaultsConnectionStorage<AppConnection>(key: ConnectionsModel.connectionsKey, defaults: copy).load()
-        return (connections, TrackedBlueprintList.read(from: copy).list)
+        return (connections, TrackedBlueprintList.read(from: copy).list, FirstPostings.read(from: copy))
     }
 
     /// Every member's raw status items, a few at a time; none for a device without a report.
