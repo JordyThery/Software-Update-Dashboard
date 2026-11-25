@@ -127,6 +127,14 @@ final class Notifier {
     }
 
     static let turnedOff = "Notifications are off for Software Update Dashboard in System Settings › Notifications."
+    static let savedWhileOff = "Saved. Notifications start once they’re turned on in System Settings."
+
+    /// What the Notifications sheet says after Save: a rule that is on, saved
+    /// while notifications are off in System Settings; nil otherwise and in Demo Mode.
+    func savedNote(for rule: NotificationRule?, demo: Bool) -> String? {
+        guard !demo, let rule, rule.isOn, permissionProblem != nil else { return nil }
+        return Self.savedWhileOff
+    }
 
     /// This app’s page in System Settings › Notifications.
     static var settingsURL: URL {

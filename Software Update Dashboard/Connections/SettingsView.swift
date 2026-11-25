@@ -25,7 +25,7 @@ struct SettingsView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 // a refresh found the status times one setting's offset away from the last contacts
-                if let warning = connections.serverTimeZoneWarning(for: record.wrappedValue) {
+                if let warning = connections.serverTimeZoneWarning(forID: record.wrappedValue.id) {
                     WarningLabel(warning)
                     Button("Use UTC") { record.wrappedValue.serverTimeZone = AppConnection.defaultServerTimeZone }
                 }

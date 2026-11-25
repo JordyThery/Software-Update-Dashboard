@@ -200,6 +200,8 @@ struct NotificationSheet: View {
     @State private var shareOn = false
     @State private var level = NotificationRule.defaultLevel
     @State private var failedOrStuck = false
+    /// The rule last saved while the sheet stayed open.
+    @State private var savedRule: NotificationRule?
 
     private var isDemo: Bool { model.connections.demoChoice.isActive }
 
@@ -220,6 +222,9 @@ struct NotificationSheet: View {
             if let problem = model.notifier.permissionProblem, !isDemo {
                 Section {
                     WarningLabel(problem)
+                    if let note = model.notifier.savedNote(for: savedRule, demo: isDemo) {
+                        Text(note).font(.callout).foregroundStyle(.secondary)
+                    }
                     Button("Open System Settings") { openURL(Notifier.settingsURL) }
                 }
             }
@@ -228,6 +233,10 @@ struct NotificationSheet: View {
         .frame(width: 440)
         // turned off in System Settings: said as soon as the sheet opens
         .task { await model.notifier.checkPermission(demo: isDemo) }
+        // back from System Settings: checked again, as Open at Login is
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.notifier.checkPermission(demo: isDemo) }
+        }
         .onAppear {
             let rule = model.notifier.rule(for: trackedID, demo: isDemo)
             shareOn = rule.shareLevel != nil
@@ -242,7 +251,7 @@ struct NotificationSheet: View {
                     Task {
                         await model.notifier.setRule(rule, for: trackedID, demo: isDemo)
                         // a refused permission stays on screen
-                        if model.notifier.permissionProblem == nil || isDemo || !rule.isOn { dismiss() }
+                        if model.notifier.permissionProblem == nil || isDemo || !rule.isOn { dismiss() } else { savedRule = rule }
                     }
                 }
             }

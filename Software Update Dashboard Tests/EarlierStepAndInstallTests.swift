@@ -94,8 +94,8 @@ struct EarlierStepAndInstallTests {
         #expect(device.diagnosis == "Installing 27.0.1 for more than 4 hours; the device checks in but hasn’t reported a new status")
         #expect(device.needsAttention)
         let silent = Sample.classify(Sample.iPad(lastContact: Sample.date("2026-11-05T05:00:00")), installing)
-        #expect(silent.diagnosis == "Installing since \(InspectFindings.moment(Sample.date("2026-11-05T06:00:00"))); "
-                + "no contact since then (switched off, or stuck installing)")
+        #expect(silent.diagnosis == "Installing since \(InspectFindings.dayTime(Sample.date("2026-11-05T06:00:00"))), "
+                + "no contact since (switched off or stuck)")
         #expect(silent.needsAttention)
         let recent = Sample.status([("device.operating-system.version", "26.7.1"), ("softwareupdate.install-state", "installing")],
                                    time: "2026-11-05T11:00:00")

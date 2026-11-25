@@ -265,6 +265,13 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 24) {
                 RuleSection(model: model, result: result, sheet: $sheet)
                 ForEach(result.problems, id: \.self) { WarningLabel($0).font(.callout) }
+                // a refresh found the status times one setting's offset away from the last contacts
+                if model.connections.serverTimeZoneLooksWrong {
+                    HStack(spacing: 12) {
+                        WarningLabel(ConnectionsModel.serverTimeZoneLine).font(.callout)
+                        SettingsTabLink(SettingsTabName.connections) { Text("Open Connections Settings…") }
+                    }
+                }
                 ProgressSection(counts: result.counts, pastDeadline: result.pastDeadline)
                 if let line = BlueprintHealth.dashboardLine(result.notCoveredCount) {
                     WarningLabel(line + ".").font(.callout)
@@ -440,6 +447,7 @@ struct ReadinessSection: View {
                         }
                     }
                 }
+                Text(ReadinessCheck.countedOnce).font(.callout).foregroundStyle(.secondary)
             }
         }
     }

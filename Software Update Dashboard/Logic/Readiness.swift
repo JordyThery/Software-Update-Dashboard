@@ -23,6 +23,9 @@ nonisolated enum ReadinessCheck: String, CaseIterable, Identifiable, Hashable, S
 
     var id: String { rawValue }
 
+    /// Under the counts: why a device may be missing from a count that also fits it.
+    static let countedOnce = "Each device counts once, under the first reason that applies."
+
     var title: String {
         switch self {
         case .userEnrollment: "User Enrollment"

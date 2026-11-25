@@ -32,6 +32,48 @@ struct ReviewFixTests {
         #expect(Notifier.settingsURL.absoluteString.hasSuffix(Bundle.main.bundleIdentifier ?? "be.jordythery.softwareupdatedashboard"))
     }
 
+    @Test("Saved while notifications are off: the sheet says it’s saved and when notifications start; not in Demo Mode")
+    func savedWhileOff() async {
+        let notifier = Notifier(defaults: TestFiles.defaults("notify-saved"), activityLog: ActivityLog())
+        notifier.authorize = { false }
+        notifier.permissionStatus = { false }
+        let rule = NotificationRule(failedOrStuck: true)
+        await notifier.setRule(rule, for: UUID(), demo: false)
+        #expect(notifier.permissionProblem == Notifier.turnedOff)
+        #expect(notifier.savedNote(for: rule, demo: false) == "Saved. Notifications start once they’re turned on in System Settings.")
+        #expect(notifier.savedNote(for: rule, demo: true) == nil && notifier.savedNote(for: nil, demo: false) == nil)
+        #expect(notifier.savedNote(for: NotificationRule(), demo: false) == nil)
+        // turned on in System Settings, back in the app: both go
+        notifier.permissionStatus = { true }
+        await notifier.checkPermission(demo: false)
+        #expect(notifier.permissionProblem == nil && notifier.savedNote(for: rule, demo: false) == nil)
+    }
+
+    @Test("The server time zone warning stays until UTC is saved, on the dashboard as in Settings › Connections")
+    func timeZoneWarningUntilSaved() throws {
+        let connections = ConnectionsModel.preview()
+        let connection = Connection(name: "Role A", service: .jamfPlatform, region: .eu,
+                                    environmentID: UUID().uuidString, clientID: UUID().uuidString)
+        try connections.saved.save(AppConnection(connection: connection, serverTimeZone: "Europe/Amsterdam"))
+        connections.activeID = connection.id
+        #expect(connections.serverTimeZoneWarning(forID: connection.id) == nil && !connections.serverTimeZoneLooksWrong)
+        connections.noteServerTimeZone(looksWrong: true)
+        #expect(connections.serverTimeZoneWarning(forID: connection.id) == ServerTimeZoneCheck.warning(zone: "Europe/Amsterdam"))
+        #expect(connections.serverTimeZoneLooksWrong)
+        #expect(ConnectionsModel.serverTimeZoneLine == "The Jamf Pro server time zone in Settings › Connections looks wrong.")
+        // Use UTC changes only the editor's draft: nothing saved yet, so it still says so
+        var draft = try #require(connections.saved.record(id: connection.id))
+        draft.serverTimeZone = "UTC"
+        #expect(connections.serverTimeZoneWarning(forID: connection.id) != nil)
+        // saved: gone, also from the dashboard
+        try connections.saved.save(draft)
+        #expect(connections.serverTimeZoneWarning(forID: connection.id) == nil && !connections.serverTimeZoneLooksWrong)
+        // a refresh that finds it fine forgets it
+        connections.noteServerTimeZone(looksWrong: true)
+        connections.noteServerTimeZone(looksWrong: false)
+        #expect(connections.serverTimeZoneWarning(forID: connection.id) == nil)
+    }
+
     @Test("A device Find a Device opened that isn’t in the new refresh: the list says it left the Blueprint’s scope")
     func leftScope() {
         let found = Sample.date("2026-11-24T06:33:00")

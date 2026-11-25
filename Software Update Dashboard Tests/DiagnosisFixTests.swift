@@ -9,7 +9,7 @@ import Testing
 /// what the live tenant showed on 11, 24 and 25 Nov.
 @Suite("0.3.2: diagnoses")
 struct DiagnosisFixTests {
-    static let noContact = "; no contact since then (switched off, or stuck installing)"
+    static let noContact = ", no contact since (switched off or stuck)"
 
     static func installing(_ pending: String, since: String) -> JamfPro.SoftwareUpdateStatus {
         Sample.status([("device.operating-system.version", "26.7.2"), ("softwareupdate.install-state", "installing"),
@@ -31,7 +31,8 @@ struct DiagnosisFixTests {
         mac.lastContact = Sample.date("2026-11-23T22:59:58")
         let report = Self.installing("26.7.3", since: "2026-11-23T22:59:58")
         let device = Self.classify(mac, report, now: "2026-11-24T06:33:00")
-        #expect(device.diagnosis == "Installing since \(InspectFindings.moment(Sample.date("2026-11-23T22:59:58")))" + Self.noContact)
+        #expect(device.diagnosis == "Installing since \(InspectFindings.dayTime(Sample.date("2026-11-23T22:59:58")))" + Self.noContact)
+        #expect(!device.diagnosis.contains("2026"))
         #expect(device.category == .inProgress && device.needsAttention)
         // an iPad the same since 16 Nov
         let iPad = Sample.iPad("2", os: "27.2", model: "iPad14,8", lastContact: Sample.date("2026-11-16T23:09:42"))
@@ -168,7 +169,7 @@ struct DiagnosisFixTests {
 
         let asset = "[kSUCoreErrorAssetReloadNotFound] The requested asset could not be found."
         let assetDevice = Self.failed(asset)
-        #expect(assetDevice.diagnosis == "Update files no longer available from Apple: the device has to download the update again")
+        #expect(assetDevice.diagnosis == "Update files no longer available from Apple; check again after the device’s next check-in")
         #expect(assetDevice.needsAttention)
         // no public Apple page describes it: no known problem to link
         #expect(HelpContent.problem(forCause: "Update error", detail: asset) == nil)

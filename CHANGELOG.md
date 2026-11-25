@@ -5,11 +5,11 @@
 - **Deadlines stay Jamf’s.** The deadline Jamf sent is remembered per Blueprint, so it keeps counting after the devices that reported it have installed (“As the Blueprint’s devices reported it earlier”). A deadline a device reports is used whatever install reason the device gives, and a deadline written with a 12-hour clock is now read.
 - **Next install attempt.** When a device that missed the deadline reports a new time, it stays past the deadline and the device detail shows that time as its next install attempt.
 - **Earlier steps on Macs** are recognized only when the Mac’s deadline matches, to the minute, one the Blueprint’s devices reported; otherwise the Mac’s version is shown as another pending version. iPhones and iPads are unchanged.
-- **Clearer diagnoses:** a device that has been installing for hours without contact since (“switched off, or stuck installing”); a Mac that couldn’t get its bootstrap token; update files Apple no longer offers.
+- **Clearer diagnoses:** a device that has been installing for hours without contact since (“switched off or stuck”); a Mac that couldn’t get its bootstrap token; update files Apple no longer offers.
 - **A device that hasn’t fetched Jamf’s current declarations** is no longer shown as on a version the update doesn’t cover.
 - **Readiness** counts each device once, under its most basic reason.
-- **Settings › Connections** says when the Jamf Pro server time zone looks wrong, with a button to use UTC.
-- **Notifications** give counts only, never device names. When notifications are turned off in System Settings, the Notifications sheet says so right away, with a button to open System Settings.
+- **The Jamf Pro server time zone:** when it looks wrong, the Blueprint’s dashboard says so, with a button to Settings › Connections, which offers to use UTC.
+- **Notifications** give counts only, never device names. When notifications are turned off in System Settings, the Notifications sheet says so right away, with a button to open System Settings, and says when a saved notification will start.
 - **Find a Device** says when a device has left the Blueprint’s scope since the refresh it was found in.
 
 ## 0.3.1 — 2026-11-14

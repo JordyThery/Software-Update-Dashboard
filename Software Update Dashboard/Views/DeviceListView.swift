@@ -101,8 +101,7 @@ struct DeviceListView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 // a device Find a Device opened that has left the scope since
-                if let requested, let text = DeviceSearch.notShown(name: requested.name, device: requested.device,
-                                                                   foundIn: requested.foundIn, devices: result.devices) {
+                if let text = notShownText {
                     HStack {
                         Label(text, systemImage: "info.circle")
                         Spacer()
@@ -135,6 +134,10 @@ struct DeviceListView: View {
             showRequestedDevice()
         }
         .onAppear(perform: showRequestedDevice)
+        // the message appears after a refresh, not when the list opens: VoiceOver is told
+        .onChange(of: notShownText) { _, text in
+            if let text { AccessibilityNotification.Announcement(text).post() }
+        }
         .onChange(of: model.deviceToShow) { showRequestedDevice() }
         .toolbar {
             ToolbarItem {
@@ -146,6 +149,11 @@ struct DeviceListView: View {
                 .help(showsDetail ? "Hide the device detail" : "Show the device detail")
             }
         }
+    }
+
+    /// Why the device Find a Device opened isn’t in this refresh; nil while it is.
+    private var notShownText: String? {
+        requested.flatMap { DeviceSearch.notShown(name: $0.name, device: $0.device, foundIn: $0.foundIn, devices: result.devices) }
     }
 
     /// The selection, without devices that aren’t in this refresh.

@@ -133,6 +133,8 @@ struct ReportPDFTests {
         #expect(missing.isEmpty, "missing: \(missing)")
         // a device needing attention, with its diagnosis
         #expect(text.contains("Studio Mac 10"))
+        // Readiness says each device counts once (0.3.2)
+        #expect(text.contains(ReadinessCheck.countedOnce))
         #expect(model.reportName(nil).hasSuffix("(Demo).pdf") && model.reportName(nil).hasPrefix("All Blueprints Report "))
     }
 
