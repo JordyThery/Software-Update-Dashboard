@@ -113,8 +113,15 @@ final class ConnectionsModel {
 
     /// The time zone Jamf Pro writes status item times in.
     var serverTimeZone: TimeZone {
-        demoChoice.isActive ? TimeZone(identifier: "UTC") ?? .gmt : activeRecord?.timeZone ?? .gmt
+        demoChoice.isActive ? TimeZone(identifier: demoServerTimeZone ?? "UTC") ?? .gmt : activeRecord?.timeZone ?? .gmt
     }
+
+    /// Demo Mode’s server time zone, set by the “Server Time Zone Set Wrong”
+    /// Demo Situation; nil: UTC, as the demo writes status times. In memory only.
+    var demoServerTimeZone: String? {
+        didSet { if demoServerTimeZone == nil { demoServerTimeZoneLooksWrong = false } }
+    }
+    private(set) var demoServerTimeZoneLooksWrong = false
 
     /// Server time zones a refresh in this session found looking wrong, per
     /// saved connection: the setting it found it with (`ServerTimeZoneCheck`).
@@ -124,7 +131,11 @@ final class ConnectionsModel {
     /// After a refresh of the connection in use: remembers or forgets that
     /// its server time zone looks wrong.
     func noteServerTimeZone(looksWrong: Bool) {
-        guard !demoChoice.isActive, let record = activeRecord else { return }
+        if demoChoice.isActive {
+            demoServerTimeZoneLooksWrong = looksWrong && demoServerTimeZone != nil
+            return
+        }
+        guard let record = activeRecord else { return }
         serverTimeZoneWarnings[record.id] = looksWrong ? record.serverTimeZone : nil
     }
 
@@ -137,9 +148,11 @@ final class ConnectionsModel {
     }
 
     /// The connection in use has a server time zone that looks wrong: the
-    /// Blueprint’s dashboard says so too. Never in Demo Mode.
+    /// Blueprint’s dashboard says so too. In Demo Mode only in the “Server
+    /// Time Zone Set Wrong” Demo Situation.
     var serverTimeZoneLooksWrong: Bool {
-        guard !demoChoice.isActive, let record = activeRecord else { return false }
+        if demoChoice.isActive { return demoServerTimeZoneLooksWrong }
+        guard let record = activeRecord else { return false }
         return serverTimeZoneWarning(forID: record.id) != nil
     }
 

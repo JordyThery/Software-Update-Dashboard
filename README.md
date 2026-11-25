@@ -35,7 +35,7 @@ A read-only Mac app that shows, for the devices a Blueprint is scoped to, whethe
 - **Automatic refresh** (Settings › Automation): every 1, 4 or 8 hours, every tracked Blueprint one after another, each refresh kept in the history. It can keep the Mac awake while it’s on power, and after a sleep it catches up once.
 - **Notifications** per tracked Blueprint (Blueprint › Notifications…): when the share on target reaches or drops below a level you choose, and when devices are newly failed or stuck. Notifications give counts only, never device names; when they’re turned off in System Settings, the Notifications sheet says so.
 - **Menu bar and login** (Settings › General): a menu bar item with each tracked Blueprint’s share on target, Refresh All and Open Window, and Open at Login.
-- **Demo Mode:** sample iPads and Macs in the middle of an update, without a Jamf tenant. Blueprint › Demo Situation shows what happens when Apple’s release data can’t be read or the saved list of tracked Blueprints can’t be read. In Demo Mode, Open in Jamf Pro shows the page instead of opening it, and notifications are written to the activity log instead of being sent.
+- **Demo Mode:** sample iPads and Macs in the middle of an update, without a Jamf tenant. Blueprint › Demo Situation shows what happens when Apple’s release data can’t be read, the saved list of tracked Blueprints can’t be read, the Jamf Pro server time zone is set wrong, or notifications are turned off in System Settings. In Demo Mode, Open in Jamf Pro shows the page instead of opening it, and notifications are written to the activity log instead of being sent.
 
 ## Requirements
 

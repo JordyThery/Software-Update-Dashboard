@@ -27,7 +27,8 @@ SMOKE_FILE="$PWD/Software Update Dashboard UITests/DemoSmokeUITests.swift"
 SIGNIN_TEST="Software Update Dashboard Tests/LiveSignInTests"
 # Apple's release data first (public hosts only), then the production reads.
 LIVE_TESTS=("Software Update Dashboard Tests/LiveReadTests/appleReleaseData()"
-            "Software Update Dashboard Tests/LiveReadTests/mobileGroupEndToEnd()")
+            "Software Update Dashboard Tests/LiveReadTests/mobileGroupEndToEnd()"
+            "Software Update Dashboard Tests/LiveMostReachedTests/mostReachedBlueprint()")
 CLEANUP_TEST="Software Update Dashboard Tests/LiveCleanupTests"
 ROLES=(jamfpro-production)
 READ_ONLY_ROLES=(jamfpro-production)

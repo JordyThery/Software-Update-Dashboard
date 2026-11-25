@@ -315,6 +315,82 @@ struct LiveReadTests {
     }
 }
 
+@Suite("Live: the Blueprint that reaches the most devices", .enabled(if: live), .serialized)
+@MainActor
+struct LiveMostReachedTests {
+    /// Of the production Blueprints with a software update, the one whose
+    /// scope reaches the most devices (chosen now, never named), refreshed
+    /// with the app's reader: each device in exactly one category, the
+    /// counts add up to the devices, and the past-deadline count matches
+    /// the dashboard's rows. Reads only; counts only in the report.
+    @Test func mostReachedBlueprint() async throws {
+        let run = try LiveCheckRun.current()
+        defer { checkUnderTest(run, when: "after the most-reached Blueprint") }
+        guard run.roles.contains(role) else { return }
+        let client = try liveClient(run)
+        func step(_ name: String) -> String { "\(role): \(name)" }
+        do {
+            let blueprints = try await JamfPlatform.Blueprints(client: client).list()
+            run.neverReport(blueprints.flatMap { [$0.id, $0.name] })
+            let groups = try await client.jamfProGroups()
+            run.neverReport(groups.flatMap { [$0.groupID, $0.name] })
+            let platformGroups = try await client.platformGroups()
+            run.neverReport(platformGroups.flatMap { [$0.id, $0.name] })
+            // each scope group's members read once, whichever Blueprints share it
+            var members: [JamfPro.DeviceGroup.ID: [JamfPro.GroupMember]] = [:]
+            var best: (overview: JamfPlatform.BlueprintOverview, devices: Int)?
+            var withUpdate = 0
+            for overview in blueprints {
+                let update = try await JamfPlatform.Blueprints(client: client).softwareUpdate(blueprintID: overview.id)
+                guard !update.blocks.isEmpty else { continue }
+                withUpdate += 1
+                var reached = Set<String>()
+                for key in GroupChoice.scope(platformGroupIDs: update.blueprint.scopeDeviceGroups, platformGroups: platformGroups) {
+                    guard let group = groups.first(where: { $0.id == key }) else { continue }
+                    if members[key] == nil { members[key] = try await client.members(of: group) }
+                    reached.formUnion((members[key] ?? []).map(RefreshWorkflow.key))
+                }
+                if reached.count > (best?.devices ?? -1) { best = (overview, reached.count) }
+            }
+            run.neverReport(members.values.flatMap { LiveReadTests.identifiers($0) })
+            guard let best, best.devices > 0 else {
+                record(run, step("the Blueprint that reaches the most devices"), passed: true,
+                       note: "\(withUpdate) Blueprints with a software update; none reaches a device")
+                return
+            }
+            let tracked = TrackedBlueprint(connectionID: UUID(), blueprintID: best.overview.id, blueprintName: best.overview.name)
+            let catalog = try await liveAppleReleases(run).catalog()
+            let result = try await RefreshWorkflow(client: client, catalog: catalog, serverTimeZone: .gmt).run(tracked)
+            run.neverReport(LiveReadTests.identifiers(result.members) + result.scope.flatMap { [$0.group.groupID, $0.name] })
+
+            let devices = result.devices
+            let once = Set(devices.map(\.id)).count == devices.count
+            let categories = StatusCategory.allCases.map { category in devices.filter { $0.category == category }.count }
+            record(run, step("most-reached Blueprint: each device in exactly one category"),
+                   passed: once && categories.reduce(0, +) == devices.count,
+                   note: "\(withUpdate) Blueprints with a software update; this one reaches \(best.devices) devices, the refresh measured \(devices.count)")
+            let counts = result.counts
+            record(run, step("most-reached Blueprint: the counts add up to the devices"),
+                   passed: counts.total + counts.targetUnknown == devices.count
+                       && StatusCategory.measured.map { counts[$0] }.reduce(0, +) == counts.total,
+                   note: StatusCategory.allCases.filter { counts[$0] > 0 }.map { "\($0.rawValue) \(counts[$0])" }.joined(separator: ", "))
+            let inRows = result.majors.map(\.pastDeadline).reduce(0, +)
+            let flagged = devices.filter { $0.pastDeadline == true }.count
+            record(run, step("most-reached Blueprint: the past-deadline count matches the rows"),
+                   passed: result.pastDeadline == flagged && inRows == flagged
+                       && result.majors.map(\.devices).reduce(0, +) == devices.count,
+                   note: "\(flagged) past the deadline, \(inRows) in \(result.majors.count) rows")
+        } catch {
+            record(run, step("the Blueprint that reaches the most devices"), passed: false, note: failure(error))
+            throw error
+        }
+        let refusals = run.network.refusals
+        record(run, step("most-reached Blueprint: nothing sent but reads and the sign-in"), passed: refusals.isEmpty,
+               note: refusals.isEmpty ? nil : "\(refusals.count) refused")
+        #expect(refusals.isEmpty)
+    }
+}
+
 @Suite("Live: cleanup", .enabled(if: live), .serialized)
 @MainActor
 struct LiveCleanupTests {

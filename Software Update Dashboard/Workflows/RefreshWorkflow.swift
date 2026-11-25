@@ -111,29 +111,11 @@ nonisolated struct RefreshResult: Sendable {
     var pastDeadline: Int { devices.filter { $0.pastDeadline == true }.count }
 }
 
-/// Where a refresh is: the step, and how far it is when it counts something.
-nonisolated struct RefreshProgress: Sendable, Hashable {
-    var step: String
-    var done = 0
-    var total = 0
-    /// What it counts, in the plural (“devices”, “declarations”, “groups”).
-    var unit = ""
-
-    /// “Reading Blueprint health, 3 of 18 declarations”.
-    var text: String { total > 0 ? "\(step), \(done) of \(total) \(unit)" : step }
-}
-
-/// Apple’s release data couldn’t be read at all: no device’s target is
-/// known, so the refresh stops and the previous one is kept.
-nonisolated struct AppleDataUnavailable: LocalizedError, Equatable {
-    var errorDescription: String? {
-        "Apple’s release data couldn’t be read, so no device’s target is known."
-    }
-}
-
-/// A refresh: reads the Blueprint’s software update and scope, the scope
-/// groups’ members with their inventory and each one’s status report (all
-/// GETs, through JTKit), gives every device its own target and sorts it.
+/// A refresh of a tracked Blueprint: JTKit’s reader (`SoftwareUpdateRules.Reader`)
+/// reads the Blueprint’s software update and scope, the scope groups’
+/// members with their inventory and each one’s status report (all GETs)
+/// and measures every device; the app adds its comparison group, its
+/// tables and the server time zone check, and keeps what it saves.
 nonisolated struct RefreshWorkflow: Sendable {
     let client: JamfPlatform.Client
     /// Apple’s release data; nil when it couldn’t be read (the refresh stops).
@@ -152,374 +134,93 @@ nonisolated struct RefreshWorkflow: Sendable {
     /// Status reports read at the same time.
     var parallel = 4
 
+    /// JTKit’s reader with this refresh’s settings: the one client for every read.
+    private var reader: SoftwareUpdateRules.Reader {
+        var reader = SoftwareUpdateRules.Reader(client: client, catalog: catalog, serverTimeZone: serverTimeZone)
+        reader.firstPosted = firstPosted
+        reader.reportedDeadlines = reportedDeadlines
+        reader.seedsDemoDeadlines = seedsDemoDeadlines
+        reader.staleDays = staleDays
+        reader.parallel = parallel
+        return reader
+    }
+
     func run(_ tracked: TrackedBlueprint, previousScope: [GroupReference]? = nil, now: Date = Date(),
              progress: @Sendable (RefreshProgress) -> Void = { _ in }) async throws -> RefreshResult {
-        guard let catalog else { throw AppleDataUnavailable() }
-        progress(RefreshProgress(step: "Reading the Blueprint"))
-        let (blueprint, blocks) = try await JamfPlatform.Blueprints(client: client).softwareUpdate(blueprintID: tracked.blueprintID)
-        var problems = catalog.problems
-        if blocks.isEmpty { problems.append("The Blueprint has no software update.") }
-
-        // the scope, read on every refresh
-        progress(RefreshProgress(step: "Reading the Blueprint’s scope"))
-        let platformGroups = try await client.platformGroups()
-        let groups = try await client.jamfProGroups()
-        let keys = GroupChoice.scope(platformGroupIDs: blueprint.scopeDeviceGroups, platformGroups: platformGroups)
-        let scope = keys.compactMap { key in groups.first { $0.id == key }.map(GroupReference.init) }
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        let unmatched = blueprint.scopeDeviceGroups.count - scope.count
-        if unmatched > 0 {
-            problems.append("\(unmatched) of the Blueprint’s scope groups \(unmatched == 1 ? "isn’t" : "aren’t") a Jamf Pro mobile device or computer group.")
-        }
-
-        // each device once, also when it is in several scope groups
-        var members: [JamfPro.GroupMember] = []
-        var seen = Set<String>()
-        for (number, group) in scope.enumerated() {
-            progress(RefreshProgress(step: "Reading group members", done: number, total: scope.count, unit: "groups"))
-            for member in try await client.members(of: group.group) where seen.insert(Self.key(member)).inserted {
-                members.append(member)
-            }
-        }
-
-        progress(RefreshProgress(step: "Reading status reports", done: 0, total: members.count, unit: "devices"))
-        var inputs = try await statuses(members) { done, total in
-            progress(RefreshProgress(step: "Reading status reports", done: done, total: total, unit: "devices"))
-        }
-        // the Blueprint's update declarations, as the devices list them: each read once, for every device
-        let identifiers = BlueprintHealth.identifiers(blueprintID: tracked.blueprintID, statuses: inputs.map(\.status), blocks: blocks)
-        let declarations = try await declarationReports(identifiers, inputs: &inputs, progress: progress)
-        var deviceIDs: [String: String] = [:]
-        for input in inputs {
-            if let platformID = input.platformDeviceID?.lowercased() { deviceIDs[platformID] = Self.key(input.member) }
-        }
-        let tied = BlueprintHealth.byDevice(declarations.reports, deviceIDs: deviceIDs)
-        let current = BlueprintHealth.catalogue(declarations.reports, blocks: blocks, blueprintName: blueprint.overview.name)
-        let (known, remember) = deadlineBasis(inputs, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now)
-        var devices = inputs.map { input in
-            let osName = Classifier.osName(isComputer: input.member.kind == .computer,
-                                           modelIdentifier: input.member.modelIdentifier ?? input.status?.modelIdentifier ?? "")
-            return classify(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now, known: known,
-                            awaitingSync: BlueprintHealth.isAwaitingSync(tied.reports[Self.key(input.member)] ?? [],
-                                                                         osName: osName, current: current))
-        }
-        var health: BlueprintHealth?
-        if let problem = declarations.problem {
-            problems.append(problem)
-        } else {
-            let built = BlueprintHealth.make(byDevice: tied.reports, devices: devices, current: current,
-                                             blueprintName: blueprint.overview.name, blueprintID: tracked.blueprintID,
-                                             unmatchedDevices: tied.unmatched,
-                                             devicesWithoutPlatformID: identifiers.isEmpty ? 0 : inputs.filter { $0.platformDeviceID == nil }.count)
-            // the cause where nothing else explains it: the list says it
-            for index in devices.indices {
-                devices[index].declarationsChecked = true
-                guard let found = built.coverage[devices[index].id] else {
-                    // a failed or invalid update declaration of its own OS explains a device that hasn't started
-                    if BlueprintHealth.explainedCategories.contains(devices[index].category),
-                       let problem = BlueprintHealth.declarationProblem(tied.reports[devices[index].id] ?? [], osName: devices[index].osName,
-                                                                        current: current, names: [tracked.blueprintID.lowercased(): blueprint.overview.name]) {
-                        devices[index].diagnosis = problem
-                    }
-                    continue
-                }
-                switch found {
-                case .notCovered(let ranges): devices[index].notCoveredBy = ranges
-                case .notFetched(let last):
-                    devices[index].notFetched = true
-                    devices[index].notFetchedSince = last
-                }
-                if BlueprintHealth.explainedCategories.contains(devices[index].category) {
-                    devices[index].diagnosis = BlueprintHealth.diagnosis(found, device: devices[index])
-                }
-            }
-            health = built
-        }
-
+        let reading = try await reader.read(blueprintID: tracked.blueprintID, updateStarted: tracked.updateStarted, now: now,
+                                            progress: progress)
+        let scope = reading.scope.map(GroupReference.init)
+        let devices = reading.devices
         var coverage: Coverage?
         if let compare = tracked.compareGroup {
             progress(RefreshProgress(step: "Reading the comparison group"))
+            let seen = Set(reading.members.map(Self.key))
             let compared = try await client.members(of: compare.group)
             coverage = Coverage(group: compare, members: compared.count,
                                 notReached: compared.filter { !seen.contains(Self.key($0)) })
         }
         return RefreshResult(
-            date: now, tracked: tracked, blueprintName: blueprint.overview.name, blueprintChanged: blueprint.overview.updatedDate,
-            blocks: blocks, settings: blueprint.softwareUpdateSettings, rule: Self.rule(blocks), ruleKey: Self.ruleKey(blocks),
-            scope: scope, unmatchedScope: unmatched, scopeChange: ScopeChange(from: previousScope, to: scope),
-            members: members, devices: devices, majors: MajorRow.rows(devices),
+            date: now, tracked: tracked, blueprintName: reading.blueprint.overview.name,
+            blueprintChanged: reading.blueprint.overview.updatedDate,
+            blocks: reading.blocks, settings: reading.settings, rule: Self.rule(reading.blocks), ruleKey: Self.ruleKey(reading.blocks),
+            scope: scope, unmatchedScope: reading.unmatchedScope, scopeChange: ScopeChange(from: previousScope, to: scope),
+            members: reading.members, devices: devices, majors: MajorRow.rows(devices),
             zones: DeadlineZones.zones(devices: devices, now: now),
-            replacements: Replacement.list(devices) { device in
+            replacements: Replacement.list(devices) { [catalog] device in
                 // the same rule as the targets: the newest release the device can run
-                TargetRules.newestRelease(catalog, device.isComputer ? .macOS : .iOS, model: device.modelIdentifier,
-                                          boardID: device.boardID, knownOnly: true)?.version.description
+                catalog.flatMap {
+                    TargetRules.newestRelease($0, device.isComputer ? .macOS : .iOS, model: device.modelIdentifier,
+                                              boardID: device.boardID, knownOnly: true)?.version.description
+                }
             },
-            coverage: coverage, problems: problems, health: health, reportedDeadlines: remember,
-            serverTimeZoneLooksWrong: ServerTimeZoneCheck.looksWrong(inputs.map { ($0.member.lastSeen, $0.status?.newestUpdate) },
-                                                                    zone: serverTimeZone))
+            coverage: coverage, problems: reading.problems, health: reading.health, reportedDeadlines: reading.reportedDeadlines,
+            serverTimeZoneLooksWrong: ServerTimeZoneCheck.looksWrong(reading.inputs.map { ($0.member.lastSeen, $0.status?.newestUpdate) },
+                                                                    zone: serverTimeZone,
+                                                                    defaultZone: AppConnection.defaultServerTimeZone))
     }
 
-    /// Each of the Blueprint’s update declarations the devices list, read
-    /// once (its devices’ reports), a few at a time, and the Platform device
-    /// list, read once, to tie each report to a device by serial number. A
-    /// refusal or a failed read stops the reading and is returned as the
-    /// problem (never as “serial not found”); a declaration nothing reported
-    /// gives none. A stop is thrown, so a stopped refresh is never saved.
+    // What the refresh is made of, from JTKit’s reader (each with the tracked Blueprint’s “Update started”).
+
     func declarationReports(_ identifiers: [String], inputs: inout [DeviceInput],
                             progress: @Sendable (RefreshProgress) -> Void = { _ in }) async throws -> (reports: [JamfPlatform.DeclarationReport], problem: String?) {
-        guard !identifiers.isEmpty else { return ([], nil) }
-        progress(RefreshProgress(step: "Reading the device list"))
-        let platformDevices: [JamfPlatform.Device]
-        do {
-            platformDevices = try await client.devices()
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            return ([], "The Platform device list couldn’t be read, so the Blueprint’s declaration reports can’t be tied to devices: "
-                        + error.localizedDescription)
-        }
-        var bySerial: [String: String] = [:]
-        for device in platformDevices {
-            if let serial = device.serialNumber?.uppercased(), !serial.isEmpty { bySerial[serial] = device.id }
-        }
-        for index in inputs.indices {
-            inputs[index].platformDeviceID = inputs[index].member.serialNumber.flatMap { bySerial[$0.uppercased()] }
-        }
-        do {
-            var reports: [JamfPlatform.DeclarationReport] = []
-            try await withThrowingTaskGroup(of: [JamfPlatform.DeclarationReport].self) { group in
-                var next = 0
-                func start() {
-                    guard next < identifiers.count else { return }
-                    let identifier = identifiers[next]
-                    next += 1
-                    group.addTask { try await client.declarationReports(declarationIdentifier: identifier) ?? [] }
-                }
-                for _ in 0..<max(1, parallel) { start() }
-                var read = 0
-                progress(RefreshProgress(step: "Reading Blueprint health", done: 0, total: identifiers.count, unit: "declarations"))
-                while let found = try await group.next() {
-                    reports += found
-                    read += 1
-                    progress(RefreshProgress(step: "Reading Blueprint health", done: read, total: identifiers.count, unit: "declarations"))
-                    start()
-                }
-            }
-            return (reports, nil)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            return ([], "The Blueprint’s declaration reports couldn’t be read: \(error.localizedDescription)")
-        }
+        try await reader.declarationReports(identifiers, inputs: &inputs, progress: progress)
     }
 
-    /// What the Blueprint’s computed deadlines count from: the first public
-    /// posting dates this app saw and, per platform and version, the posting
-    /// date the devices’ own reports say Jamf counted from (`TargetRules.reportedPosting`).
     func postingBasis(_ inputs: [DeviceInput], blocks: [JamfPlatform.SoftwareUpdateBlock], blueprint: JamfPlatform.BlueprintDetail,
                       tracked: TrackedBlueprint, now: Date) -> PostingBasis {
-        deadlineBasis(inputs, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now).known
+        reader.postingBasis(inputs, blocks: blocks, blueprint: blueprint, updateStarted: tracked.updateStarted, now: now)
     }
 
-    /// The same, with what earlier refreshes of this Blueprint remembered
-    /// (`reportedDeadlines`), and what to remember after this one: the
-    /// posting dates its devices report now replace those remembered, which
-    /// stay while their version is a rule’s target.
     func deadlineBasis(_ inputs: [DeviceInput], blocks: [JamfPlatform.SoftwareUpdateBlock], blueprint: JamfPlatform.BlueprintDetail,
                        tracked: TrackedBlueprint, now: Date) -> (known: PostingBasis, remember: ReportedDeadlines) {
-        var known = PostingBasis(remembered: firstPosted)
-        var targets = Set<String>()
-        // each reported deadline with when it was reported, per platform and version
-        var candidates: [String: [(minute: Int, reportedAt: Date)]] = [:]
-        let reports = inputs.compactMap { input -> (platform: AppleReleases.Platform, version: OSVersion, posted: Date)? in
-            let device = rule(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now, known: known)
-            guard let version = device.rule.osVersion else { return nil }
-            if !device.rule.namedByBlueprint && device.rule.unknown == nil { targets.insert(PostingBasis.key(device.platform, version)) }
-            guard let found = TargetRules.reportedPosting(device.rule, status: input.status, block: device.block, catalog: catalog,
-                                                          platform: device.platform, serverTimeZone: serverTimeZone,
-                                                          blueprintChanged: blueprint.overview.updatedDate,
-                                                          timeZone: input.member.timeZone) else { return nil }
-            if let moment = found.moment {
-                candidates[PostingBasis.key(device.platform, version), default: []].append((PostingBasis.minute(moment), found.reportedAt))
-            }
-            return (device.platform, version, found.posted)
-        }
-        known.reported = TargetRules.reportedPostings(reports)
-        let reportedDeadlines = seedsDemoDeadlines && self.reportedDeadlines.isEmpty
-            ? demoReportedDeadlines(blocks: blocks, now: now) : self.reportedDeadlines
-        let earlier = reportedDeadlines.basis(targets: targets, blueprintChanged: blueprint.overview.updatedDate)
-        let minutes = Self.newDeadlineMinutes(candidates, known: earlier.minutes)
-        known.rememberedReported = earlier.postings
-        known.reportedMinutes = earlier.minutes.merging(minutes) { $0.union($1) }
-        let remember = reportedDeadlines.updated(reported: known.reported, moments: minutes, targets: targets,
-                                                 blueprintChanged: blueprint.overview.updatedDate, now: now)
-        return (known, remember)
+        reader.deadlineBasis(inputs, blocks: blocks, blueprint: blueprint, updateStarted: tracked.updateStarted, now: now)
     }
 
-    /// The deadline minutes this refresh adds, per platform and version: a
-    /// reported minute counts only when it was reported before the earliest
-    /// deadline known for that version had passed, whether remembered or
-    /// reported in this refresh (with none known yet, before its own time).
-    /// A Mac that missed the deadline reports its rescheduled time before
-    /// that time arrives, but after Jamf’s deadline: it never counts.
     static func newDeadlineMinutes(_ candidates: [String: [(minute: Int, reportedAt: Date)]],
                                    known: [String: Set<Int>]) -> [String: Set<Int>] {
-        var added: [String: Set<Int>] = [:]
-        for (key, reports) in candidates {
-            guard let earliest = (reports.map(\.minute) + Array(known[key] ?? [])).min() else { continue }
-            let deadline = Date(timeIntervalSince1970: Double(earliest) * 60)
-            let kept = Set(reports.filter { $0.reportedAt < deadline }.map(\.minute))
-            if !kept.isEmpty { added[key] = kept }
-        }
-        return added
+        SoftwareUpdateRules.Reader.newDeadlineMinutes(candidates, known: known)
     }
 
-    /// Demo Mode’s made-up earlier refreshes: Jamf’s deadline for every
-    /// macOS version Apple’s data lists, as the rule counts it, written as a
-    /// moment in UTC at the Blueprint’s time (as JTKit’s demo Macs write it).
-    func demoReportedDeadlines(blocks: [JamfPlatform.SoftwareUpdateBlock], now: Date) -> ReportedDeadlines {
-        var seeded = ReportedDeadlines()
-        guard let catalog, let block = Self.block(for: "macOS", in: blocks) else { return seeded }
-        for release in catalog.releases where release.platform == .macOS && release.version.extra == nil {
-            guard let local = TargetRules.ruleDeadline(for: release.version, block: block, catalog: catalog, platform: .macOS,
-                                                       model: nil, boardID: nil),
-                  let moment = JamfPlatform.SoftwareUpdateBlock.deadline(local, in: .gmt) else { continue }
-            seeded.moments[PostingBasis.key(.macOS, release.version)] = [.init(minute: PostingBasis.minute(moment), seen: now)]
-        }
-        return seeded
-    }
-
-    /// The Blueprint’s rule for one device, and what it was read with.
-    private func rule(_ input: DeviceInput, blocks: [JamfPlatform.SoftwareUpdateBlock], blueprint: JamfPlatform.BlueprintDetail,
-                      tracked: TrackedBlueprint, now: Date, known: PostingBasis)
-        -> (rule: DeviceTarget, block: JamfPlatform.SoftwareUpdateBlock?, platform: AppleReleases.Platform, osName: String, os: String?) {
-        let member = input.member
-        let platform: AppleReleases.Platform = member.kind == .computer ? .macOS : .iOS
-        let model = member.modelIdentifier ?? input.status?.modelIdentifier
-        let osName = Classifier.osName(isComputer: member.kind == .computer, modelIdentifier: model ?? "")
-        // the newer of what the device reports and its inventory: a device
-        // that installed may not have sent a new status report yet
-        let os = Classifier.newer(input.status?.osVersion, member.osVersion)
-        let block = Self.block(for: osName, in: blocks)
-        let rule = TargetRules.target(
-            os: os, model: model, boardID: input.status?.deviceID, osName: osName,
-            context: TargetRules.Context(block: block, catalog: catalog, platform: platform,
-                                         blueprintChanged: blueprint.overview.updatedDate, updateStarted: tracked.updateStarted,
-                                         now: now, known: known))
-        return (rule, block, platform, osName, os)
-    }
-
-    /// One device against its own target.
     func classify(_ input: DeviceInput, blocks: [JamfPlatform.SoftwareUpdateBlock], blueprint: JamfPlatform.BlueprintDetail,
                   tracked: TrackedBlueprint, now: Date, known: PostingBasis? = nil, awaitingSync: Bool = false) -> DeviceStatus {
-        let member = input.member
-        let model = member.modelIdentifier ?? input.status?.modelIdentifier
-        let known = known ?? PostingBasis(remembered: firstPosted)
-        let (rule, block, platform, osName, os) = self.rule(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now,
-                                                            known: known)
-        // what Jamf actually sent the device comes first, when it reports it
-        let target = TargetRules.fromDevice(rule, status: input.status, os: os, osName: osName, catalog: catalog,
-                                            platform: platform, serverTimeZone: serverTimeZone, model: model,
-                                            boardID: input.status?.deviceID, blueprintChanged: blueprint.overview.updatedDate,
-                                            earlierStepDeadline: { [catalog] version in
-                                                TargetRules.ruleDeadline(for: version, block: block, catalog: catalog, platform: platform,
-                                                                         model: model, boardID: input.status?.deviceID, known: known)
-                                            },
-                                            earlierStepWindow: { [catalog] version in
-                                                TargetRules.ruleWindow(for: version, block: block, catalog: catalog, platform: platform,
-                                                                       model: model, boardID: input.status?.deviceID, now: now, known: known)
-                                            },
-                                            awaitingSync: awaitingSync,
-                                            postingDeadlines: { [catalog] version, build in
-                                                TargetRules.postingDeadlines(for: version, build: build, block: block, catalog: catalog,
-                                                                             platform: platform).map(\.deadline)
-                                            },
-                                            known: known,
-                                            timeZone: member.timeZone, now: now)
-        let base = ClassificationContext(target: nil, since: nil, serverTimeZone: serverTimeZone, now: now, staleDays: staleDays,
-                                         catalog: catalog, platform: platform)
-        return Classifier.classify(input, target: target, context: base)
+        reader.classify(input, blocks: blocks, blueprint: blueprint, updateStarted: tracked.updateStarted, now: now, known: known,
+                        awaitingSync: awaitingSync)
     }
 
-    /// Each member’s status report, a few at a time, in the members’ order.
-    /// A report that can’t be read is noted on the device, not thrown.
     func statuses(_ members: [JamfPro.GroupMember], progress: @Sendable (Int, Int) -> Void) async throws -> [DeviceInput] {
-        var inputs: [Int: DeviceInput] = [:]
-        try await withThrowingTaskGroup(of: (Int, DeviceInput).self) { group in
-            var next = 0
-            func start() {
-                guard next < members.count else { return }
-                let index = next
-                let member = members[index]
-                next += 1
-                group.addTask {
-                    guard let managementID = member.managementID, !managementID.isEmpty else {
-                        return (index, DeviceInput(member: member, statusProblem: "No management ID in Jamf Pro"))
-                    }
-                    // one return at the end, not one from the do and the catch around the read:
-                    // Release builds made with Swift 6.4 can crash on that shape (swiftlang/swift#93208)
-                    let input: DeviceInput
-                    do {
-                        let status = try await client.softwareUpdateStatus(managementID: managementID, kind: member.kind)
-                        input = DeviceInput(member: member, status: status)
-                    } catch is CancellationError {
-                        throw CancellationError()
-                    } catch {
-                        input = DeviceInput(member: member, statusProblem: error.localizedDescription)
-                    }
-                    return (index, input)
-                }
-            }
-            for _ in 0..<max(1, parallel) { start() }
-            while let (index, input) = try await group.next() {
-                inputs[index] = input
-                progress(inputs.count, members.count)
-                start()
-            }
-        }
-        return members.indices.compactMap { inputs[$0] }
+        try await reader.statuses(members, progress: progress)
     }
 
     /// A device by kind and Jamf Pro number: a Mac and an iPad can share a number.
-    static func key(_ member: JamfPro.GroupMember) -> String { "\(member.kind.rawValue)/\(member.id)" }
+    static func key(_ member: JamfPro.GroupMember) -> String { SoftwareUpdateRules.Reader.key(member) }
 
-    /// The block for a device: the one whose activation predicate asks for
-    /// its OS (`== 'iPadOS'`; never `!= 'iPadOS'`), else one without a
-    /// predicate, else the first.
     static func block(for osName: String, in blocks: [JamfPlatform.SoftwareUpdateBlock]) -> JamfPlatform.SoftwareUpdateBlock? {
-        blocks.first { $0.activationPredicate?.range(of: "==\\s*'\(osName)'", options: .regularExpression) != nil }
-            ?? blocks.first { $0.activationPredicate == nil }
-            ?? blocks.first
+        SoftwareUpdateRules.Reader.block(for: osName, in: blocks)
     }
 
-    /// The Blueprint’s rule by its values, to compare refreshes: unlike its
-    /// text, it doesn’t change with this Mac’s region or clock format.
-    static func ruleKey(_ blocks: [JamfPlatform.SoftwareUpdateBlock]) -> String {
-        let keys = blocks.map { block -> String in
-            switch block.enforcement {
-            case .specific(let version, let deadline, _): "specific|\(version)|\(block.targetBuildVersion ?? "")|\(deadline ?? "")"
-            case .latest(let days, let time): "latest|\(days ?? 0)|\(time ?? "")"
-            case .semantic(let days, let time): "minor|\(days ?? 0)|\(time ?? "")"
-            case .unknown(let kind): "unknown|\(kind ?? "")"
-            }
-        }
-        return Array(NSOrderedSet(array: keys)).compactMap { $0 as? String }.joined(separator: ";")
-    }
+    /// The Blueprint’s rule by its values, to compare refreshes (`HistorySnapshot.ruleKey`).
+    static func ruleKey(_ blocks: [JamfPlatform.SoftwareUpdateBlock]) -> String { SoftwareUpdateRules.Reader.ruleKey(blocks) }
 
     /// The Blueprint’s rule in plain language; several blocks joined.
-    static func rule(_ blocks: [JamfPlatform.SoftwareUpdateBlock]) -> String {
-        let rules = blocks.map { block -> String in
-            switch block.enforcement {
-            case .specific(let version, let deadline, _):
-                "Version \(version)" + (deadline.map { " by \(TargetRules.readable($0))" } ?? "")
-            case .latest(let days, _):
-                (days ?? 0) == 0 ? "The newest release, without delay" : "The newest release, \(Plural.count(days ?? 0, "day")) after its release"
-            case .semantic(let days, _):
-                (days ?? 0) == 0 ? "Minor updates, without delay" : "Minor updates, \(Plural.count(days ?? 0, "day")) after their release"
-            case .unknown:
-                "A software update this app doesn’t read"
-            }
-        }
-        return rules.isEmpty ? "No software update" : Array(NSOrderedSet(array: rules)).compactMap { $0 as? String }.joined(separator: "; ")
-    }
+    static func rule(_ blocks: [JamfPlatform.SoftwareUpdateBlock]) -> String { SoftwareUpdateRules.Reader.rule(blocks) }
 }

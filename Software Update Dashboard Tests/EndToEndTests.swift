@@ -51,13 +51,15 @@ struct EndToEndTests {
             ("Field iPad 13", .notStarted, "Update declaration failed: Error.ConfigurationFailed: Software update enforcement couldn’t start: the device couldn’t reach Apple’s software update service."),
             // a personal iPad with User Enrollment: listed under readiness
             ("Field iPad 14", .notStarted, "Online, update not started (no error)"),
+            // the pilot group's iPad: in scope for a launch's first refresh only
+            ("Pilot iPad 01", .notStarted, "Online, update not started (no error)"),
         ]
         #expect(result.devices.count == expected.count)
         for (name, category, diagnosis) in expected {
             #expect(byName[name]?.category == category, "\(name)")
             #expect(byName[name]?.diagnosis == diagnosis, "\(name)")
         }
-        #expect(result.counts[.onTarget] == 2 && result.counts.updatable == 11)
+        #expect(result.counts[.onTarget] == 2 && result.counts.updatable == 12)
         // the deadline is in the future: nobody is late yet
         #expect(result.pastDeadline == 0)
     }
@@ -68,7 +70,8 @@ struct EndToEndTests {
         #expect(result.rule == "Minor updates, \(DemoSoftwareUpdate.macDelayDays) days after their release")
         #expect(result.scope.map(\.name) == ["Studio Macs"])
         let byName = Dictionary(uniqueKeysWithValues: result.devices.map { ($0.name, $0) })
-        #expect(result.devices.count == 11)
+        // the 16 Studio Macs and the pilot Mac, in scope for a launch's first refresh only
+        #expect(result.devices.count == 17)
         #expect(byName["Studio Mac 01"]?.category == .onTarget)
         #expect(byName["Studio Mac 02"]?.targetVersion == "27.1")
         #expect(byName["Studio Mac 02"]?.category == .inProgress)
@@ -191,8 +194,9 @@ struct EndToEndTests {
         model.setCompareGroup(studio, for: tracked.id)
         let (_, covered) = try await refreshed(Self.macs, model: model)
         #expect(covered.coverage?.notReached.isEmpty == true)
-        // the coverage check doesn't change who is counted
-        #expect(covered.devices.count == result.devices.count)
+        // the coverage check doesn't change who is counted; the pilot Mac has left the scope by the second refresh
+        #expect(Set(covered.devices.map(\.id)) == Set(result.devices.filter { $0.name != "Pilot Mac 01" }.map(\.id)))
+        #expect(covered.devices.count == result.devices.count - 1)
     }
 
     @Test("“Update started” set by hand counts every device from that date, until removed")

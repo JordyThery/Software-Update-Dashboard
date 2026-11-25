@@ -6,8 +6,37 @@ import SwiftUI
 /// zone and what the connection needs below the fields.
 struct SettingsView: View {
     let connections: ConnectionsModel
+    /// Ends the “Server Time Zone Set Wrong” Demo Situation (its Use UTC).
+    var endDemoServerTimeZone: () -> Void = {}
 
     var body: some View {
+        // a modifier, not a stack around it: the shared tab names itself (its tabItem)
+        tab.safeAreaInset(edge: .top, spacing: 0) {
+            // Demo Mode’s connection isn’t in the list below: while its Demo Situation sets a
+            // server time zone, it is shown here, as a saved connection’s would be
+            if connections.demoChoice.isActive, let zone = connections.demoServerTimeZone {
+                VStack(spacing: 0) {
+                    demoServerTimeZone(zone)
+                    Divider()
+                }
+                .background(.background)
+            }
+        }
+    }
+
+    private func demoServerTimeZone(_ zone: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LabeledContent("Demo connection’s Jamf Pro server time zone", value: zone)
+            if connections.serverTimeZoneLooksWrong {
+                WarningLabel(ServerTimeZoneCheck.warning(zone: zone))
+                Button("Use UTC") { endDemoServerTimeZone() }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var tab: some View {
         ConnectionsSettingsTab(
             store: connections.saved,
             services: [.jamfPlatform],

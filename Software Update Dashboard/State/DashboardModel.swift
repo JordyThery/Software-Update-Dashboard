@@ -9,6 +9,12 @@ enum DemoSituation: String, CaseIterable, Identifiable {
     case sampleData = "Sample Data"
     case appleDataUnreachable = "Apple’s Release Data Unreachable"
     case unreadableList = "Saved List Unreadable"
+    /// The demo connection reads status times in Europe/Amsterdam although
+    /// they are written in UTC: the dashboard says the setting looks wrong.
+    case serverTimeZoneWrong = "Server Time Zone Set Wrong"
+    /// Notifications for the app are turned off in System Settings: the
+    /// Notifications sheet says so (Demo Mode still sends nothing).
+    case notificationsOff = "Notifications Turned Off"
 
     var id: String { rawValue }
 }
@@ -256,6 +262,8 @@ final class DashboardModel {
         demoSituation = situation
         // the demo's own release feeds fail, as Apple's would
         connections.demo.appleReleaseServer.isUnreachable = situation == .appleDataUnreachable
+        connections.demoServerTimeZone = situation == .serverTimeZoneWrong ? Self.demoWrongServerTimeZone : nil
+        notifier.demoNotificationsOff = situation == .notificationsOff
         forgetReleaseData()
         generation += 1
         await refreshAll()
@@ -370,7 +378,7 @@ final class DashboardModel {
                 Task { @MainActor in if self.refreshing.contains(id) { self.progress[id] = step } }
             }
             guard connections.inUseKey == key else { return }
-            if !isDemo { connections.noteServerTimeZone(looksWrong: result.serverTimeZoneLooksWrong) }
+            connections.noteServerTimeZone(looksWrong: result.serverTimeZoneLooksWrong)
             // only after a refresh worth saving, as the history: one that measured nothing would forget them
             let remember = Self.reportedDeadlinesToKeep(updated: result.reportedDeadlines, previous: workflow.reportedDeadlines,
                                                         counts: result.counts)
@@ -443,6 +451,9 @@ final class DashboardModel {
     /// each day back, fewer devices on target; four and five days back the
     /// software update was another one, and two and three days back a pilot
     /// group was in the scope too. The chart marks those refreshes.
+    /// The zone the “Server Time Zone Set Wrong” Demo Situation reads status times in.
+    static let demoWrongServerTimeZone = "Europe/Amsterdam"
+
     private func demoHistory(_ result: RefreshResult) -> [HistorySnapshot] {
         var seeds: [HistorySnapshot] = []
         for past in DemoSoftwareUpdate.pastRefreshes(now: result.date)
@@ -452,11 +463,25 @@ final class DashboardModel {
             for index in devices.indices where devices[index].category == .onTarget && !past.onTarget.contains(Int(devices[index].jamfID) ?? -1) {
                 devices[index].category = .inProgress
             }
+            // the pilot group's own devices, in the scope then only
+            devices += past.formerMembers.map { Self.demoRow($0, at: result.date.addingTimeInterval(-Double(past.daysAgo) * 86_400)) }
             let date = result.date.addingTimeInterval(-Double(past.daysAgo) * 86_400)
             seeds.append(HistorySnapshot(date: date, target: RefreshWorkflow.rule([block]), ruleKey: RefreshWorkflow.ruleKey([block]),
                                          devices: devices, scope: result.scope + (past.extraScopeGroup.map { [GroupReference($0)] } ?? [])))
         }
         return seeds
+    }
+
+    /// A device of the demo’s pilot group as an earlier refresh measured it:
+    /// its inventory only (Jamf answers nothing for it today).
+    private static func demoRow(_ device: DemoSoftwareUpdate.Device, at date: Date) -> DeviceStatus {
+        let member = JamfPro.GroupMember(id: String(device.number), kind: device.family == .mac ? .computer : .mobileDevice,
+                                         name: device.name, serialNumber: device.serial, managementID: device.managementID,
+                                         osVersion: device.osVersion, model: device.model, modelIdentifier: device.modelIdentifier,
+                                         timeZone: device.timeZone, lastContact: date, managed: true, supervised: device.supervised,
+                                         ddmEnabled: true)
+        return Classifier.classify(DeviceInput(member: member),
+                                   context: ClassificationContext(target: OSVersion(DemoSoftwareUpdate.targetVersion), now: date))
     }
 
     // MARK: Status items
@@ -616,6 +641,8 @@ final class DashboardModel {
         demoTracked = nil
         demoSituation = .sampleData
         connections.demo.appleReleaseServer.isUnreachable = false
+        connections.demoServerTimeZone = nil
+        notifier.demoNotificationsOff = false
         selection = .overview
     }
 }

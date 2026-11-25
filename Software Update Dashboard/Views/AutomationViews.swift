@@ -219,7 +219,7 @@ struct NotificationSheet: View {
                      : "Only a change between two refreshes notifies, never the first refresh.")
                     .font(.callout).foregroundStyle(.secondary)
             }
-            if let problem = model.notifier.permissionProblem, !isDemo {
+            if let problem = model.notifier.problem(demo: isDemo) {
                 Section {
                     WarningLabel(problem)
                     if let note = model.notifier.savedNote(for: savedRule, demo: isDemo) {
@@ -251,7 +251,7 @@ struct NotificationSheet: View {
                     Task {
                         await model.notifier.setRule(rule, for: trackedID, demo: isDemo)
                         // a refused permission stays on screen
-                        if model.notifier.permissionProblem == nil || isDemo || !rule.isOn { dismiss() } else { savedRule = rule }
+                        if model.notifier.problem(demo: isDemo) == nil || !rule.isOn { dismiss() } else { savedRule = rule }
                     }
                 }
             }
