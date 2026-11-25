@@ -384,14 +384,18 @@ nonisolated struct RefreshWorkflow: Sendable {
                     guard let managementID = member.managementID, !managementID.isEmpty else {
                         return (index, DeviceInput(member: member, statusProblem: "No management ID in Jamf Pro"))
                     }
+                    // one return at the end, not one from the do and the catch around the read:
+                    // Release builds made with Swift 6.4 can crash on that shape (swiftlang/swift#93208)
+                    let input: DeviceInput
                     do {
                         let status = try await client.softwareUpdateStatus(managementID: managementID, kind: member.kind)
-                        return (index, DeviceInput(member: member, status: status))
+                        input = DeviceInput(member: member, status: status)
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch {
-                        return (index, DeviceInput(member: member, statusProblem: error.localizedDescription))
+                        input = DeviceInput(member: member, statusProblem: error.localizedDescription)
                     }
+                    return (index, input)
                 }
             }
             for _ in 0..<max(1, parallel) { start() }
