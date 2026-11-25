@@ -11,7 +11,6 @@ typealias DeadlineSource = SoftwareUpdateRules.DeadlineSource
 typealias DeadlineZone = SoftwareUpdateRules.DeadlineZone
 typealias DeadlineZones = SoftwareUpdateRules.DeadlineZones
 typealias DeclarationLine = SoftwareUpdateRules.DeclarationLine
-typealias DeclarationPair = SoftwareUpdateRules.DeclarationPair
 typealias DeviceDetailText = SoftwareUpdateRules.DeviceDetailText
 typealias DeviceInput = SoftwareUpdateRules.DeviceInput
 typealias DeviceStatus = SoftwareUpdateRules.DeviceStatus
