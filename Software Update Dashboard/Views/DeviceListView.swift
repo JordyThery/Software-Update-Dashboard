@@ -13,6 +13,9 @@ struct DeviceListView: View {
     @State private var search = ""
     @State private var sortOrder = [KeyPathComparator(\DeviceStatus.name)]
     @State private var showsDetail = true
+    /// The device Find a Device asked for, while this Blueprint is shown:
+    /// a refresh without it says why it isn’t there.
+    @State private var requested: DashboardModel.DeviceKey?
 
     private var devices: [DeviceStatus] {
         result.devices
@@ -69,33 +72,46 @@ struct DeviceListView: View {
                                                               devices: result.devices.filter { selected.contains($0.id) }))
         .searchable(text: $search, prompt: "Name, serial, model or diagnosis")
         .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 12) {
-                Picker("Category", selection: $category) {
-                    Text("All Categories (\(result.devices.count))").tag(StatusCategory?.none)
-                    Divider()
-                    ForEach(StatusCategory.allCases) { category in
-                        Text("\(category.title) (\(result.counts[category]))").tag(Optional(category))
+            VStack(spacing: 0) {
+                HStack(spacing: 12) {
+                    Picker("Category", selection: $category) {
+                        Text("All Categories (\(result.devices.count))").tag(StatusCategory?.none)
+                        Divider()
+                        ForEach(StatusCategory.allCases) { category in
+                            Text("\(category.title) (\(result.counts[category]))").tag(Optional(category))
+                        }
                     }
-                }
-                .fixedSize()
-                if let readiness {
-                    Button {
-                        self.readiness = nil
-                    } label: {
-                        Label("\(readiness.title) (\(ReadinessCheck.count(readiness, in: result.devices)))", systemImage: "xmark.circle.fill")
+                    .fixedSize()
+                    if let readiness {
+                        Button {
+                            self.readiness = nil
+                        } label: {
+                            Label("\(readiness.title) (\(ReadinessCheck.count(readiness, in: result.devices)))", systemImage: "xmark.circle.fill")
+                        }
+                        .help("Show every device again")
+                        .accessibilityLabel("Remove filter: \(readiness.title)")
                     }
-                    .help("Show every device again")
-                    .accessibilityLabel("Remove filter: \(readiness.title)")
+                    Spacer()
+                    Button("Inspect Devices to Check") {
+                        inspect(Set(InspectWorkflow.select(result.devices).map(\.id)))
+                    }
+                    .disabled(InspectWorkflow.select(result.devices).isEmpty || model.isInspecting(in: result.tracked.id))
+                    .help("Look for the likely cause on every device to check: those whose diagnosis needs someone to look at it")
                 }
-                Spacer()
-                Button("Inspect Devices to Check") {
-                    inspect(Set(InspectWorkflow.select(result.devices).map(\.id)))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                // a device Find a Device opened that has left the scope since
+                if let requested, let text = DeviceSearch.notShown(name: requested.name, device: requested.device,
+                                                                   foundIn: requested.foundIn, devices: result.devices) {
+                    HStack {
+                        Label(text, systemImage: "info.circle")
+                        Spacer()
+                        Button("Dismiss") { self.requested = nil }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
                 }
-                .disabled(InspectWorkflow.select(result.devices).isEmpty || model.isInspecting(in: result.tracked.id))
-                .help("Look for the likely cause on every device to check: those whose diagnosis needs someone to look at it")
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
             .background(.bar)
         }
         .inspector(isPresented: $showsDetail) {
@@ -115,6 +131,7 @@ struct DeviceListView: View {
         .onChange(of: result.tracked.id) {
             // another Blueprint’s devices: nothing of the one before stays selected
             selection = []
+            requested = nil
             showRequestedDevice()
         }
         .onAppear(perform: showRequestedDevice)
@@ -140,6 +157,7 @@ struct DeviceListView: View {
     private func showRequestedDevice() {
         guard let wanted = model.deviceToShow, wanted.tracked == result.tracked.id else { return }
         model.deviceToShow = nil
+        requested = wanted
         category = nil
         readiness = nil
         search = ""

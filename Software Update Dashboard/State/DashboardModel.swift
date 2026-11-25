@@ -28,6 +28,9 @@ final class DashboardModel {
     struct DeviceKey: Hashable {
         var tracked: UUID
         var device: String
+        /// As Find a Device showed it, and the refresh it was found in.
+        var name = ""
+        var foundIn: Date?
     }
 
     let connections: ConnectionsModel
@@ -491,7 +494,8 @@ final class DashboardModel {
     /// Opens a device in its Blueprint’s device list.
     func show(_ match: DeviceSearch.Match) {
         selection = .blueprint(match.trackedID)
-        deviceToShow = DeviceKey(tracked: match.trackedID, device: match.device.id)
+        deviceToShow = DeviceKey(tracked: match.trackedID, device: match.device.id,
+                                 name: match.device.name.isEmpty ? match.device.serial : match.device.name, foundIn: match.date)
     }
 
     // MARK: Open in Jamf Pro

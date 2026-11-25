@@ -49,11 +49,9 @@ nonisolated enum RefreshNotices {
             var parts: [String] = []
             if !failed.isEmpty { parts.append("\(Plural.count(failed.count, "device")) newly failed") }
             if !stuck.isEmpty { parts.append("\(Plural.count(stuck.count, "device")) newly stuck after the deadline") }
+            // counts only, never device names: those stay in the app (decided 2026-11-10)
             if !parts.isEmpty {
-                let names = (failed + stuck).prefix(3).map(\.name).filter { !$0.isEmpty }
-                notices.append(RefreshNotice(title: name, body: parts.joined(separator: ", ").capitalizedFirst
-                                             + (names.isEmpty ? "." : ": " + names.joined(separator: ", ")
-                                                + ((failed.count + stuck.count) > names.count ? " and more." : "."))))
+                notices.append(RefreshNotice(title: name, body: parts.joined(separator: ", ").capitalizedFirst + "."))
             }
         }
         return notices
@@ -85,6 +83,17 @@ final class Notifier {
         guard !TestRun.isActive else { return false }
         return (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) ?? false
     }
+    /// The system’s notification setting for this app: false when turned
+    /// off, true when allowed, nil when it hasn’t been asked yet. Tests
+    /// replace it (under tests the default says nil).
+    @ObservationIgnored var permissionStatus: () async -> Bool? = {
+        guard !TestRun.isActive else { return nil }
+        switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
+        case .denied: return false
+        case .authorized, .provisional: return true
+        default: return nil
+        }
+    }
     @ObservationIgnored var deliver: (RefreshNotice) -> Void = { notice in
         guard !TestRun.isActive else { return }
         let content = UNMutableNotificationContent()
@@ -114,8 +123,28 @@ final class Notifier {
         rules[id] = rule
         save()
         guard rule.isOn, !wasOn || permissionProblem != nil else { return }
-        permissionProblem = await authorize() ? nil
-            : "Notifications are off for Software Update Dashboard in System Settings › Notifications."
+        permissionProblem = await authorize() ? nil : Self.turnedOff
+    }
+
+    static let turnedOff = "Notifications are off for Software Update Dashboard in System Settings › Notifications."
+
+    /// This app’s page in System Settings › Notifications.
+    static var settingsURL: URL {
+        URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id="
+            + (Bundle.main.bundleIdentifier ?? "be.jordythery.softwareupdatedashboard"))
+            ?? URL(fileURLWithPath: "/System/Applications/System Settings.app")
+    }
+
+    /// When the Notifications sheet opens: says at once when notifications
+    /// are turned off in System Settings; asks nothing. Not in Demo Mode,
+    /// which never sends.
+    func checkPermission(demo: Bool) async {
+        guard !demo else { return }
+        switch await permissionStatus() {
+        case false?: permissionProblem = Self.turnedOff
+        case true?: permissionProblem = nil
+        case nil: break
+        }
     }
 
     /// Forgets a Blueprint that is no longer tracked.

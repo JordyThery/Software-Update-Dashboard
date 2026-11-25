@@ -196,6 +196,7 @@ struct NotificationSheet: View {
     let model: DashboardModel
     let trackedID: UUID
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @State private var shareOn = false
     @State private var level = NotificationRule.defaultLevel
     @State private var failedOrStuck = false
@@ -216,10 +217,17 @@ struct NotificationSheet: View {
                      : "Only a change between two refreshes notifies, never the first refresh.")
                     .font(.callout).foregroundStyle(.secondary)
             }
-            if let problem = model.notifier.permissionProblem, !isDemo { WarningLabel(problem) }
+            if let problem = model.notifier.permissionProblem, !isDemo {
+                Section {
+                    WarningLabel(problem)
+                    Button("Open System Settings") { openURL(Notifier.settingsURL) }
+                }
+            }
         }
         .formStyle(.grouped)
         .frame(width: 440)
+        // turned off in System Settings: said as soon as the sheet opens
+        .task { await model.notifier.checkPermission(demo: isDemo) }
         .onAppear {
             let rule = model.notifier.rule(for: trackedID, demo: isDemo)
             shareOn = rule.shareLevel != nil

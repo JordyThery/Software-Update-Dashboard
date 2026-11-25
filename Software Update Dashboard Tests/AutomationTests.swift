@@ -268,7 +268,9 @@ struct NotificationTests {
         let rule = NotificationRule(failedOrStuck: true)
         let notices = RefreshNotices.between(previous: devices(onTarget: 2, failed: ["5"]),
                                              current: devices(onTarget: 2, failed: ["5", "6"], stuck: ["7"]), rule: rule, name: "B")
-        #expect(notices.map(\.body) == ["1 device newly failed, 1 device newly stuck after the deadline: Test iPad 6, Test iPad 7."])
+        // counts only, never device names (0.3.2)
+        #expect(notices.map(\.body) == ["1 device newly failed, 1 device newly stuck after the deadline."])
+        #expect(!notices.contains { $0.body.contains("Test iPad") })
         #expect(RefreshNotices.between(previous: devices(onTarget: 2, failed: ["5"]), current: devices(onTarget: 2, failed: ["5"]),
                                        rule: rule, name: "B").isEmpty)
     }

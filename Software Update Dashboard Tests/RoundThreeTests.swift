@@ -100,7 +100,7 @@ struct FindDeviceTests {
         let match = try #require(DeviceSearch.matches("Studio Mac 09", in: sources).first)
         model.show(match)
         #expect(model.selection == .blueprint(match.trackedID))
-        #expect(model.deviceToShow == DashboardModel.DeviceKey(tracked: match.trackedID, device: match.device.id))
+        #expect(model.deviceToShow == DashboardModel.DeviceKey(tracked: match.trackedID, device: match.device.id, name: match.device.name, foundIn: match.date))
         #expect(TestRun.AttemptLog.savedConnections.attempts().isEmpty)
     }
 }
