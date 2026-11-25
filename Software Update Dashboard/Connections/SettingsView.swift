@@ -10,14 +10,17 @@ struct SettingsView: View {
     var endDemoServerTimeZone: () -> Void = {}
 
     var body: some View {
-        VStack(spacing: 0) {
+        // a modifier, not a stack around it: the shared tab names itself (its tabItem)
+        tab.safeAreaInset(edge: .top, spacing: 0) {
             // Demo Mode’s connection isn’t in the list below: while its Demo Situation sets a
             // server time zone, it is shown here, as a saved connection’s would be
             if connections.demoChoice.isActive, let zone = connections.demoServerTimeZone {
-                demoServerTimeZone(zone)
-                Divider()
+                VStack(spacing: 0) {
+                    demoServerTimeZone(zone)
+                    Divider()
+                }
+                .background(.background)
             }
-            tab
         }
     }
 

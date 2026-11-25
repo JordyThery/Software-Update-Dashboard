@@ -178,6 +178,28 @@ final class DemoSmokeUITests: JTKitUITestCase {
         XCTAssertFalse(deviceRow("Pilot iPad 01").exists, "The pilot iPad is still listed")
     }
 
+    /// Demo Situation › Server Time Zone Set Wrong: the dashboard warns, and
+    /// Settings › Connections shows the demo connection's zone with the
+    /// warning; Use UTC there ends the situation.
+    func test15ServerTimeZoneSituation() {
+        openBlueprint(iPadBlueprint)
+        XCTAssertTrue(anyContaining("updatable devices on their target").waitForExistence(timeout: 30), "The dashboard didn't load")
+        chooseDemoSituation("Server Time Zone Set Wrong")
+        XCTAssertTrue(anyContaining("server time zone in Settings › Connections looks wrong").waitForExistence(timeout: 30),
+                      "The dashboard doesn't say the server time zone looks wrong")
+        let settings = openSettings()
+        tap(settings.toolbars.buttons["Connections"])
+        XCTAssertTrue(settings.staticTexts["Europe/Amsterdam"].waitForExistence(timeout: 10), "The demo connection's zone isn't shown")
+        XCTAssertTrue(settings.staticTexts.containing(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@",
+                                                                  "looks wrong", "looks wrong")).firstMatch.exists,
+                      "The warning isn't shown in Settings › Connections")
+        tap(settings.buttons["Use UTC"].firstMatch)
+        XCTAssertTrue(waitForGone(settings.staticTexts["Europe/Amsterdam"]), "Use UTC didn't end the situation")
+        close(settings)
+        XCTAssertTrue(waitForGone(anyContaining("server time zone in Settings › Connections looks wrong")),
+                      "The dashboard still warns after Use UTC")
+    }
+
     // MARK: Helpers
 
     /// Selects a tracked Blueprint in the sidebar; its window title follows.
