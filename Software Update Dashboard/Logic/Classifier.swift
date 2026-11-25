@@ -146,6 +146,9 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var carriedStepVersion: String?
     var carriedDeadline: Date?
     var carriedDeadlineLocal: String?
+    /// The device’s next install attempt after a missed deadline: shown, not counted (`DeviceTarget`).
+    var nextInstallAttempt: Date?
+    var nextInstallAttemptLocal: String?
     /// A Rapid Security Response the device runs (`(a)`), and its build.
     var rapidSecurityResponse: String?
     var supplementalBuild: String?
@@ -229,6 +232,8 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case carriedStepVersion
         case carriedDeadline
         case carriedDeadlineLocal
+        case nextInstallAttempt
+        case nextInstallAttemptLocal
         case rapidSecurityResponse
         case supplementalBuild
         case betaEnrollment
@@ -268,7 +273,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var osName: String { Classifier.osName(isComputer: isComputer, modelIdentifier: modelIdentifier) }
 
     /// The diagnoses that need someone to look (summary, Inspect’s default selection).
-    static let attentionPattern = "too old for update declarations|^Download declined|passcode has to be entered|^Downloaded.*not installed after|downloaded but not installed after|[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check|^Installing .*for more than|^Jamf’s update doesn’t cover|^Hasn’t fetched Jamf’s|^Update declaration (failed|invalid)"
+    static let attentionPattern = "too old for update declarations|^Download declined|passcode has to be entered|^Downloaded.*not installed after|downloaded but not installed after|[Ii]nstall blocked|^Update failed|^Download problem|^No update offered|^Other error|^Online, update not started|^On [A-Za-z]+ [0-9]+: check|^Installing .*for more than|^Installing .*since .*no contact since|^Jamf’s update doesn’t cover|^Hasn’t fetched Jamf’s|^Update declaration (failed|invalid)|^Update files no longer available"
 
     var needsAttention: Bool { diagnosis.range(of: Self.attentionPattern, options: .regularExpression) != nil }
 
@@ -277,7 +282,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
                              "target", "deadline", "deadline_source", "past_deadline", "install_state", "pending_version", "category",
                              "diagnosis", "error", "error_time", "error_since_update", "passcode_present", "last_contact",
                              "status_updated", "time_zone", "rapid_security_response", "beta_enrollment", "install_reason",
-                             "failure_count", "filevault", "battery_health"]
+                             "failure_count", "filevault", "battery_health", "next_install_attempt"]
 
     var csvLine: String {
         func date(_ value: Date?) -> String { value.map { $0.formatted(.iso8601) } ?? "" }
@@ -290,7 +295,8 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
                          pendingVersion ?? "", category.rawValue, diagnosis, error, errorTime ?? "", flag(errorSinceUpdate),
                          passcodePresent.map { $0 ? "true" : "false" } ?? "", date(lastContact), date(statusUpdated),
                          timeZone ?? "", rapidSecurityResponse ?? "", betaEnrollment ?? "", installReason ?? "",
-                         failureCount.map(String.init) ?? "", fileVault ?? "", batteryHealth ?? ""])
+                         failureCount.map(String.init) ?? "", fileVault ?? "", batteryHealth ?? "",
+                         nextInstallAttempt.map(date) ?? nextInstallAttemptLocal ?? ""])
     }
 }
 
@@ -378,7 +384,10 @@ nonisolated enum Classifier {
         case state == .installing && installingLong && contactSince:
             diagnosis = "Installing \(pending.map { "\($0) " } ?? "")for more than \(Int(TargetRules.longInstall / 3_600)) hours; "
                 + "the device checks in but hasn’t reported a new status"
-        case state == .installing && installingLong: diagnosis = "Installing\(via), no contact since it started"
+        // no check-in since it reported installing: it may be switched off, or stuck installing
+        case state == .installing && installingLong:
+            diagnosis = "Installing\(via) since \(updated.map(InspectFindings.dayTime) ?? "the update started"), "
+                + "no contact since (switched off or stuck)"
         case state == .installing: diagnosis = "Installing now\(via)"
         case state == .prepared && !blocker.isEmpty: diagnosis = "Downloaded\(via), install blocked by \(blocker)"
         case state == .prepared: diagnosis = "Downloaded\(via), installs at the deadline"
@@ -388,6 +397,12 @@ nonisolated enum Classifier {
         case isFailed && errorNow.isEmpty: diagnosis = "Update failed (no error details)"
         case matches(reasonNow, "[Cc]ellular") && matches(reasonNow, "[Dd]eclin|[Rr]efus|not allowed"):
             diagnosis = "Download declined over a cellular connection: the device needs Wi-Fi"
+        // a Mac whose update needs its bootstrap token and couldn't get it (Help: Bootstrap Token Not Escrowed)
+        case matches(errorNow, "[Bb]ootstrap ?[Tt]oken"):
+            diagnosis = "Update failed: the Mac couldn’t get its bootstrap token (check that it’s escrowed in Jamf Pro)"
+        // the update files the device was working with are gone from Apple's servers (no public Apple page)
+        case matches(errorNow, "AssetReloadNotFound"):
+            diagnosis = "Update files no longer available from Apple; check again after the device’s next check-in"
         case matches(errorNow, "extractor|catalog|[Dd]ownload|[Tt]imed ?[Oo]ut|XPC|digested|[Nn]etwork"):
             diagnosis = "Download problem (device retries)"
         case errorNow == "No update found" || matches(errorNow, "NoUpdateFound|no update found"):
@@ -447,6 +462,8 @@ nonisolated enum Classifier {
         status.carriedStepVersion = target.carriedStepVersion
         status.carriedDeadline = target.carriedDeadline
         status.carriedDeadlineLocal = target.carriedDeadlineLocal
+        status.nextInstallAttempt = target.nextInstallAttempt
+        status.nextInstallAttemptLocal = target.nextInstallAttemptLocal
         if let step = target.earlierStepVersion, status.category == .otherUpdate,
            let range = status.diagnosis.range(of: " (intermediate version \(step))") {
             // the intermediate version is this Blueprint's own earlier step

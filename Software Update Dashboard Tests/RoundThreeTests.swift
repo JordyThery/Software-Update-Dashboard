@@ -100,7 +100,7 @@ struct FindDeviceTests {
         let match = try #require(DeviceSearch.matches("Studio Mac 09", in: sources).first)
         model.show(match)
         #expect(model.selection == .blueprint(match.trackedID))
-        #expect(model.deviceToShow == DashboardModel.DeviceKey(tracked: match.trackedID, device: match.device.id))
+        #expect(model.deviceToShow == DashboardModel.DeviceKey(tracked: match.trackedID, device: match.device.id, name: match.device.name, foundIn: match.date))
         #expect(TestRun.AttemptLog.savedConnections.attempts().isEmpty)
     }
 }
@@ -133,6 +133,8 @@ struct ReportPDFTests {
         #expect(missing.isEmpty, "missing: \(missing)")
         // a device needing attention, with its diagnosis
         #expect(text.contains("Studio Mac 10"))
+        // Readiness says each device counts once (0.3.2)
+        #expect(text.contains(ReadinessCheck.countedOnce))
         #expect(model.reportName(nil).hasSuffix("(Demo).pdf") && model.reportName(nil).hasPrefix("All Blueprints Report "))
     }
 

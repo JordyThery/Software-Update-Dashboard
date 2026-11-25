@@ -28,6 +28,9 @@ final class DashboardModel {
     struct DeviceKey: Hashable {
         var tracked: UUID
         var device: String
+        /// As Find a Device showed it, and the refresh it was found in.
+        var name = ""
+        var foundIn: Date?
     }
 
     let connections: ConnectionsModel
@@ -67,6 +70,8 @@ final class DashboardModel {
     @ObservationIgnored private var catalog: (key: String, value: AppleReleases.Catalog, date: Date)?
     /// Demo Mode’s first public posting dates (`FirstPostings`), in memory only.
     @ObservationIgnored private var demoFirstPostings: [String: Date] = [:]
+    /// Demo Mode’s remembered reported deadlines (`ReportedDeadlines`), per tracked Blueprint, in memory only.
+    @ObservationIgnored private var demoReportedDeadlines: [UUID: ReportedDeadlines] = [:]
     @ObservationIgnored private let historyOverride: StatusHistory?
     /// Where Apple’s release data comes from; tests replace it.
     @ObservationIgnored private let releasesOverride: (@Sendable () async throws -> AppleReleases.Catalog)?
@@ -147,6 +152,7 @@ final class DashboardModel {
         newestSnapshots[id] = nil
         previousSnapshots[id] = nil
         if !isDemo { notifier.remove(id) }
+        demoReportedDeadlines[id] = nil
         results[id] = nil
         inspections = inspections.filter { $0.key.tracked != id }
         if selection == .blueprint(id) { selection = .overview }
@@ -354,10 +360,25 @@ final class DashboardModel {
             else { previous = nil }
             var workflow = RefreshWorkflow(client: client, catalog: catalog, serverTimeZone: connections.serverTimeZone)
             if let catalog { workflow.firstPosted = firstPostings(catalog, demo: isDemo) }
+            // what earlier refreshes remembered of the devices' reported deadlines, off the main thread
+            if isDemo {
+                workflow.reportedDeadlines = demoReportedDeadlines[id] ?? ReportedDeadlines()
+                workflow.seedsDemoDeadlines = true
+            }
+            else if let history { workflow.reportedDeadlines = await Task.detached(priority: .utility) { history.reportedDeadlines(for: id) }.value }
             var result = try await workflow.run(tracked, previousScope: previous?.scope) { step in
                 Task { @MainActor in if self.refreshing.contains(id) { self.progress[id] = step } }
             }
             guard connections.inUseKey == key else { return }
+            if !isDemo { connections.noteServerTimeZone(looksWrong: result.serverTimeZoneLooksWrong) }
+            // only after a refresh worth saving, as the history: one that measured nothing would forget them
+            let remember = Self.reportedDeadlinesToKeep(updated: result.reportedDeadlines, previous: workflow.reportedDeadlines,
+                                                        counts: result.counts)
+            if isDemo {
+                demoReportedDeadlines[id] = remember
+            } else if let history, remember != workflow.reportedDeadlines {
+                await Task.detached(priority: .utility) { try? history.saveReportedDeadlines(remember, for: id) }.value
+            }
             // nothing measured (the banner says so): a snapshot of zero devices would only drop the chart
             if result.counts.isWorthSaving, let history {
                 let seeds = isDemo && previous == nil ? demoHistory(result) : []
@@ -385,6 +406,16 @@ final class DashboardModel {
         } catch {
             if connections.inUseKey == key { errors[id] = error.localizedDescription }
         }
+    }
+
+    /// What to remember of the devices’ reported deadlines after a refresh:
+    /// what it found, only when it is worth saving (`isWorthSaving`, the
+    /// history’s rule) and measured at least one device; otherwise what was
+    /// remembered before. A refresh of no devices at all (a scope group that
+    /// answers empty for a moment) would forget every remembered posting.
+    nonisolated static func reportedDeadlinesToKeep(updated: ReportedDeadlines, previous: ReportedDeadlines,
+                                                    counts: CategoryCounts) -> ReportedDeadlines {
+        counts.isWorthSaving && counts.total > 0 ? updated : previous
     }
 
     /// Apple’s release data, read at most once an hour per connection; nil
@@ -475,7 +506,8 @@ final class DashboardModel {
     /// Opens a device in its Blueprint’s device list.
     func show(_ match: DeviceSearch.Match) {
         selection = .blueprint(match.trackedID)
-        deviceToShow = DeviceKey(tracked: match.trackedID, device: match.device.id)
+        deviceToShow = DeviceKey(tracked: match.trackedID, device: match.device.id,
+                                 name: match.device.name.isEmpty ? match.device.serial : match.device.name, foundIn: match.date)
     }
 
     // MARK: Open in Jamf Pro

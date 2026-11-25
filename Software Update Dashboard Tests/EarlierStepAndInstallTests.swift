@@ -33,7 +33,10 @@ struct EarlierStepAndInstallTests {
                        ("softwareupdate.install-reason.reason", reason)], time: time)
     }
 
-    static func target(_ status: JamfPro.SoftwareUpdateStatus, now: String = "2026-11-10T00:30:00") -> DeviceTarget {
+    /// `reported`: the deadlines this Blueprint’s devices reported for 26.7.2 while it was the target (UTC
+    /// moments), the only way a Mac’s step is recognized; by default 26.7.2’s own.
+    static func target(_ status: JamfPro.SoftwareUpdateStatus, now: String = "2026-11-10T00:30:00",
+                       reported: [String] = ["2026-11-09T22:59:04"]) -> DeviceTarget {
         let rule = TargetRules.target(os: "26.7.1", model: "MacBookPro18,3", boardID: "J314sAP", osName: "macOS", context: .init(
             block: block, catalog: catalog, platform: .macOS, blueprintChanged: nil, updateStarted: nil, now: Sample.date(now)))
         return TargetRules.fromDevice(rule, status: status, os: "26.7.1", osName: "macOS", catalog: catalog, platform: .macOS,
@@ -41,7 +44,10 @@ struct EarlierStepAndInstallTests {
                                       earlierStepDeadline: { version in
                                           TargetRules.ruleDeadline(for: version, block: block, catalog: catalog, platform: .macOS,
                                                                    model: "MacBookPro18,3", boardID: "J314sAP")
-                                      }, now: Sample.date(now))
+                                      },
+                                      known: PostingBasis(reportedMinutes: [PostingBasis.key(.macOS, OSVersion("26.7.2")!):
+                                                                                Set(reported.map { PostingBasis.minute(Sample.date($0)) })]),
+                                      now: Sample.date(now))
     }
 
     @Test("This Blueprint’s earlier step: the rule’s version and deadline count, the step is shown")
@@ -88,7 +94,9 @@ struct EarlierStepAndInstallTests {
         #expect(device.diagnosis == "Installing 27.0.1 for more than 4 hours; the device checks in but hasn’t reported a new status")
         #expect(device.needsAttention)
         let silent = Sample.classify(Sample.iPad(lastContact: Sample.date("2026-11-05T05:00:00")), installing)
-        #expect(silent.diagnosis == "Installing, no contact since it started")
+        #expect(silent.diagnosis == "Installing since \(InspectFindings.dayTime(Sample.date("2026-11-05T06:00:00"))), "
+                + "no contact since (switched off or stuck)")
+        #expect(silent.needsAttention)
         let recent = Sample.status([("device.operating-system.version", "26.7.1"), ("softwareupdate.install-state", "installing")],
                                    time: "2026-11-05T11:00:00")
         #expect(Sample.classify(Sample.iPad(), recent).diagnosis == "Installing now")

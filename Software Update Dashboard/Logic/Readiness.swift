@@ -2,23 +2,29 @@ import Foundation
 import JTKit
 
 /// Devices the Blueprint’s software update can’t reach as they are: each
-/// count on the dashboard opens those devices in the list.
+/// count on the dashboard opens those devices in the list. A device counts
+/// once, under its most basic reason: the cases in their order, so an iPad
+/// on iPadOS 15 without declarative management and without a report counts
+/// under OS too old only.
 nonisolated enum ReadinessCheck: String, CaseIterable, Identifiable, Hashable, Sendable {
+    /// iOS or iPadOS 16 or earlier, macOS 13 or earlier: Apple’s software
+    /// update enforcement declaration starts at iOS 17 and macOS 14.
+    case osTooOld
+    /// Declarative device management is off: the Blueprint can’t reach it.
+    case noDeclarativeManagement
     /// An iPhone or iPad enrolled with User Enrollment: Apple’s enforced
     /// software update allows supervised and device enrollments only.
     case userEnrollment
     /// A Mac that isn’t supervised: on macOS Apple allows the enforced
     /// software update on supervised Macs only.
     case macNotSupervised
-    /// Declarative device management is off: the Blueprint can’t reach it.
-    case noDeclarativeManagement
     /// Jamf Pro has no status report of the device at all.
     case neverReported
-    /// iOS or iPadOS 16 or earlier, macOS 13 or earlier: Apple’s software
-    /// update enforcement declaration starts at iOS 17 and macOS 14.
-    case osTooOld
 
     var id: String { rawValue }
+
+    /// Under the counts: why a device may be missing from a count that also fits it.
+    static let countedOnce = "Each device counts once, under the first reason that applies."
 
     var title: String {
         switch self {
@@ -51,7 +57,18 @@ nonisolated enum ReadinessCheck: String, CaseIterable, Identifiable, Hashable, S
         }
     }
 
+    /// Whether the device counts under this check: its most basic reason (`reason(for:)`).
     func applies(to device: DeviceStatus) -> Bool {
+        Self.reason(for: device) == self
+    }
+
+    /// The most basic reason the update can’t reach the device; nil when none fits.
+    static func reason(for device: DeviceStatus) -> ReadinessCheck? {
+        allCases.first { $0.fits(device) }
+    }
+
+    /// Whether this reason fits the device, whatever other reasons fit too.
+    func fits(_ device: DeviceStatus) -> Bool {
         switch self {
         // Apple’s enforced update (com.apple.configuration.softwareupdate.enforcement.specific)
         // allows supervised and device enrollments on iOS and iPadOS, supervised Macs only on macOS

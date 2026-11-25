@@ -243,6 +243,8 @@ nonisolated struct StatusHistory: Sendable {
     /// Full refreshes younger than this are all kept; older ones, the newest per day.
     static let fullDays = 7
     static let indexName = "counts.index"
+    /// What the Blueprint’s devices reported about Jamf’s deadlines (`ReportedDeadlines`).
+    static let reportedDeadlinesName = "reported-deadlines.plist"
 
     let folder: URL
 
@@ -341,6 +343,29 @@ nonisolated struct StatusHistory: Sendable {
             }
         }
         return nil
+    }
+
+    /// What the Blueprint’s devices reported about Jamf’s deadlines
+    /// (`ReportedDeadlines`), next to its refreshes; empty when there is
+    /// none or it can’t be read.
+    func reportedDeadlines(for groupID: UUID) -> ReportedDeadlines {
+        guard let data = try? Data(contentsOf: groupFolder(groupID).appending(path: Self.reportedDeadlinesName)),
+              let read = try? PropertyListDecoder().decode(ReportedDeadlines.self, from: data) else { return ReportedDeadlines() }
+        return read
+    }
+
+    /// Saves them; an empty one removes the file.
+    func saveReportedDeadlines(_ deadlines: ReportedDeadlines, for groupID: UUID) throws {
+        let groupFolder = groupFolder(groupID)
+        let file = groupFolder.appending(path: Self.reportedDeadlinesName)
+        guard !deadlines.isEmpty else {
+            try? FileManager.default.removeItem(at: file)
+            return
+        }
+        try FileManager.default.createDirectory(at: groupFolder, withIntermediateDirectories: true)
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        try encoder.encode(deadlines).write(to: file, options: .atomic)
     }
 
     /// Removes a group’s whole history, when the group is no longer tracked.
