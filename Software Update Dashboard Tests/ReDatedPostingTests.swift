@@ -62,7 +62,7 @@ struct ReDatedPostingTests {
 
     static func reportedPosting(_ status: JamfPro.SoftwareUpdateStatus, changed: Date? = nil) -> Date? {
         TargetRules.reportedPosting(rule(), status: status, block: block, catalog: reDated, platform: .iOS,
-                                    serverTimeZone: Sample.utc, blueprintChanged: changed, timeZone: zone)
+                                    serverTimeZone: Sample.utc, blueprintChanged: changed, timeZone: zone)?.posted
     }
 
     static let firstPosting = Sample.date("2026-11-09T00:00:00")
@@ -104,7 +104,8 @@ struct ReDatedPostingTests {
         // a deadline from neither posting, another version, no declaration, a report from before the Blueprint's change: nothing
         #expect(Self.reportedPosting(Self.pending(updated: "2026-11-13T08:00:00", deadline: "2026-11-14 22:59:00 +0000")) == nil)
         #expect(Self.reportedPosting(Self.pending(updated: "2026-11-13T08:00:00", version: "27.2")) == nil)
-        #expect(Self.reportedPosting(Self.pending(updated: "2026-11-13T08:00:00", reason: "notification")) == nil)
+        // whatever the install reason: only a declaration sets the rule's deadline (0.3.2)
+        #expect(Self.reportedPosting(Self.pending(updated: "2026-11-13T08:00:00", reason: "notification")) == Self.firstPosting)
         #expect(Self.reportedPosting(Self.pending(updated: "2026-11-10T08:00:00"), changed: Sample.date("2026-11-11T09:00:00")) == nil)
     }
 
@@ -222,7 +223,7 @@ struct ReDatedPostingTests {
         // a Mac reporting Jamf's 19 Nov says Jamf counted from the public posting of 5 Nov, not 26 Oct
         let status = PostingDeadlineTests.pending(updated: "2026-11-07T08:00:00", deadline: "2026-11-19 22:59:06 +0000")
         let posted = TargetRules.reportedPosting(target, status: status, block: TargetRulesTests.block(PostingDeadlineTests.minor),
-                                                 catalog: catalog, platform: .macOS, serverTimeZone: Sample.utc)
+                                                 catalog: catalog, platform: .macOS, serverTimeZone: Sample.utc)?.posted
         #expect(posted == Sample.date("2026-11-05T00:00:00"))
     }
 }

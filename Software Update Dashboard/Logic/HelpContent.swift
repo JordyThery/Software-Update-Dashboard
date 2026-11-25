@@ -37,25 +37,27 @@ nonisolated enum HelpContent {
 
     static let targets = HelpTopic(id: "targets", title: "Where the Target and the Deadline Come From", paragraphs: [
         "A Blueprint that names a version: that version is the target, by the deadline the Blueprint sets, in each device’s own local time.",
-        "Latest: the newest release Apple offers publicly that the device’s model can run, from the day Apple posts it. Minor updates: the newest public release of the device’s own major release. The deadline is Apple’s public posting date plus the Blueprint’s days, at the Blueprint’s time of day, in the device’s local time. When Apple later changes the posting date of a release that was already public, the deadline stays the one Jamf sent, as the Blueprint’s devices report it.",
+        "Latest: the newest release Apple offers publicly that the device’s model can run, from the day Apple posts it. Minor updates: the newest public release of the device’s own major release. The deadline is Apple’s public posting date plus the Blueprint’s days, at the Blueprint’s time of day, in the device’s local time. When Apple later changes the posting date of a release that was already public, the deadline stays the one Jamf sent, as the Blueprint’s devices report it. The app remembers that deadline per Blueprint, so it keeps counting after those devices have installed, as long as the version is the rule’s target.",
         "What Jamf sent comes first: when a device reports a pending version from a declaration, after the update started, that version is its target, with the deadline the device reports. When it differs from the Blueprint’s rule, the device detail shows both.",
+        "A Mac that misses its deadline picks a new time to try again. When it reports a time after the Blueprint’s deadline has passed, that is its next install attempt: the Blueprint’s deadline still counts, so the Mac stays past it, and the device detail shows the time as Next install attempt.",
         "A deadline a device reports is a moment, shown in this Mac’s time. A deadline worked out from the rule is the device’s local time. Macs have no time zone in Jamf Pro, so their computed deadline is each Mac’s own local time.",
         "The device detail says where each target and deadline comes from.",
     ])
 
     static let earlierStep = HelpTopic(id: "earlier-step", title: "An Earlier Step of the Blueprint", paragraphs: [
         "When Apple posts a newer version while devices are still installing the version the Blueprint asked for before, the device first installs that earlier version: an earlier step of the Blueprint. Its target is the newer version, with the Blueprint’s current deadline. The step is shown in the device detail and isn’t counted against the device.",
-        "Jamf’s status reports don’t name the declaration that sent a pending version, so the app recognizes an earlier step by its deadline: the deadline this Blueprint gives that version, or the newer version’s own deadline when Jamf already sent it.",
+        "Jamf’s status reports don’t name the declaration that sent a pending version, so the app recognizes an earlier step by its deadline: the deadline this Blueprint gives that version, or the newer version’s own deadline when Jamf already sent it. A Mac writes its deadline in UTC, so for a Mac the deadline has to be, to the minute, one the Blueprint’s own devices reported for that version while the app was refreshing it; otherwise the Mac’s pending version is shown as another pending version.",
         "Once the step isn’t installing and its own deadline has passed by more than 4 hours, the device counts as past its deadline, also when the step failed.",
     ])
 
     static let readiness = HelpTopic(id: "readiness", title: "Readiness", paragraphs: [
         "Readiness counts the devices an enforced software update can’t reach as they are. Each number opens those devices in the device list.",
+        "OS too old for update declarations: Apple’s update declaration starts at iOS and iPadOS 17 and macOS 14, so an older device can’t receive it. When Apple’s data gives its model a newer version, its diagnosis says so.",
+        "No declarative device management: the Blueprint can’t reach these devices.",
         "User Enrollment: iPhones and iPads enrolled this way. Apple allows the enforced update on supervised and device enrollments only.",
         "Macs not supervised: on macOS, Apple allows the enforced update on supervised Macs only.",
-        "No declarative device management: the Blueprint can’t reach these devices.",
         "Never reported: Jamf Pro has no status report of the device at all.",
-        "OS too old for update declarations: Apple’s update declaration starts at iOS and iPadOS 17 and macOS 14, so an older device can’t receive it. When Apple’s data gives its model a newer version, its diagnosis says so.",
+        "Each device counts once, under the first of these reasons that applies to it, in this order: an iPad on iPadOS 15 without declarative device management counts under OS too old only.",
     ])
 
     static let inspect = HelpTopic(id: "inspect", title: "Inspect", paragraphs: [
@@ -130,9 +132,12 @@ nonisolated enum HelpContent {
         case "User Enrollment", "Not supervised": "enrollment"
         case "Offline": "offline"
         case "Update error", "Earlier update error":
-            if detail.range(of: "Passcode|Keybag", options: .regularExpression) != nil { "passcode" }
+            if detail.range(of: "[Bb]ootstrap ?[Tt]oken", options: .regularExpression) != nil { "bootstrap-token" }
+            else if detail.range(of: "Passcode|Keybag", options: .regularExpression) != nil { "passcode" }
             else if detail.range(of: "[Bb]attery", options: .regularExpression) != nil { "battery" }
             else if detail.range(of: "[Dd]isk ?[Ss]pace|free space|[Ss]torage", options: .regularExpression) != nil { "storage" }
+            // an update asset Apple no longer has isn't its servers being unreachable
+            else if detail.contains("AssetReloadNotFound") { nil }
             else if likely, cause == "Update error", detail.range(of: connectionFailure, options: .regularExpression) != nil { "network-hosts" }
             else { nil }
         default: nil

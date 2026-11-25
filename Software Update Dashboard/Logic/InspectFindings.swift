@@ -595,6 +595,11 @@ nonisolated enum InspectFindings {
         return date.formatted(style)
     }
 
+    /// A moment without its year, for a diagnosis: “23 Nov 23:59”.
+    static func dayTime(_ date: Date) -> String {
+        date.formatted(.dateTime.day().month(.abbreviated)) + " " + date.formatted(date: .omitted, time: .shortened)
+    }
+
     /// A moment as the app shows it everywhere: “9 Nov 2026 at 09:11”.
     static func moment(_ date: Date) -> String {
         date.formatted(date: .abbreviated, time: .shortened)

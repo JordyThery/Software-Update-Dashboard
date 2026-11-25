@@ -21,6 +21,15 @@ nonisolated enum DeviceSearch {
         var id: String { "\(trackedID.uuidString)|\(device.id)" }
     }
 
+    /// What the device list says when a device Find a Device opened isn’t in
+    /// the Blueprint’s refresh any more (it refreshed since, and the device
+    /// had left its scope); nil while it is there.
+    static func notShown(name: String, device: String, foundIn: Date?, devices: [DeviceStatus]) -> String? {
+        guard !devices.contains(where: { $0.id == device }) else { return nil }
+        return "\(name) isn’t in this refresh: it has left the Blueprint’s scope"
+            + (foundIn.map { " since the refresh of \(InspectFindings.moment($0))" } ?? "") + "."
+    }
+
     /// Devices whose serial number or name contains the text (ignoring case
     /// and spaces around it); an exact serial number first, then by name and
     /// Blueprint. Nothing for an empty text.

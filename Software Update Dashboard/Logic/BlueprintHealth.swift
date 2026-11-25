@@ -134,7 +134,8 @@ nonisolated struct BlueprintHealth: Sendable, Hashable {
     }
 
     /// The Blueprint’s current declarations from every device’s reports:
-    /// each pair with the predicate a device reported (when one did), its
+    /// each pair with the predicate of its newest report (when a device
+    /// reported one; by the declaration’s `dateUpdated`), its
     /// family from that predicate or its step’s activation predicate, and
     /// its name. In step order, then by number.
     static func catalogue(_ reports: [JamfPlatform.DeclarationReport], blocks: [JamfPlatform.SoftwareUpdateBlock],
@@ -146,11 +147,14 @@ nonisolated struct BlueprintHealth: Sendable, Hashable {
             return steps.0 != steps.1 ? steps.0 < steps.1 : (Int(first.number ?? "") ?? 0) < (Int(second.number ?? "") ?? 0)
         }
         return sorted.map { pair in
-            let activation = pair.reports.first { report in
+            // the newest version of the declaration: a device that hasn't fetched Jamf's current
+            // one still reports the old predicate under the same identifier, and the order the
+            // reports are read in says nothing
+            let activation = pair.reports.filter { report in
                 report.type == "ACTIVATION" && report.reasons.contains { reason in
                     reason.details.contains { $0.key?.lowercased() == "predicate" } || (reason.description ?? "").contains("predicate")
                 }
-            }
+            }.max { ($0.dateUpdated ?? .distantPast) < ($1.dateUpdated ?? .distantPast) }
             let shape = DeclarationPair(key: pair.key, number: pair.number, reports: activation.map { [$0] } ?? [])
             let predicate = shape.predicate
             let stepPredicate = step(pair).flatMap { index in blocks.first { $0.stepIndex == index }?.activationPredicate }
@@ -271,9 +275,14 @@ nonisolated struct BlueprintHealth: Sendable, Hashable {
         let own = current.filter { $0.family.map { $0 == device.osName } ?? true }
         let covering = own.filter { $0.applies(osName: device.osName, ids: ids, version: version) == true }
         if !covering.isEmpty {
-            // Jamf's current declarations cover it; the device's own report predates them
+            // Jamf's current declarations cover it; the device's own report predates them: none,
+            // awaiting sync, or the same declaration with an older condition (other versions)
             let fetched = covering.contains { declaration in
-                pairs.contains { $0.key == declaration.key && !$0.reports.contains { $0.status == .awaitingSync } }
+                pairs.contains { pair in
+                    let own = pair.predicate.flatMap(DeclarationPair.covered).map(Set.init)
+                    return pair.key == declaration.key && !pair.reports.contains { $0.status == .awaitingSync }
+                        && (own == nil || declaration.covered == nil || own == declaration.covered)
+                }
             }
             return fetched ? nil : .notFetched(lastReport: (reports ?? []).compactMap(\.lastReportTime).max())
         }

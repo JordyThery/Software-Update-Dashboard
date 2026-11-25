@@ -42,8 +42,12 @@ struct EarlierStepWindowTests {
                        ("softwareupdate.install-reason.reason", "declaration")], time: "2026-11-10T08:00:00")
     }
 
+    /// `reported`: deadlines the Blueprint’s own devices reported for 27.2 (UTC moments): a Mac’s step needs one, to the minute.
     static func target(_ status: JamfPro.SoftwareUpdateStatus, window: Bool = true, awaitingSync: Bool = false,
-                       catalog: AppleReleases.Catalog = catalog, timeZone: String? = nil, now: Date = now) -> DeviceTarget {
+                       catalog: AppleReleases.Catalog = catalog, timeZone: String? = nil, now: Date = now,
+                       reported: [String] = []) -> DeviceTarget {
+        let known = PostingBasis(reportedMinutes: [PostingBasis.key(.macOS, OSVersion("27.2")!):
+                                                    Set(reported.map { PostingBasis.minute(Sample.date($0)) })])
         let rule = TargetRules.target(os: "27.1", model: "Mac15,12", boardID: "J613AP", osName: "macOS", context: .init(
             block: block, catalog: catalog, platform: .macOS, blueprintChanged: nil, updateStarted: nil, now: now))
         return TargetRules.fromDevice(
@@ -53,31 +57,37 @@ struct EarlierStepWindowTests {
                                                             model: "Mac15,12", boardID: "J613AP") },
             earlierStepWindow: window ? { TargetRules.ruleWindow(for: $0, block: block, catalog: catalog, platform: .macOS,
                                                                  model: "Mac15,12", boardID: "J613AP", now: now) } : nil,
-            awaitingSync: awaitingSync, timeZone: timeZone, now: now)
+            awaitingSync: awaitingSync, known: known, timeZone: timeZone, now: now)
     }
 
     @Test("27.2 due 19 Nov while the target is 27.2.1: an earlier step; the current target and deadline count")
     func liveCase() {
-        let target = Self.target(Self.status(deadline: "2026-11-19 22:59:00 +0000"))
+        let target = Self.target(Self.status(deadline: "2026-11-19 22:59:00 +0000"), reported: ["2026-11-19T22:59:00"])
         #expect(target.version == "27.2.1" && target.deadlineLocal == "2026-11-23T23:59:00")
         #expect(target.earlierStepVersion == "27.2" && !target.fromDevice)
         let device = Sample.classify(Sample.mac(os: "27.1", model: "Mac15,12"), Self.status(deadline: "2026-11-19 22:59:00 +0000"),
                                      target: target, now: "2026-11-10T12:00:00")
         #expect(device.category == .otherUpdate)
         #expect(device.diagnosis == "Downloading 27.2 first (an earlier step of this Blueprint)")
-        // without the window (0.1.1), the posting Apple dropped hid the step
-        #expect(Self.target(Self.status(deadline: "2026-11-19 22:59:00 +0000"), window: false).version == "27.2")
+        // 0.3.2: on a Mac, without a deadline the Blueprint's devices reported for 27.2, another pending version
+        let unconfirmed = Self.target(Self.status(deadline: "2026-11-19 22:59:00 +0000"))
+        #expect(unconfirmed.version == "27.2" && unconfirmed.fromDevice && unconfirmed.earlierStepVersion == nil)
     }
 
-    @Test("Without Apple’s posting date, a Mac’s UTC moment is checked by its minutes only; awaiting sync supports a version in the window")
+    @Test("A Mac: an earlier step only by a deadline the Blueprint’s devices reported for it, to the minute; minutes, the window or awaiting sync aren’t enough")
     func macMinutesAndAwaitingSync() {
-        // another quarter-hour minute: not this Blueprint's step
         let odd = Self.status(deadline: "2026-11-19 10:17:00 +0000")
         #expect(Self.target(odd, catalog: Self.windowCatalog).version == "27.2" && Self.target(odd, catalog: Self.windowCatalog).fromDevice)
-        // the same minutes at another hour can't be told apart for a Mac writing UTC: taken as the step (a known limit)
+        // the same minutes at another hour: no longer taken as the step (0.3.2)
         let otherHour = Self.status(deadline: "2026-11-19 09:59:00 +0000")
-        #expect(Self.target(otherHour, catalog: Self.windowCatalog).earlierStepVersion == "27.2")
-        #expect(Self.target(odd, awaitingSync: true, catalog: Self.windowCatalog).earlierStepVersion == "27.2")
+        #expect(Self.target(otherHour, catalog: Self.windowCatalog).earlierStepVersion == nil)
+        #expect(Self.target(odd, awaitingSync: true, catalog: Self.windowCatalog).earlierStepVersion == nil)
+        // reported by the Blueprint's devices, to the minute (seconds apart): the step; a minute off: not
+        let reported = ["2026-11-19T22:59:02"]
+        #expect(Self.target(Self.status(deadline: "2026-11-19 22:59:41 +0000"), catalog: Self.windowCatalog,
+                            reported: reported).earlierStepVersion == "27.2")
+        #expect(Self.target(Self.status(deadline: "2026-11-19 23:00:00 +0000"), catalog: Self.windowCatalog,
+                            reported: reported).earlierStepVersion == nil)
         // a version the rule never targeted: awaiting sync alone isn't enough
         let unknown = Self.status(deadline: "2026-11-19 22:59:00 +0000", pending: "27.1.5")
         #expect(Self.target(unknown, awaitingSync: true, catalog: Self.windowCatalog).earlierStepVersion == nil)
@@ -88,9 +98,9 @@ struct EarlierStepWindowTests {
         let window = TargetRules.ruleWindow(for: try #require(OSVersion("27.2")), block: Self.block, catalog: Self.catalog,
                                             platform: .macOS, model: "Mac15,12", boardID: "J613AP", now: Self.now)
         #expect(window == ["2026-11-19T23:59:00"])
-        // 21 Nov at the Blueprint's time is in the window, but not the posting's deadline
+        // a Mac: the window no longer makes a step (0.3.2); iPads keep it (EarlierStepConfirmedTests)
         #expect(Self.target(Self.status(deadline: "2026-11-21 22:59:00 +0000")).earlierStepVersion == nil)
-        #expect(Self.target(Self.status(deadline: "2026-11-21 22:59:00 +0000"), catalog: Self.windowCatalog).earlierStepVersion == "27.2")
+        #expect(Self.target(Self.status(deadline: "2026-11-21 22:59:00 +0000"), catalog: Self.windowCatalog).earlierStepVersion == nil)
     }
 
     @Test("A device whose zone is known: the full clock time, so another hour on the same minutes isn’t the step")
@@ -98,7 +108,9 @@ struct EarlierStepWindowTests {
         // 23:59 in Brussels is 22:59 UTC; 09:59 UTC is 10:59 there
         let right = Self.status(deadline: "2026-11-19 22:59:00 +0000")
         let wrong = Self.status(deadline: "2026-11-19 09:59:00 +0000")
-        #expect(Self.target(right, catalog: Self.windowCatalog, timeZone: "Europe/Brussels").earlierStepVersion == "27.2")
+        // a Mac needs a deadline its Blueprint's devices reported (the iPad case: EarlierStepConfirmedTests)
+        #expect(Self.target(right, catalog: Self.windowCatalog, timeZone: "Europe/Brussels",
+                            reported: ["2026-11-19T22:59:00"]).earlierStepVersion == "27.2")
         #expect(Self.target(wrong, catalog: Self.windowCatalog, timeZone: "Europe/Brussels").earlierStepVersion == nil)
         #expect(TargetRules.sameClock(reported: Sample.date("2026-11-19T22:59:00"), reportedLocal: nil, expected: "2026-11-19T23:59:00",
                                       timeZone: "Europe/Brussels"))
@@ -114,7 +126,8 @@ struct EarlierStepWindowTests {
         let later = Sample.date("2026-11-21T12:00:00")
         let status = Self.status(deadline: "2026-11-19 22:59:00 +0000")
         for awaitingSync in [false, true] {
-            let target = Self.target(status, awaitingSync: awaitingSync, catalog: Self.windowCatalog, now: later)
+            let target = Self.target(status, awaitingSync: awaitingSync, catalog: Self.windowCatalog, now: later,
+                                     reported: ["2026-11-19T22:59:00"])
             #expect(target.earlierStepVersion == "27.2" && target.earlierStepLapsed)
             let device = Sample.classify(Sample.mac(os: "27.1", model: "Mac15,12"), status, target: target, now: "2026-11-21T12:00:00")
             #expect(device.pastDeadline == true)
@@ -375,9 +388,9 @@ struct DeviceDetailsTests {
         #expect(device.failureCount == 2)
         #expect(device.fileVault == "ENCRYPTED")
         #expect(device.batteryHealth == "service-recommended")
-        #expect(Array(DeviceStatus.csvColumns.suffix(6)) == ["rapid_security_response", "beta_enrollment", "install_reason",
-                                                             "failure_count", "filevault", "battery_health"])
-        #expect(device.csvLine.hasSuffix(#",(a),macOS 28 Developer Beta,"declaration, system-settings",2,ENCRYPTED,service-recommended"#))
+        #expect(Array(DeviceStatus.csvColumns.suffix(7)) == ["rapid_security_response", "beta_enrollment", "install_reason",
+                                                             "failure_count", "filevault", "battery_health", "next_install_attempt"])
+        #expect(device.csvLine.hasSuffix(#",(a),macOS 28 Developer Beta,"declaration, system-settings",2,ENCRYPTED,service-recommended,"#))
         // an iPad’s from its inventory; no beta when it says none
         var iPad = Sample.iPad()
         iPad.osRapidSecurityResponse = "(b)"
