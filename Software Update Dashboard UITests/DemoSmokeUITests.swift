@@ -160,6 +160,24 @@ final class DemoSmokeUITests: JTKitUITestCase {
         XCTAssertTrue(data.starts(with: Data("%PDF".utf8)) && data.count > 10_000, "The report isn't a PDF with content")
     }
 
+    /// Find a Device finds the pilot iPad in the Blueprint's first refresh of
+    /// this launch; after the next refresh it has left the Blueprint's scope,
+    /// and the device list says so.
+    func test14LeftTheScope() {
+        openBlueprint(iPadBlueprint)
+        XCTAssertTrue(anyContaining("updatable devices on their target").waitForExistence(timeout: 30), "The dashboard didn't load")
+        tap(app.menuBars.menuBarItems["Device"])
+        tap(app.menuItems["Find a Device…"])
+        let field = app.textFields.matching(NSPredicate(format: "placeholderValue == %@", "Serial number or name")).firstMatch
+        type("Pilot iPad 01", into: field)
+        tap(app.buttons["Show Device"].firstMatch, timeout: 10)
+        XCTAssertTrue(deviceRow("Pilot iPad 01").waitForExistence(timeout: 20), "Find a Device didn't open the pilot iPad")
+        tap(app.buttons["Refresh"].firstMatch, timeout: 10)
+        XCTAssertTrue(anyContaining("has left the Blueprint’s scope").waitForExistence(timeout: 30),
+                      "The device list doesn't say the pilot iPad has left the Blueprint's scope")
+        XCTAssertFalse(deviceRow("Pilot iPad 01").exists, "The pilot iPad is still listed")
+    }
+
     // MARK: Helpers
 
     /// Selects a tracked Blueprint in the sidebar; its window title follows.
