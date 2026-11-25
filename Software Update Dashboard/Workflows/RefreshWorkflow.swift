@@ -329,7 +329,8 @@ nonisolated struct RefreshWorkflow: Sendable {
                        tracked: TrackedBlueprint, now: Date) -> (known: PostingBasis, remember: ReportedDeadlines) {
         var known = PostingBasis(remembered: firstPosted)
         var targets = Set<String>()
-        var minutes: [String: Set<Int>] = [:]
+        // each reported deadline with when it was reported, per platform and version
+        var candidates: [String: [(minute: Int, reportedAt: Date)]] = [:]
         let reports = inputs.compactMap { input -> (platform: AppleReleases.Platform, version: OSVersion, posted: Date)? in
             let device = rule(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now, known: known)
             guard let version = device.rule.osVersion else { return nil }
@@ -338,18 +339,39 @@ nonisolated struct RefreshWorkflow: Sendable {
                                                           platform: device.platform, serverTimeZone: serverTimeZone,
                                                           blueprintChanged: blueprint.overview.updatedDate,
                                                           timeZone: input.member.timeZone) else { return nil }
-            if let moment = found.moment { minutes[PostingBasis.key(device.platform, version), default: []].insert(PostingBasis.minute(moment)) }
+            if let moment = found.moment {
+                candidates[PostingBasis.key(device.platform, version), default: []].append((PostingBasis.minute(moment), found.reportedAt))
+            }
             return (device.platform, version, found.posted)
         }
         known.reported = TargetRules.reportedPostings(reports)
         let reportedDeadlines = seedsDemoDeadlines && self.reportedDeadlines.isEmpty
             ? demoReportedDeadlines(blocks: blocks, now: now) : self.reportedDeadlines
         let earlier = reportedDeadlines.basis(targets: targets, blueprintChanged: blueprint.overview.updatedDate)
+        let minutes = Self.newDeadlineMinutes(candidates, known: earlier.minutes)
         known.rememberedReported = earlier.postings
         known.reportedMinutes = earlier.minutes.merging(minutes) { $0.union($1) }
         let remember = reportedDeadlines.updated(reported: known.reported, moments: minutes, targets: targets,
                                                  blueprintChanged: blueprint.overview.updatedDate, now: now)
         return (known, remember)
+    }
+
+    /// The deadline minutes this refresh adds, per platform and version: a
+    /// reported minute counts only when it was reported before the earliest
+    /// deadline known for that version had passed, whether remembered or
+    /// reported in this refresh (with none known yet, before its own time).
+    /// A Mac that missed the deadline reports its rescheduled time before
+    /// that time arrives, but after Jamf’s deadline: it never counts.
+    static func newDeadlineMinutes(_ candidates: [String: [(minute: Int, reportedAt: Date)]],
+                                   known: [String: Set<Int>]) -> [String: Set<Int>] {
+        var added: [String: Set<Int>] = [:]
+        for (key, reports) in candidates {
+            guard let earliest = (reports.map(\.minute) + Array(known[key] ?? [])).min() else { continue }
+            let deadline = Date(timeIntervalSince1970: Double(earliest) * 60)
+            let kept = Set(reports.filter { $0.reportedAt < deadline }.map(\.minute))
+            if !kept.isEmpty { added[key] = kept }
+        }
+        return added
     }
 
     /// Demo Mode’s made-up earlier refreshes: Jamf’s deadline for every

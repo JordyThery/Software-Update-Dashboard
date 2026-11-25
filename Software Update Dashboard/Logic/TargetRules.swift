@@ -466,10 +466,11 @@ nonisolated enum TargetRules {
     /// declaration sets such a deadline. Jamf’s deadline for a version is
     /// the same for every device of the Blueprint, so this is the
     /// Blueprint’s for devices that haven’t reported it. `moment`: the
-    /// reported deadline as a moment, when it was written with an offset.
+    /// reported deadline as a moment, when it was written with an offset;
+    /// `reportedAt`: when the device reported it.
     static func reportedPosting(_ rule: DeviceTarget, status: JamfPro.SoftwareUpdateStatus?, block: JamfPlatform.SoftwareUpdateBlock?,
                                 catalog: AppleReleases.Catalog?, platform: AppleReleases.Platform, serverTimeZone: TimeZone,
-                                blueprintChanged: Date? = nil, timeZone: String? = nil) -> (posted: Date, moment: Date?)? {
+                                blueprintChanged: Date? = nil, timeZone: String? = nil) -> (posted: Date, moment: Date?, reportedAt: Date)? {
         guard !rule.namedByBlueprint, rule.unknown == nil, let version = rule.osVersion,
               let status, let pending = status.pendingVersion, pending.osVersion.flatMap(OSVersion.init) == version,
               let reported = pending.updated.flatMap({ JamfPro.serverDate($0, timeZone: serverTimeZone) }) else { return nil }
@@ -484,7 +485,7 @@ nonisolated enum TargetRules {
         }
         // two postings that give the same deadline are one; two deadlines can't be told apart
         guard Set(matching.map(\.deadline)).count == 1, let posted = matching.first?.posted else { return nil }
-        return (posted, moment)
+        return (posted, moment, reported)
     }
 
     /// The posting date the Blueprint’s devices report Jamf counted from,
@@ -655,15 +656,23 @@ nonisolated enum TargetRules {
             catalog.flatMap { basis(release, $0, model: model, boardID: boardID, known: known) }.flatMap { $0.source != .releaseDate ? $0.date : nil }
         } : nil
         let reportedAt = pending.updated.flatMap { JamfPro.serverDate($0, timeZone: serverTimeZone) }
+        // a Mac writes UTC, so its minutes only match by the quarter hour: once the Blueprint's
+        // devices have reported Jamf's deadline for this version, only those minutes are Jamf's
+        // (a rescheduled time at :14, :29, :44 or :59 isn't)
+        let jamfMinutes = isMac && isRuleVersion ? known.reportedMinutes[PostingBasis.key(platform, version)] ?? [] : []
+        func isJamfs(_ expected: String) -> Bool {
+            if !jamfMinutes.isEmpty, let moment { return jamfMinutes.contains(PostingBasis.minute(moment.date)) && matches(expected) }
+            return matches(expected)
+        }
         // the rule's deadline counted from any posting date of this version and build:
         // Jamf sent it, whatever Apple re-dated since
         let fromPosting = isRuleVersion && followsApple
-            && (postingDeadlines?(version, pending.buildVersion ?? rule.build) ?? []).contains(where: matches)
+            && (postingDeadlines?(version, pending.buildVersion ?? rule.build) ?? []).contains(where: isJamfs)
         // the rule's version, reported after the Blueprint's deadline with another time:
         // the device's next install attempt (a Mac's zone is this Mac's, as for its deadline)
         let nextAttempt: Bool = {
             guard isRuleVersion, !fromPosting, let ruleDue = rule.deadlineLocal, moment != nil || reportedLocal != nil,
-                  !matches(ruleDue),
+                  !isJamfs(ruleDue),
                   let due = deadlineDate(ruleDue, timeZone: timeZone ?? TimeZone.current.identifier),
                   let reportedAt else { return false }
             return reportedAt > due

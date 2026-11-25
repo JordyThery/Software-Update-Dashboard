@@ -371,10 +371,12 @@ final class DashboardModel {
             }
             guard connections.inUseKey == key else { return }
             if !isDemo { connections.noteServerTimeZone(looksWrong: result.serverTimeZoneLooksWrong) }
+            // only after a refresh worth saving, as the history: one that measured nothing would forget them
+            let remember = Self.reportedDeadlinesToKeep(updated: result.reportedDeadlines, previous: workflow.reportedDeadlines,
+                                                        counts: result.counts)
             if isDemo {
-                demoReportedDeadlines[id] = result.reportedDeadlines
-            } else if let history, result.reportedDeadlines != workflow.reportedDeadlines {
-                let remember = result.reportedDeadlines
+                demoReportedDeadlines[id] = remember
+            } else if let history, remember != workflow.reportedDeadlines {
                 await Task.detached(priority: .utility) { try? history.saveReportedDeadlines(remember, for: id) }.value
             }
             // nothing measured (the banner says so): a snapshot of zero devices would only drop the chart
@@ -404,6 +406,16 @@ final class DashboardModel {
         } catch {
             if connections.inUseKey == key { errors[id] = error.localizedDescription }
         }
+    }
+
+    /// What to remember of the devices’ reported deadlines after a refresh:
+    /// what it found, only when it is worth saving (`isWorthSaving`, the
+    /// history’s rule) and measured at least one device; otherwise what was
+    /// remembered before. A refresh of no devices at all (a scope group that
+    /// answers empty for a moment) would forget every remembered posting.
+    nonisolated static func reportedDeadlinesToKeep(updated: ReportedDeadlines, previous: ReportedDeadlines,
+                                                    counts: CategoryCounts) -> ReportedDeadlines {
+        counts.isWorthSaving && counts.total > 0 ? updated : previous
     }
 
     /// Apple’s release data, read at most once an hour per connection; nil
