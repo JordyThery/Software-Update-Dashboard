@@ -144,7 +144,7 @@ struct LateStepAndEdgeCaseTests {
         let status = Sample.status([("device.operating-system.version", "26.7.1"), ("softwareupdate.install-state", "installing")],
                                    time: "2026-11-05T06:00:00")
         let seconds = Sample.classify(Sample.iPad(lastContact: Sample.date("2026-11-05T06:00:10")), status)
-        #expect(seconds.diagnosis == "Installing, no contact since it started")
+        #expect(seconds.diagnosis.hasSuffix("; no contact since then (switched off, or stuck installing)"))
         let later = Sample.classify(Sample.iPad(lastContact: Sample.date("2026-11-05T06:31:00")), status)
         #expect(later.diagnosis.hasSuffix("for more than 4 hours; the device checks in but hasn’t reported a new status"))
     }

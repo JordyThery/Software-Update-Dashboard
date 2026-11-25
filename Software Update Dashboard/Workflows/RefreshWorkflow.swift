@@ -100,6 +100,9 @@ nonisolated struct RefreshResult: Sendable {
     /// What to remember of the devices’ reported deadlines after this
     /// refresh (`ReportedDeadlines`). Not kept in the history.
     var reportedDeadlines = ReportedDeadlines()
+    /// The devices’ status times line up with their last contact in UTC,
+    /// not in the connection’s server time zone (`ServerTimeZoneCheck`).
+    var serverTimeZoneLooksWrong = false
 
     /// Devices on a version the Blueprint’s update doesn’t cover yet.
     var notCoveredCount: Int { devices.filter { $0.notCoveredBy != nil }.count }
@@ -251,7 +254,9 @@ nonisolated struct RefreshWorkflow: Sendable {
                 TargetRules.newestRelease(catalog, device.isComputer ? .macOS : .iOS, model: device.modelIdentifier,
                                           boardID: device.boardID, knownOnly: true)?.version.description
             },
-            coverage: coverage, problems: problems, health: health, reportedDeadlines: remember)
+            coverage: coverage, problems: problems, health: health, reportedDeadlines: remember,
+            serverTimeZoneLooksWrong: ServerTimeZoneCheck.looksWrong(inputs.map { ($0.member.lastSeen, $0.status?.newestUpdate) },
+                                                                    zone: serverTimeZone))
     }
 
     /// Each of the Blueprint’s update declarations the devices list, read

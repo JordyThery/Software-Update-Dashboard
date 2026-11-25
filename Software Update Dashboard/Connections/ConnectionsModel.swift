@@ -116,6 +116,25 @@ final class ConnectionsModel {
         demoChoice.isActive ? TimeZone(identifier: "UTC") ?? .gmt : activeRecord?.timeZone ?? .gmt
     }
 
+    /// Server time zones a refresh in this session found looking wrong, per
+    /// saved connection: the setting it found it with (`ServerTimeZoneCheck`).
+    /// In memory only; the setting itself is never changed here.
+    private(set) var serverTimeZoneWarnings: [UUID: String] = [:]
+
+    /// After a refresh of the connection in use: remembers or forgets that
+    /// its server time zone looks wrong.
+    func noteServerTimeZone(looksWrong: Bool) {
+        guard !demoChoice.isActive, let record = activeRecord else { return }
+        serverTimeZoneWarnings[record.id] = looksWrong ? record.serverTimeZone : nil
+    }
+
+    /// What the Connections tab says for a connection: only while its
+    /// setting is still the one the refresh found looking wrong.
+    func serverTimeZoneWarning(for record: AppConnection) -> String? {
+        guard let zone = serverTimeZoneWarnings[record.id], zone == record.serverTimeZone else { return nil }
+        return ServerTimeZoneCheck.warning(zone: zone)
+    }
+
     /// The Jamf Pro web address of the connection in use, for Open in Jamf
     /// Pro; Demo Mode’s names no real server. Nil when none is set.
     var jamfProWebAddress: String? {

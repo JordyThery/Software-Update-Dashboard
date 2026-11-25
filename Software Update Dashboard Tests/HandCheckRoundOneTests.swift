@@ -254,7 +254,9 @@ struct OpenAndReadinessTests {
         #expect(devices.filter(ReadinessCheck.userEnrollment.applies).map(\.jamfID) == ["2"])
         #expect(devices.filter(ReadinessCheck.macNotSupervised.applies).map(\.jamfID) == ["4"])
         #expect(devices.filter(ReadinessCheck.noDeclarativeManagement.applies).map(\.jamfID) == ["3"])
-        #expect(devices.filter(ReadinessCheck.neverReported.applies).map(\.jamfID) == ["4"])
+        // the Mac is counted once, under its most basic reason (0.3.2): not supervised, not also never reported
+        #expect(devices.filter(ReadinessCheck.neverReported.applies).map(\.jamfID) == [])
+        #expect(ReadinessCheck.neverReported.fits(devices[3]))
         // without the enrollment in the inventory, nothing is guessed
         #expect(!ReadinessCheck.userEnrollment.applies(to: Sample.classify(Sample.iPad("6"), os)))
     }

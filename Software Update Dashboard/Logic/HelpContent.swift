@@ -52,11 +52,12 @@ nonisolated enum HelpContent {
 
     static let readiness = HelpTopic(id: "readiness", title: "Readiness", paragraphs: [
         "Readiness counts the devices an enforced software update can’t reach as they are. Each number opens those devices in the device list.",
+        "OS too old for update declarations: Apple’s update declaration starts at iOS and iPadOS 17 and macOS 14, so an older device can’t receive it. When Apple’s data gives its model a newer version, its diagnosis says so.",
+        "No declarative device management: the Blueprint can’t reach these devices.",
         "User Enrollment: iPhones and iPads enrolled this way. Apple allows the enforced update on supervised and device enrollments only.",
         "Macs not supervised: on macOS, Apple allows the enforced update on supervised Macs only.",
-        "No declarative device management: the Blueprint can’t reach these devices.",
         "Never reported: Jamf Pro has no status report of the device at all.",
-        "OS too old for update declarations: Apple’s update declaration starts at iOS and iPadOS 17 and macOS 14, so an older device can’t receive it. When Apple’s data gives its model a newer version, its diagnosis says so.",
+        "Each device counts once, under the first of these reasons that applies to it, in this order: an iPad on iPadOS 15 without declarative device management counts under OS too old only.",
     ])
 
     static let inspect = HelpTopic(id: "inspect", title: "Inspect", paragraphs: [
@@ -131,9 +132,12 @@ nonisolated enum HelpContent {
         case "User Enrollment", "Not supervised": "enrollment"
         case "Offline": "offline"
         case "Update error", "Earlier update error":
-            if detail.range(of: "Passcode|Keybag", options: .regularExpression) != nil { "passcode" }
+            if detail.range(of: "[Bb]ootstrap ?[Tt]oken", options: .regularExpression) != nil { "bootstrap-token" }
+            else if detail.range(of: "Passcode|Keybag", options: .regularExpression) != nil { "passcode" }
             else if detail.range(of: "[Bb]attery", options: .regularExpression) != nil { "battery" }
             else if detail.range(of: "[Dd]isk ?[Ss]pace|free space|[Ss]torage", options: .regularExpression) != nil { "storage" }
+            // an update asset Apple no longer has isn't its servers being unreachable
+            else if detail.contains("AssetReloadNotFound") { nil }
             else if likely, cause == "Update error", detail.range(of: connectionFailure, options: .regularExpression) != nil { "network-hosts" }
             else { nil }
         default: nil

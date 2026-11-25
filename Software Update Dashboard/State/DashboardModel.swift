@@ -367,6 +367,7 @@ final class DashboardModel {
                 Task { @MainActor in if self.refreshing.contains(id) { self.progress[id] = step } }
             }
             guard connections.inUseKey == key else { return }
+            if !isDemo { connections.noteServerTimeZone(looksWrong: result.serverTimeZoneLooksWrong) }
             if isDemo {
                 demoReportedDeadlines[id] = result.reportedDeadlines
             } else if let history, result.reportedDeadlines != workflow.reportedDeadlines {
