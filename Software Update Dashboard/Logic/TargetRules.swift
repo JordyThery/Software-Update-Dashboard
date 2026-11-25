@@ -13,6 +13,10 @@ nonisolated enum DeadlineSource: String, Sendable, Hashable, Codable {
     /// The posting date the Blueprint’s other devices report Jamf counted
     /// from (`PostingBasis.reported`) plus the delay.
     case otherDevices
+    /// The posting date the Blueprint’s devices reported Jamf counted from
+    /// in an earlier refresh, remembered while the version is the rule’s
+    /// target (`ReportedDeadlines`), plus the delay.
+    case rememberedFromDevices
     /// No public posting date found: the first release date plus the delay.
     case releaseDate
     /// The device reports it, but from before the Blueprint’s last change
@@ -25,6 +29,7 @@ nonisolated enum DeadlineSource: String, Sendable, Hashable, Codable {
         case .blueprint: "Set in the Blueprint"
         case .postingDate: "From Apple’s posting date"
         case .otherDevices: "As the Blueprint’s other devices report it"
+        case .rememberedFromDevices: "As the Blueprint’s devices reported it earlier"
         case .releaseDate: "From the release date, no posting date found"
         case .reportedBeforeChange: "Reported by the device before the Blueprint’s last change; may be out of date"
         case .reportedBeforePosting: "Reported by the device before Apple posted this version; may be out of date"
@@ -145,6 +150,13 @@ nonisolated struct DeviceTarget: Sendable, Hashable, Codable {
     /// date-time when the report gave no offset.
     var carriedDeadline: Date?
     var carriedDeadlineLocal: String?
+    /// A time the device reports for the rule’s version after the
+    /// Blueprint’s deadline passed, that isn’t that deadline: when it tries
+    /// to install next (a Mac sets one after a missed deadline). Shown, not
+    /// counted: the Blueprint’s deadline counts. A moment, or its local
+    /// date-time when the report gave no offset.
+    var nextInstallAttempt: Date?
+    var nextInstallAttemptLocal: String?
 
     var osVersion: OSVersion? { version.flatMap(OSVersion.init) }
 
@@ -173,9 +185,22 @@ nonisolated struct PostingBasis: Sendable, Hashable {
     /// it (`TargetRules.reportedPosting`), per platform and version: Jamf
     /// sends one declaration per Blueprint and version.
     var reported: [String: Date] = [:]
+    /// The same from earlier refreshes of this tracked Blueprint, per
+    /// platform and version, kept while the version is the rule’s target
+    /// (`ReportedDeadlines`): it keeps counting after the devices that
+    /// reported it have installed.
+    var rememberedReported: [String: Date] = [:]
+    /// The deadlines the Blueprint’s devices reported for a version from
+    /// one of its posting dates, as moments to the minute (minutes since
+    /// 1970), per platform and version: this refresh’s and those remembered.
+    /// A Mac’s earlier step is recognized by these only.
+    var reportedMinutes: [String: Set<Int>] = [:]
     /// The first public posting date this app saw, per platform, version
     /// and build (`FirstPostings`).
     var remembered: [String: Date] = [:]
+
+    /// A moment to the minute, as `reportedMinutes` keeps it.
+    static func minute(_ date: Date) -> Int { Int((date.timeIntervalSince1970 / 60).rounded(.down)) }
 
     static func key(_ platform: AppleReleases.Platform, _ version: OSVersion) -> String {
         "\(platform.rawValue)|\(version)"
@@ -348,11 +373,14 @@ nonisolated enum TargetRules {
     /// the first release date either way. A later re-dating of a build that
     /// was already public doesn’t move the deadline: the posting date the
     /// Blueprint’s devices report Jamf counted from comes first, then the
-    /// first public posting date this app saw of the build, and only then
-    /// Apple’s public posting date of today.
+    /// one they reported in an earlier refresh, then the first public
+    /// posting date this app saw of the build, and only then Apple’s public
+    /// posting date of today.
     static func basis(_ release: AppleReleases.Release, _ catalog: AppleReleases.Catalog, model: String?,
                       boardID: String?, known: PostingBasis = PostingBasis()) -> (date: Date, source: DeadlineSource)? {
-        if let reported = known.reported[PostingBasis.key(release.platform, release.version)] { return (reported, .otherDevices) }
+        let key = PostingBasis.key(release.platform, release.version)
+        if let reported = known.reported[key] { return (reported, .otherDevices) }
+        if let earlier = known.rememberedReported[key] { return (earlier, .rememberedFromDevices) }
         let posting = catalog.publicPosting(of: release, model: model, boardID: boardID)
         if let posting, posting.date != nil,
            let first = known.remembered[PostingBasis.key(release.platform, release.version, build: posting.build)] { return (first, .postingDate) }
@@ -380,36 +408,83 @@ nonisolated enum TargetRules {
     /// A local date-time a device reports for its pending update’s
     /// deadline, without an offset (`2026-11-16T23:59:00`); nil otherwise.
     static func reportedLocal(_ text: String?) -> String? {
+        if let twelve = twelveHour(text), twelve.offset == nil { return twelve.local }
         guard let local = text?.replacingOccurrences(of: " ", with: "T"),
               local.range(of: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$", options: .regularExpression) != nil else { return nil }
         return local
     }
 
+    /// The deadline a device reports as a moment, with the offset it was
+    /// written with: as JTKit reads it (`2026-11-23 22:59:11 +0000`), or
+    /// written with a 12-hour clock (`2026-11-23 10:59:11 PM +0000`, a
+    /// narrow no-break space before PM, seen on a Mac). Nil for a local
+    /// time without an offset.
+    static func reportedMoment(_ pending: JamfPro.SoftwareUpdateStatus.PendingVersion?) -> (date: Date, offset: Int)? {
+        guard let pending else { return nil }
+        if let date = pending.targetDate, let offset = pending.targetOffset { return (date, offset) }
+        guard let twelve = twelveHour(pending.targetLocalDateTime), let offset = twelve.offset else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: offset)
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return formatter.date(from: twelve.local).map { ($0, offset) }
+    }
+
+    /// A date-time written with a 12-hour clock and AM or PM, with or
+    /// without an offset: as a 24-hour local date-time (`2026-11-23T22:59:11`)
+    /// and the offset in seconds. Any space before AM or PM counts, also a
+    /// (narrow) no-break space. Nil for anything else.
+    static func twelveHour(_ text: String?) -> (local: String, offset: Int?)? {
+        guard let text else { return nil }
+        let spaced = String(text.unicodeScalars.map { CharacterSet.whitespaces.contains($0) ? " " : Character($0) })
+            .trimmingCharacters(in: .whitespaces)
+        guard let match = spaced.firstMatch(of: /^(\d{4}-\d{2}-\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))? *([AaPp])[Mm] *(Z|[+-]\d{2}:?\d{2})?$/),
+              let hour = Int(match.output.2), (1...12).contains(hour) else { return nil }
+        let pm = match.output.5.lowercased() == "p"
+        // 12 AM is midnight, 12 PM noon
+        let clock = hour % 12 + (pm ? 12 : 0)
+        let local = String(format: "%@T%02d:%@:%@", String(match.output.1), clock, String(match.output.3),
+                           match.output.4.map(String.init) ?? "00")
+        guard let zone = match.output.6.map(String.init) else { return (local, nil) }
+        if zone == "Z" { return (local, 0) }
+        let digits = zone.dropFirst().filter(\.isNumber)
+        guard digits.count == 4, let hours = Int(digits.prefix(2)), let minutes = Int(digits.suffix(2)) else { return nil }
+        return (local, (hours * 3_600 + minutes * 60) * (zone.hasPrefix("-") ? -1 : 1))
+    }
+
+    /// Whether the device names a declaration as the reason it installs.
+    static func fromDeclaration(_ status: JamfPro.SoftwareUpdateStatus) -> Bool {
+        status.installReasons.contains { $0.caseInsensitiveCompare("declaration") == .orderedSame }
+    }
+
     /// The posting date Jamf counted this device’s deadline from: the device
-    /// reports the rule’s own version pending from a declaration, after the
-    /// update started and the Blueprint’s last change, with a deadline that
-    /// is the rule’s counted from exactly one of that version’s posting
-    /// dates (any build, public or not). Nil otherwise. Jamf’s deadline for
-    /// a version is the same for every device of the Blueprint, so this is
-    /// the Blueprint’s for devices that haven’t reported it.
+    /// reports the rule’s own version pending, after the update started and
+    /// the Blueprint’s last change, with a deadline that is the rule’s
+    /// counted from exactly one of that version’s posting dates (any build,
+    /// public or not). Nil otherwise. Whatever its install reason says
+    /// (`declaration`, empty, `notification`, `install-tonight`): only a
+    /// declaration sets such a deadline. Jamf’s deadline for a version is
+    /// the same for every device of the Blueprint, so this is the
+    /// Blueprint’s for devices that haven’t reported it. `moment`: the
+    /// reported deadline as a moment, when it was written with an offset.
     static func reportedPosting(_ rule: DeviceTarget, status: JamfPro.SoftwareUpdateStatus?, block: JamfPlatform.SoftwareUpdateBlock?,
                                 catalog: AppleReleases.Catalog?, platform: AppleReleases.Platform, serverTimeZone: TimeZone,
-                                blueprintChanged: Date? = nil, timeZone: String? = nil) -> Date? {
+                                blueprintChanged: Date? = nil, timeZone: String? = nil) -> (posted: Date, moment: Date?)? {
         guard !rule.namedByBlueprint, rule.unknown == nil, let version = rule.osVersion,
               let status, let pending = status.pendingVersion, pending.osVersion.flatMap(OSVersion.init) == version,
-              status.installReasons.contains(where: { $0.caseInsensitiveCompare("declaration") == .orderedSame }),
               let reported = pending.updated.flatMap({ JamfPro.serverDate($0, timeZone: serverTimeZone) }) else { return nil }
         if let start = rule.activityFrom, reported < start { return nil }
         if let blueprintChanged, reported <= blueprintChanged { return nil }
         let local = reportedLocal(pending.targetLocalDateTime)
-        guard pending.targetDate != nil || local != nil else { return nil }
+        let moment = reportedMoment(pending)?.date
+        guard moment != nil || local != nil else { return nil }
         let matching = postingDeadlines(for: version, build: nil, block: block, catalog: catalog, platform: platform).filter { candidate in
-            sameDeadline(reported: pending.targetDate, reportedLocal: local, expected: candidate.deadline)
-                && sameClock(reported: pending.targetDate, reportedLocal: local, expected: candidate.deadline, timeZone: timeZone)
+            sameDeadline(reported: moment, reportedLocal: local, expected: candidate.deadline)
+                && sameClock(reported: moment, reportedLocal: local, expected: candidate.deadline, timeZone: timeZone)
         }
         // two postings that give the same deadline are one; two deadlines can't be told apart
-        guard Set(matching.map(\.deadline)).count == 1 else { return nil }
-        return matching.first?.posted
+        guard Set(matching.map(\.deadline)).count == 1, let posted = matching.first?.posted else { return nil }
+        return (posted, moment)
     }
 
     /// The posting date the Blueprint’s devices report Jamf counted from,
@@ -441,7 +516,11 @@ nonisolated enum TargetRules {
     /// target: what Jamf actually sent it. Used when the install reason
     /// includes `declaration`, the version is newer than what the device
     /// runs, and the report is from after the update started; otherwise
-    /// the rule’s target stands. When the two differ, both are kept.
+    /// the rule’s target stands. When the two differ, both are kept. The
+    /// rule’s own version also counts whatever the install reason says
+    /// (empty, `notification`, `install-tonight`) when it comes with a
+    /// deadline: the rule’s from one of its posting dates (only a
+    /// declaration sets one), or the device’s next install attempt.
     ///
     /// `earlierStepDeadline` gives this Blueprint’s own deadline for a
     /// version (`ruleDeadline`): a pending version older than the rule’s,
@@ -459,12 +538,25 @@ nonisolated enum TargetRules {
     /// have given the version while it was the rule’s target (`ruleWindow`):
     /// the one from Apple’s own posting date when its list still has it,
     /// else one per day of the window. A reported deadline that is one of
-    /// them at the Blueprint’s time of day is the step’s too: the full clock
-    /// time when the device’s zone is known (iPads, iPhones); for a Mac,
-    /// which writes its deadline in UTC, only the minutes can be checked.
-    /// `awaitingSync` (the Blueprint’s update declaration for the device’s
-    /// own OS says awaiting sync) supports it: with it, a version the rule
-    /// targeted in that window is the step whatever the deadline reads.
+    /// them at the Blueprint’s time of day is the step’s too, by the full
+    /// clock time in the device’s zone (iPads, iPhones). `awaitingSync` (the
+    /// Blueprint’s update declaration for the device’s own OS says awaiting
+    /// sync) supports it: with it, a version the rule targeted in that
+    /// window is the step whatever the deadline reads.
+    ///
+    /// A Mac writes its deadline in UTC, whatever its zone, so its day and
+    /// clock can’t be checked against the Blueprint’s local time: a Mac’s
+    /// older version is the step only when its deadline is, to the minute,
+    /// one the Blueprint’s own devices reported for that version
+    /// (`PostingBasis.reportedMinutes`), or one they reported for the
+    /// rule’s version (Jamf moved the declaration on); otherwise it is
+    /// another pending version.
+    ///
+    /// A time reported for the rule’s version after the Blueprint’s
+    /// deadline passed, that isn’t the rule’s deadline from any of the
+    /// version’s posting dates, is the device’s next install attempt (a Mac
+    /// that missed the deadline sets one): the Blueprint’s deadline stays,
+    /// so the device stays past it, and the time is kept to show.
     static func fromDevice(_ rule: DeviceTarget, status: JamfPro.SoftwareUpdateStatus?, os: String?, osName: String,
                            catalog: AppleReleases.Catalog?, platform: AppleReleases.Platform, serverTimeZone: TimeZone,
                            model: String? = nil, boardID: String? = nil, blueprintChanged: Date? = nil,
@@ -473,13 +565,17 @@ nonisolated enum TargetRules {
                            postingDeadlines: ((OSVersion, String?) -> [String])? = nil, known: PostingBasis = PostingBasis(),
                            timeZone: String? = nil, now: Date = Date()) -> DeviceTarget {
         guard let status, let pending = status.pendingVersion, let version = pending.osVersion.flatMap(OSVersion.init),
-              status.installReasons.contains(where: { $0.caseInsensitiveCompare("declaration") == .orderedSame }),
               let current = os.flatMap(OSVersion.init), version > current else { return rule }
+        // the deadline as the device reports it: a moment with its offset, or a local date-time
+        let moment = reportedMoment(pending)
+        let reportedLocal = Self.reportedLocal(pending.targetLocalDateTime)
+        let isRuleVersion = rule.version.flatMap(OSVersion.init) == version
+        let declared = fromDeclaration(status)
+        // without “declaration” only the rule's own version, and only with a deadline to read
+        guard declared || (isRuleVersion && (moment != nil || reportedLocal != nil)) else { return rule }
         // a version the Blueprint names itself is what Jamf sent: a lower
         // pending version is a step on the way there (an intermediate update)
         if rule.namedByBlueprint, let named = rule.osVersion, version < named { return rule }
-        // a local date-time the device reports, without an offset
-        let reportedLocal = Self.reportedLocal(pending.targetLocalDateTime)
         // a pending version from a report older than the update's start says
         // nothing about this update: neither its target nor its deadline
         if let start = rule.activityFrom {
@@ -487,35 +583,43 @@ nonisolated enum TargetRules {
                 return rule
             }
         }
+        func matches(_ expected: String) -> Bool {
+            sameDeadline(reported: moment?.date, reportedLocal: reportedLocal, expected: expected)
+                && sameClock(reported: moment?.date, reportedLocal: reportedLocal, expected: expected, timeZone: timeZone)
+        }
+        // a Mac's deadline, to the minute, is one the Blueprint's own devices reported for `step`
+        let isMac = platform == .macOS
+        func reportedByBlueprint(_ step: OSVersion) -> Bool {
+            guard let moment else { return false }
+            return known.reportedMinutes[PostingBasis.key(platform, step)]?.contains(PostingBasis.minute(moment.date)) == true
+        }
         // the other way round: Jamf already sent the rule's version, with its deadline,
         // and the device still reports this older version of the same major pending;
         // only when Apple's data lists the rule's version for this device
+        // (for a Mac: a deadline the Blueprint's devices reported for the rule's version, to the minute)
         func movedOn() -> Bool {
             guard let ruleVersion = rule.osVersion, ruleVersion.major == version.major, let ruleDue = rule.deadlineLocal,
                   let catalog, let ruleRelease = catalog.release(ruleVersion, platform),
                   catalog.supports(release: ruleRelease, model: model, boardID: boardID) == true else { return false }
-            return sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: ruleDue)
-                && sameClock(reported: pending.targetDate, reportedLocal: reportedLocal, expected: ruleDue, timeZone: timeZone)
+            return isMac ? reportedByBlueprint(ruleVersion) : matches(ruleDue)
         }
         // this Blueprint's earlier step: sent before Apple posted the newer
         // version its rule now gives, recognized by the deadline it came with
         func isEarlierStep() -> Bool {
+            if isMac { return reportedByBlueprint(version) || movedOn() }
             if let expected = earlierStepDeadline?(version),
-               sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected) { return true }
+               sameDeadline(reported: moment?.date, reportedLocal: reportedLocal, expected: expected) { return true }
             let window = earlierStepWindow?(version) ?? []
-            if window.contains(where: { expected in
-                sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected)
-                    && sameClock(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected, timeZone: timeZone)
-            }) { return true }
+            if window.contains(where: matches) { return true }
             return awaitingSync && !window.isEmpty || movedOn()
         }
         if !rule.namedByBlueprint, let ruleVersion = rule.osVersion, version < ruleVersion, isEarlierStep() {
             // its own deadline as a moment: reported, or its local time in the device's zone (this Mac's for a Mac)
-            let due = pending.targetDate ?? deadlineDate(reportedLocal, timeZone: timeZone ?? TimeZone.current.identifier)
+            let due = moment?.date ?? deadlineDate(reportedLocal, timeZone: timeZone ?? TimeZone.current.identifier)
             var target = rule
             target.earlierStepVersion = version.description
-            target.earlierStepDeadline = pending.targetDate
-            target.earlierStepLocal = pending.targetDate == nil ? reportedLocal : nil
+            target.earlierStepDeadline = moment?.date
+            target.earlierStepLocal = moment == nil ? reportedLocal : nil
             target.earlierStepLapsed = status.installState != .installing
                 && due.map { now >= $0.addingTimeInterval(installGrace) } == true
             return target
@@ -526,13 +630,12 @@ nonisolated enum TargetRules {
                                   reason: "Jamf sent \(osName) \(version): the device reports it pending from a declaration",
                                   startSetByHand: rule.startSetByHand)
         target.fromDevice = true
-        // the deadline as the device reports it: a moment with its offset,
-        // or a local date-time; false when it reports none that reads
+        // the deadline as the device reports it; false when it reports none that reads
         func takeReported() -> Bool {
-            if let moment = pending.targetDate, let offset = pending.targetOffset {
-                target.deadlineDate = moment
-                target.deadlineOffset = offset
-                target.deadlineLocal = localText(moment, offset: offset)
+            if let moment {
+                target.deadlineDate = moment.date
+                target.deadlineOffset = moment.offset
+                target.deadlineLocal = localText(moment.date, offset: moment.offset)
             } else if let local = reportedLocal {
                 target.deadlineLocal = local
             } else {
@@ -547,7 +650,6 @@ nonisolated enum TargetRules {
         // Apple's posting of the version its deadline counts from (`basis`).
         // Only for the rule's own version: one from another declaration
         // isn't changed by this Blueprint.
-        let isRuleVersion = rule.version.flatMap(OSVersion.init) == version
         let followsApple = !rule.namedByBlueprint && rule.version != nil
         let posted = followsApple ? release.flatMap { release in
             catalog.flatMap { basis(release, $0, model: model, boardID: boardID, known: known) }.flatMap { $0.source != .releaseDate ? $0.date : nil }
@@ -555,11 +657,19 @@ nonisolated enum TargetRules {
         let reportedAt = pending.updated.flatMap { JamfPro.serverDate($0, timeZone: serverTimeZone) }
         // the rule's deadline counted from any posting date of this version and build:
         // Jamf sent it, whatever Apple re-dated since
-        let fromPosting = isRuleVersion && followsApple && (postingDeadlines?(version, pending.buildVersion ?? rule.build) ?? [])
-            .contains { expected in
-                sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected)
-                    && sameClock(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected, timeZone: timeZone)
-            }
+        let fromPosting = isRuleVersion && followsApple
+            && (postingDeadlines?(version, pending.buildVersion ?? rule.build) ?? []).contains(where: matches)
+        // the rule's version, reported after the Blueprint's deadline with another time:
+        // the device's next install attempt (a Mac's zone is this Mac's, as for its deadline)
+        let nextAttempt: Bool = {
+            guard isRuleVersion, !fromPosting, let ruleDue = rule.deadlineLocal, moment != nil || reportedLocal != nil,
+                  !matches(ruleDue),
+                  let due = deadlineDate(ruleDue, timeZone: timeZone ?? TimeZone.current.identifier),
+                  let reportedAt else { return false }
+            return reportedAt > due
+        }()
+        // another reason than a declaration: only Jamf's deadline or a next attempt says this update sent it
+        if !declared && !fromPosting && !nextAttempt { return rule }
         let changes: [(date: Date, reason: StaleReason)] = isRuleVersion
             ? [blueprintChanged.map { ($0, .blueprintChanged) }, fromPosting ? nil : posted.map { ($0, .posted) }].compactMap { $0 } : []
         let missed = changes.filter { change in reportedAt.map { $0 <= change.date } ?? true }.max { $0.date < $1.date }
@@ -568,12 +678,8 @@ nonisolated enum TargetRules {
         // the step's deadline when it moved the declaration on
         func carriedStep() -> OSVersion? {
             guard isRuleVersion, followsApple, !fromPosting, let ruleDue = rule.deadlineLocal, let catalog,
-                  pending.targetDate != nil || reportedLocal != nil,
-                  !sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: ruleDue) else { return nil }
-            func matches(_ expected: String) -> Bool {
-                sameDeadline(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected)
-                    && sameClock(reported: pending.targetDate, reportedLocal: reportedLocal, expected: expected, timeZone: timeZone)
-            }
+                  moment != nil || reportedLocal != nil,
+                  !sameDeadline(reported: moment?.date, reportedLocal: reportedLocal, expected: ruleDue) else { return nil }
             let earlier = catalog.releases
                 .filter { $0.platform == platform && $0.version.extra == nil && $0.version.major == version.major && $0.version < version }
                 .map(\.version).sorted(by: >)
@@ -585,8 +691,13 @@ nonisolated enum TargetRules {
             target.deadlineLocal = rule.deadlineLocal
             target.deadlineSource = rule.deadlineSource
             target.carriedStepVersion = step.description
-            target.carriedDeadline = pending.targetDate
-            target.carriedDeadlineLocal = pending.targetDate == nil ? reportedLocal : nil
+            target.carriedDeadline = moment?.date
+            target.carriedDeadlineLocal = moment == nil ? reportedLocal : nil
+        } else if nextAttempt {
+            target.deadlineLocal = rule.deadlineLocal
+            target.deadlineSource = rule.deadlineSource
+            target.nextInstallAttempt = moment?.date
+            target.nextInstallAttemptLocal = moment == nil ? reportedLocal : nil
         } else if let missed {
             if rule.deadlineLocal == nil {
                 // the rule gives no deadline of its own: keep the reported
@@ -595,11 +706,11 @@ nonisolated enum TargetRules {
             } else {
                 target.deadlineLocal = rule.deadlineLocal
                 target.deadlineSource = rule.deadlineSource
-                let staleLocal = pending.targetDate == nil ? reportedLocal : nil
-                let staleDay = pending.targetDate.map { $0.formatted(.iso8601.year().month().day()) } ?? staleLocal.map { String($0.prefix(10)) }
+                let staleLocal = moment == nil ? reportedLocal : nil
+                let staleDay = moment.map { $0.date.formatted(.iso8601.year().month().day()) } ?? staleLocal.map { String($0.prefix(10)) }
                 // the same day as the rule's deadline: nothing to point out
                 if let staleDay, staleDay != rule.deadlineLocal.map({ String($0.prefix(10)) }) {
-                    target.staleReportedDeadline = pending.targetDate
+                    target.staleReportedDeadline = moment?.date
                     target.staleReportedLocal = staleLocal
                     target.staleSince = missed.date
                     target.staleReason = missed.reason

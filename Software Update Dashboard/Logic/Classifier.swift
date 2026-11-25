@@ -146,6 +146,9 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
     var carriedStepVersion: String?
     var carriedDeadline: Date?
     var carriedDeadlineLocal: String?
+    /// The device’s next install attempt after a missed deadline: shown, not counted (`DeviceTarget`).
+    var nextInstallAttempt: Date?
+    var nextInstallAttemptLocal: String?
     /// A Rapid Security Response the device runs (`(a)`), and its build.
     var rapidSecurityResponse: String?
     var supplementalBuild: String?
@@ -229,6 +232,8 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
         case carriedStepVersion
         case carriedDeadline
         case carriedDeadlineLocal
+        case nextInstallAttempt
+        case nextInstallAttemptLocal
         case rapidSecurityResponse
         case supplementalBuild
         case betaEnrollment
@@ -277,7 +282,7 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
                              "target", "deadline", "deadline_source", "past_deadline", "install_state", "pending_version", "category",
                              "diagnosis", "error", "error_time", "error_since_update", "passcode_present", "last_contact",
                              "status_updated", "time_zone", "rapid_security_response", "beta_enrollment", "install_reason",
-                             "failure_count", "filevault", "battery_health"]
+                             "failure_count", "filevault", "battery_health", "next_install_attempt"]
 
     var csvLine: String {
         func date(_ value: Date?) -> String { value.map { $0.formatted(.iso8601) } ?? "" }
@@ -290,7 +295,8 @@ nonisolated struct DeviceStatus: Sendable, Hashable, Identifiable, Codable {
                          pendingVersion ?? "", category.rawValue, diagnosis, error, errorTime ?? "", flag(errorSinceUpdate),
                          passcodePresent.map { $0 ? "true" : "false" } ?? "", date(lastContact), date(statusUpdated),
                          timeZone ?? "", rapidSecurityResponse ?? "", betaEnrollment ?? "", installReason ?? "",
-                         failureCount.map(String.init) ?? "", fileVault ?? "", batteryHealth ?? ""])
+                         failureCount.map(String.init) ?? "", fileVault ?? "", batteryHealth ?? "",
+                         nextInstallAttempt.map(date) ?? nextInstallAttemptLocal ?? ""])
     }
 }
 
@@ -447,6 +453,8 @@ nonisolated enum Classifier {
         status.carriedStepVersion = target.carriedStepVersion
         status.carriedDeadline = target.carriedDeadline
         status.carriedDeadlineLocal = target.carriedDeadlineLocal
+        status.nextInstallAttempt = target.nextInstallAttempt
+        status.nextInstallAttemptLocal = target.nextInstallAttemptLocal
         if let step = target.earlierStepVersion, status.category == .otherUpdate,
            let range = status.diagnosis.range(of: " (intermediate version \(step))") {
             // the intermediate version is this Blueprint's own earlier step

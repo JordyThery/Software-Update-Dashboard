@@ -252,6 +252,12 @@ struct DeviceDetailView: View {
                     if let source = device.deadlineSource { Text(source).foregroundStyle(.secondary) }
                     if device.pastDeadline == true { WarningLabel("Past the deadline") }
                 }
+                // a time the device set itself after missing the deadline: shown, not counted
+                if let attempt = DeadlineZones.text(local: device.nextInstallAttemptLocal, reported: device.nextInstallAttempt) {
+                    LabeledContent("Next install attempt", value: attempt)
+                    Text("Set by the device after the deadline passed. Not counted: the Blueprint’s deadline counts")
+                        .foregroundStyle(.secondary)
+                }
                 // a deadline the device reported earlier, not used: shown also when the rule has none
                 if let reason = device.staleReason,
                    let text = DeadlineZones.text(local: device.staleReportedLocal, reported: device.staleReportedDeadline) {

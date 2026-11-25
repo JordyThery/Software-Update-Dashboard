@@ -97,6 +97,9 @@ nonisolated struct RefreshResult: Sendable {
     /// How the Blueprint’s declarations stand across its devices; nil when
     /// they couldn’t be read. Not kept in the history.
     var health: BlueprintHealth?
+    /// What to remember of the devices’ reported deadlines after this
+    /// refresh (`ReportedDeadlines`). Not kept in the history.
+    var reportedDeadlines = ReportedDeadlines()
 
     /// Devices on a version the Blueprint’s update doesn’t cover yet.
     var notCoveredCount: Int { devices.filter { $0.notCoveredBy != nil }.count }
@@ -135,6 +138,13 @@ nonisolated struct RefreshWorkflow: Sendable {
     let serverTimeZone: TimeZone
     /// The first public posting date this app saw of each build (`FirstPostings`).
     var firstPosted: [String: Date] = [:]
+    /// What earlier refreshes of the tracked Blueprint remembered of its
+    /// devices’ reported deadlines (`ReportedDeadlines`).
+    var reportedDeadlines = ReportedDeadlines()
+    /// Demo Mode: a Blueprint with nothing remembered starts as if earlier
+    /// refreshes had seen its Macs report Jamf’s deadline for every version
+    /// (`demoReportedDeadlines`), as its history starts with made-up days.
+    var seedsDemoDeadlines = false
     var staleDays = 30
     /// Status reports read at the same time.
     var parallel = 4
@@ -182,7 +192,7 @@ nonisolated struct RefreshWorkflow: Sendable {
         }
         let tied = BlueprintHealth.byDevice(declarations.reports, deviceIDs: deviceIDs)
         let current = BlueprintHealth.catalogue(declarations.reports, blocks: blocks, blueprintName: blueprint.overview.name)
-        let known = postingBasis(inputs, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now)
+        let (known, remember) = deadlineBasis(inputs, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now)
         var devices = inputs.map { input in
             let osName = Classifier.osName(isComputer: input.member.kind == .computer,
                                            modelIdentifier: input.member.modelIdentifier ?? input.status?.modelIdentifier ?? "")
@@ -241,7 +251,7 @@ nonisolated struct RefreshWorkflow: Sendable {
                 TargetRules.newestRelease(catalog, device.isComputer ? .macOS : .iOS, model: device.modelIdentifier,
                                           boardID: device.boardID, knownOnly: true)?.version.description
             },
-            coverage: coverage, problems: problems, health: health)
+            coverage: coverage, problems: problems, health: health, reportedDeadlines: remember)
     }
 
     /// Each of the Blueprint’s update declarations the devices list, read
@@ -303,18 +313,53 @@ nonisolated struct RefreshWorkflow: Sendable {
     /// date the devices’ own reports say Jamf counted from (`TargetRules.reportedPosting`).
     func postingBasis(_ inputs: [DeviceInput], blocks: [JamfPlatform.SoftwareUpdateBlock], blueprint: JamfPlatform.BlueprintDetail,
                       tracked: TrackedBlueprint, now: Date) -> PostingBasis {
+        deadlineBasis(inputs, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now).known
+    }
+
+    /// The same, with what earlier refreshes of this Blueprint remembered
+    /// (`reportedDeadlines`), and what to remember after this one: the
+    /// posting dates its devices report now replace those remembered, which
+    /// stay while their version is a rule’s target.
+    func deadlineBasis(_ inputs: [DeviceInput], blocks: [JamfPlatform.SoftwareUpdateBlock], blueprint: JamfPlatform.BlueprintDetail,
+                       tracked: TrackedBlueprint, now: Date) -> (known: PostingBasis, remember: ReportedDeadlines) {
         var known = PostingBasis(remembered: firstPosted)
+        var targets = Set<String>()
+        var minutes: [String: Set<Int>] = [:]
         let reports = inputs.compactMap { input -> (platform: AppleReleases.Platform, version: OSVersion, posted: Date)? in
             let device = rule(input, blocks: blocks, blueprint: blueprint, tracked: tracked, now: now, known: known)
-            guard let version = device.rule.osVersion,
-                  let posted = TargetRules.reportedPosting(device.rule, status: input.status, block: device.block, catalog: catalog,
-                                                           platform: device.platform, serverTimeZone: serverTimeZone,
-                                                           blueprintChanged: blueprint.overview.updatedDate,
-                                                           timeZone: input.member.timeZone) else { return nil }
-            return (device.platform, version, posted)
+            guard let version = device.rule.osVersion else { return nil }
+            if !device.rule.namedByBlueprint && device.rule.unknown == nil { targets.insert(PostingBasis.key(device.platform, version)) }
+            guard let found = TargetRules.reportedPosting(device.rule, status: input.status, block: device.block, catalog: catalog,
+                                                          platform: device.platform, serverTimeZone: serverTimeZone,
+                                                          blueprintChanged: blueprint.overview.updatedDate,
+                                                          timeZone: input.member.timeZone) else { return nil }
+            if let moment = found.moment { minutes[PostingBasis.key(device.platform, version), default: []].insert(PostingBasis.minute(moment)) }
+            return (device.platform, version, found.posted)
         }
         known.reported = TargetRules.reportedPostings(reports)
-        return known
+        let reportedDeadlines = seedsDemoDeadlines && self.reportedDeadlines.isEmpty
+            ? demoReportedDeadlines(blocks: blocks, now: now) : self.reportedDeadlines
+        let earlier = reportedDeadlines.basis(targets: targets, blueprintChanged: blueprint.overview.updatedDate)
+        known.rememberedReported = earlier.postings
+        known.reportedMinutes = earlier.minutes.merging(minutes) { $0.union($1) }
+        let remember = reportedDeadlines.updated(reported: known.reported, moments: minutes, targets: targets,
+                                                 blueprintChanged: blueprint.overview.updatedDate, now: now)
+        return (known, remember)
+    }
+
+    /// Demo Mode’s made-up earlier refreshes: Jamf’s deadline for every
+    /// macOS version Apple’s data lists, as the rule counts it, written as a
+    /// moment in UTC at the Blueprint’s time (as JTKit’s demo Macs write it).
+    func demoReportedDeadlines(blocks: [JamfPlatform.SoftwareUpdateBlock], now: Date) -> ReportedDeadlines {
+        var seeded = ReportedDeadlines()
+        guard let catalog, let block = Self.block(for: "macOS", in: blocks) else { return seeded }
+        for release in catalog.releases where release.platform == .macOS && release.version.extra == nil {
+            guard let local = TargetRules.ruleDeadline(for: release.version, block: block, catalog: catalog, platform: .macOS,
+                                                       model: nil, boardID: nil),
+                  let moment = JamfPlatform.SoftwareUpdateBlock.deadline(local, in: .gmt) else { continue }
+            seeded.moments[PostingBasis.key(.macOS, release.version)] = [.init(minute: PostingBasis.minute(moment), seen: now)]
+        }
+        return seeded
     }
 
     /// The Blueprint’s rule for one device, and what it was read with.

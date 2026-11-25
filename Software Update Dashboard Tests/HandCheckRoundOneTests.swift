@@ -38,7 +38,7 @@ struct CarriedDeadlineTests {
                        ("softwareupdate.install-reason.reason", "declaration")], time: "2026-11-10T08:06:50")
     }
 
-    static func target(_ status: JamfPro.SoftwareUpdateStatus, os: String = "27.2") -> DeviceTarget {
+    static func target(_ status: JamfPro.SoftwareUpdateStatus, os: String = "27.2", known: PostingBasis = PostingBasis()) -> DeviceTarget {
         let rule = TargetRules.target(os: os, model: "iMac21,2", boardID: "J457AP", osName: "macOS", context: .init(
             block: block, catalog: catalog, platform: .macOS, blueprintChanged: Sample.date("2026-04-28T12:25:44"),
             updateStarted: nil, now: now))
@@ -49,7 +49,7 @@ struct CarriedDeadlineTests {
                                                             model: "iMac21,2", boardID: "J457AP") },
             earlierStepWindow: { TargetRules.ruleWindow(for: $0, block: block, catalog: catalog, platform: .macOS,
                                                         model: "iMac21,2", boardID: "J457AP", now: now) },
-            now: now)
+            known: known, now: now)
     }
 
     @Test("27.2.1 pending with 27.2’s deadline (2 Nov): the Blueprint’s deadline counts, the kept one is labeled")
@@ -90,7 +90,9 @@ struct CarriedDeadlineTests {
     @Test("27.2 pending, due 12 Nov from another build’s 5 Nov posting: this Blueprint’s earlier step")
     func stepFromAnotherBuildsPosting() throws {
         let status = Self.status(os: "27.1", pending: "27.2", deadline: "2026-11-12 22:59:06 +0000")
-        let target = Self.target(status, os: "27.1")
+        // a Mac: the Blueprint's devices reported this deadline for 27.2 while it was the target
+        let target = Self.target(status, os: "27.1", known: PostingBasis(reportedMinutes: [
+            PostingBasis.key(.macOS, try #require(OSVersion("27.2"))): [PostingBasis.minute(Sample.date("2026-11-12T22:59:00"))]]))
         #expect(target.version == "27.2.1" && !target.fromDevice)
         #expect(target.earlierStepVersion == "27.2")
         // one deadline per posting date Apple's list still has: this Mac's build's and the other's
