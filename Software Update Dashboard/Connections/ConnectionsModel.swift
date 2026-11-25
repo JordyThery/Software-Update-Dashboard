@@ -182,7 +182,7 @@ final class ConnectionsModel {
             let recorder = RequestRecorder(session: source.session, log: activityLog, service: connection.service.displayName,
                                            connection: connection.name, waits: waits)
             return try JamfPlatform.Client(connection: source.connection, secret: source.secret, recorder: recorder,
-                                           permits: Self.permits)
+                                           permits: Self.permits, maxConcurrent: Self.maxConcurrent, rateLimit: Self.rateLimit)
         }
         guard let record = activeRecord else { return nil }
         return try client(for: record, typedSecret: nil)
@@ -205,12 +205,18 @@ final class ConnectionsModel {
     /// GET and HEAD only: the app never changes anything in Jamf.
     nonisolated static let permits: @Sendable (HTTPRequest) -> Bool = { $0.isRead }
 
+    /// The Platform API’s limits for this app: 16 requests at a time (a refresh
+    /// reads a Blueprint’s declaration report pages at once, within this) and
+    /// 100 a second.
+    nonisolated static let maxConcurrent = 16
+    nonisolated static let rateLimit = RateLimit(requests: 100, per: 1, explanation: "The Jamf Platform API allows about 100 requests a second")
+
     private func client(for record: AppConnection, typedSecret: String?) throws -> JamfPlatform.Client {
         let secret = try typedSecret ?? saved.requiredSecret(for: record.connection)
         let recorder = RequestRecorder(session: session, log: activityLog, service: record.connection.service.displayName,
                                        connection: record.connection.name, waits: waits)
         return try JamfPlatform.Client(connection: record.connection, secret: { secret }, recorder: recorder,
-                                       permits: Self.permits)
+                                       permits: Self.permits, maxConcurrent: Self.maxConcurrent, rateLimit: Self.rateLimit)
     }
 
     // MARK: Settings

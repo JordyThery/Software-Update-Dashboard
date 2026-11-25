@@ -213,10 +213,11 @@ struct DemoFeatureTests {
         #expect(byName["Studio Mac 05"]?.fileVault == "UNENCRYPTED")
         #expect(byName["Studio Mac 02"]?.installReason == "declaration")
         #expect(byName["Studio Mac 02"]?.bootstrapToken == "NOT_ESCROWED")
-        // requests: the Platform device list once (whatever the number of devices), one per update declaration, none per device
+        // requests: the Platform device list once (whatever the number of devices), none per device; the two update
+        // declaration pairs some Mac holds active in full (four), the macOS 26 pair no Mac holds active once (JTKit 1.10.0)
         let paths = model.connections.activityLog.entries.compactMap { $0.request != nil ? $0.detail : nil }
         #expect(paths.filter { $0.contains("devices/v1/devices") && !$0.contains("ddm/report") }.count == 1)
-        #expect(paths.filter { $0.contains("ddm/report/v1/declarations/") }.count == 6)
+        #expect(paths.filter { $0.contains("ddm/report/v1/declarations/") }.count == 5)
         #expect(!paths.contains { $0.contains("ddm/report/v1/devices/") })
     }
 
