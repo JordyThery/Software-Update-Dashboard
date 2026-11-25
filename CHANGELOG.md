@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.4 — unreleased
+
+- **Blueprint health reads much faster** on Blueprints with many devices: the declaration reports are read a few pages at a time, and declarations no device in scope holds any more are read once instead of for every device.
+- **A device offline for weeks** whose own copy of a declaration is out of date now shows that it hasn’t fetched Jamf’s current declarations.
+
 ## 0.3.3 — 2026-11-25
 
 - **Demo Mode** has two new Demo Situations in the Blueprint menu: Server Time Zone Set Wrong and Notifications Turned Off.
