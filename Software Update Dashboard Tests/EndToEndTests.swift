@@ -68,7 +68,7 @@ struct EndToEndTests {
         #expect(result.rule == "Minor updates, \(DemoSoftwareUpdate.macDelayDays) days after their release")
         #expect(result.scope.map(\.name) == ["Studio Macs"])
         let byName = Dictionary(uniqueKeysWithValues: result.devices.map { ($0.name, $0) })
-        #expect(result.devices.count == 11)
+        #expect(result.devices.count == 16)
         #expect(byName["Studio Mac 01"]?.category == .onTarget)
         #expect(byName["Studio Mac 02"]?.targetVersion == "27.1")
         #expect(byName["Studio Mac 02"]?.category == .inProgress)

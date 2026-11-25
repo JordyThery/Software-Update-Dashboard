@@ -1,4 +1,5 @@
 import Foundation
+import JTKit
 
 /// How many devices are in each category. Devices whose target is unknown
 /// are counted apart: never in the total, the progress figure or the history.

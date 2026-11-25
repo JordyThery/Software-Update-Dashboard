@@ -74,6 +74,9 @@ final class Notifier {
     private(set) var demoRules: [UUID: NotificationRule] = [:]
     /// Permission was refused: notifications are off in System Settings.
     private(set) var permissionProblem: String?
+    /// Demo Mode: as if notifications were turned off in System Settings
+    /// (the “Notifications Turned Off” Demo Situation). In memory only.
+    var demoNotificationsOff = false
     /// Everything posted, sent or not (Demo Mode): the newest last.
     private(set) var posted: [RefreshNotice] = []
 
@@ -132,8 +135,14 @@ final class Notifier {
     /// What the Notifications sheet says after Save: a rule that is on, saved
     /// while notifications are off in System Settings; nil otherwise and in Demo Mode.
     func savedNote(for rule: NotificationRule?, demo: Bool) -> String? {
-        guard !demo, let rule, rule.isOn, permissionProblem != nil else { return nil }
+        guard let rule, rule.isOn, problem(demo: demo) != nil else { return nil }
         return Self.savedWhileOff
+    }
+
+    /// Why notifications don’t arrive: turned off in System Settings; in
+    /// Demo Mode only in the “Notifications Turned Off” Demo Situation.
+    func problem(demo: Bool) -> String? {
+        demo ? (demoNotificationsOff ? Self.turnedOff : nil) : permissionProblem
     }
 
     /// This app’s page in System Settings › Notifications.
