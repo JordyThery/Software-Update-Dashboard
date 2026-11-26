@@ -61,7 +61,7 @@ struct SoftwareUpdateDashboardApp: App {
         SettingsWindow(updates: updates, opensTabsByName: true) {
             GeneralSettingsSections(loginItem: loginItem, menuBar: menuBar)
         } tabs: {
-            SettingsView(connections: connections)
+            SettingsView(connections: connections) { Task { await model.setDemoSituation(.sampleData) } }
                 // Settings › Connections notes that these are the real connections.
                 .environment(connections.demo)
             SettingsTab("Automation", systemImage: "clock.arrow.circlepath") {

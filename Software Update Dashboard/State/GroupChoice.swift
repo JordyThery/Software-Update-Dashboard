@@ -19,8 +19,7 @@ nonisolated struct GroupChoice: Sendable {
     /// The Blueprint’s scope from its Platform API group IDs, through the
     /// Platform API’s list of groups (`pro/v2/groups`).
     static func scope(platformGroupIDs: [String], platformGroups: [JamfPlatform.PlatformGroup]) -> Set<JamfPro.DeviceGroup.ID> {
-        let wanted = Set(platformGroupIDs.map { $0.lowercased() })
-        return Set(platformGroups.filter { wanted.contains($0.id.lowercased()) }.compactMap(JamfPro.DeviceGroup.ID.init))
+        SoftwareUpdateRules.Reader.scope(platformGroupIDs: platformGroupIDs, platformGroups: platformGroups)
     }
 
     private var matching: [JamfPro.DeviceGroup] {

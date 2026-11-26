@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.4 — 2026-11-25
+
+- **Blueprint health reads much faster** on Blueprints with many devices: the declaration reports are read a few pages at a time, and declarations no device in scope holds any more are read once instead of for every device.
+- **A device offline for weeks** whose own copy of a declaration is out of date now shows that it hasn’t fetched Jamf’s current declarations.
+
+## 0.3.3 — 2026-11-25
+
+- **Demo Mode** has two new Demo Situations in the Blueprint menu: Server Time Zone Set Wrong and Notifications Turned Off.
+- **Demo Mode’s sample data** also shows Macs that missed the deadline and report their next install attempt, a Mac stuck installing with no contact since, a bootstrap token failure, update files Apple no longer offers, and a pilot device that has left the Blueprint’s scope.
+- **Inspect** says “Couldn’t be inspected” when a device’s details can’t be read.
+
 ## 0.3.2 — 2026-11-25
 
 - **Deadlines stay Jamf’s.** The deadline Jamf sent is remembered per Blueprint, so it keeps counting after the devices that reported it have installed (“As the Blueprint’s devices reported it earlier”). A deadline a device reports is used whatever install reason the device gives, and a deadline written with a 12-hour clock is now read.
