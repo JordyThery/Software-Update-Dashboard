@@ -3,7 +3,7 @@ import Observation
 
 /// Automatic refresh (Settings › Automation): every 1, 4 or 8 hours, all
 /// tracked Blueprints of the connection in use, one after another, each
-/// saved in the history like a manual refresh. A refresh that fails keeps
+/// saved in the history like a manual refresh, then one content cache sweep. A refresh that fails keeps
 /// the previous one and is tried again at the next interval, never sooner.
 /// The wait counts time asleep (the continuous clock), so after a sleep it
 /// runs once to catch up, then waits a whole interval again.
@@ -97,6 +97,11 @@ final class AutoRefresh {
                 if Task.isCancelled { break }
                 await model.refresh(tracked.id)
                 if let error = model.errors[tracked.id] { problems.append("\(tracked.blueprintName): \(error)") }
+            }
+            // then the content caches, once per run
+            if !Task.isCancelled {
+                await model.caches.sweep()
+                if let error = model.caches.error { problems.append("Content caches: \(error)") }
             }
             return problems
         }

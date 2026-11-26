@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 — 2026-11-26
+
+- **Content Caches:** a new page in the sidebar lists every Mac whose content cache is activated, with its health (OK, Warning or Fault, and why), last contact, cache used against its limit, pressure, bytes served, savings and main content. Show all caches, those that need attention or those without a caching Blueprint, and sort on any column.
+- **A cache’s detail:** what its caching Blueprint sets against what the Mac reports, its parents, its peers on macOS 27, its alerts, and its trend of savings, with a mark where its counters started again. Status Items… shows the Mac’s whole status report.
+- **Caching Blueprints:** each Blueprint that sets up content caching shows how many of its Macs are configured, activated and have the declaration applied, and lists the Macs that aren’t caching yet. Caches that no caching Blueprint reaches, including those set up with a configuration profile or by hand, are marked “No caching Blueprint”.
+- **Content caches by site** on a Blueprint’s dashboard and in its PDF report: the worst health of the caches in each site of its devices, or that a site has none. Show Caches opens that site’s caches.
+- **Refresh All and the automatic refresh** also read the content caches, after the tracked Blueprints. Nothing new to grant: the app uses the same read permissions as before.
+- **Help** has a Content Caches section explaining what counts as a cache, how savings are worked out and when a cache gets a Warning or a Fault.
+- **Demo Mode** shows content caches in every state, with ten days of history.
+
 ## 0.3.4 — 2026-11-25
 
 - **Blueprint health reads much faster** on Blueprints with many devices: the declaration reports are read a few pages at a time, and declarations no device in scope holds any more are read once instead of for every device.

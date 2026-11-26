@@ -8,8 +8,10 @@ import SwiftUI
 /// stays in the in-memory activity log, like every other, until the app quits).
 struct StatusItemsView: View {
     let model: DashboardModel
-    let trackedID: UUID
-    let device: DeviceStatus
+    /// Whose report it is, for the title.
+    let name: String
+    /// Reads the items, sorted by key.
+    let read: () async throws -> [JamfPro.StatusItem]
     @Environment(\.dismiss) private var dismiss
     @State private var items: [StatusItemRow] = []
     @State private var loading = true
@@ -22,11 +24,25 @@ struct StatusItemsView: View {
         return items.filter { $0.item.key.localizedCaseInsensitiveContains(filter) || ($0.item.value ?? "").localizedCaseInsensitiveContains(filter) }
     }
 
+    /// A device of a tracked Blueprint.
+    init(model: DashboardModel, trackedID: UUID, device: DeviceStatus) {
+        self.model = model
+        name = device.name.isEmpty ? device.serial : device.name
+        read = { try await model.statusItems(of: device, in: trackedID) }
+    }
+
+    /// A Mac by its management ID (a content cache).
+    init(model: DashboardModel, name: String, managementID: String?) {
+        self.model = model
+        self.name = name
+        read = { try await model.statusItems(managementID: managementID, isComputer: true) }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // a sheet shows no window title: say whose report this is
             VStack(alignment: .leading, spacing: 2) {
-                Text("Status Items of \(device.name.isEmpty ? device.serial : device.name)").font(.headline)
+                Text("Status Items of \(name)").font(.headline)
                 Text("Read from Jamf Pro now; the items aren’t saved").font(.caption).foregroundStyle(.secondary)
             }
             .padding(12)
@@ -99,7 +115,7 @@ struct StatusItemsView: View {
         problem = nil
         defer { loading = false }
         do {
-            items = try await model.statusItems(of: device, in: trackedID).enumerated().map { StatusItemRow(id: $0.offset, item: $0.element) }
+            items = try await read().enumerated().map { StatusItemRow(id: $0.offset, item: $0.element) }
         } catch is CancellationError {
             problem = "Stopped."
         } catch {

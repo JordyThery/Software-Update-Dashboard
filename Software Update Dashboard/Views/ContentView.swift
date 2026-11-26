@@ -32,6 +32,8 @@ struct ContentView: View {
             Group {
                 if connections.connectionInUse == nil {
                     NoConnectionView(demo: connections.demo)
+                } else if model.selection == .caches {
+                    CachesView(model: model)
                 } else if case .blueprint(let id)? = model.selection, let tracked = model.tracked(id) {
                     BlueprintView(model: model, tracked: tracked, page: $page, exportRequest: $exportRequest, sheet: $sheet,
                                   exportPDF: exportPDF)
@@ -164,6 +166,10 @@ struct SidebarView: View {
         List(selection: $model.selection) {
             Label("Overview", systemImage: "square.grid.2x2")
                 .tag(DashboardModel.Selection.overview)
+            // always there: the empty state says when the caches were last read
+            Label("Content Caches", systemImage: "server.rack")
+                .badge(model.caches.latest.map { $0.caches.count } ?? 0)
+                .tag(DashboardModel.Selection.caches)
             Section("Tracked Blueprints") {
                 ForEach(model.trackedBlueprints) { tracked in
                     Label(tracked.blueprintName, systemImage: "square.stack.3d.up")

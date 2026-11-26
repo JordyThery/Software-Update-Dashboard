@@ -25,6 +25,8 @@ final class ConnectionsModel {
     let saved: ConnectionStore<AppConnection>
     let activityLog: ActivityLog
     let demo: DemoMode
+    /// When the demo servers started: Demo Mode’s content cache history is measured from it.
+    let demoStarted = Date()
     let demoChoice: DemoConnectionChoice
     let waits = RequestWaits()
 
@@ -50,8 +52,8 @@ final class ConnectionsModel {
             ? TestRun.refusingSession(log: .savedConnections, message: UnderTest.refusal) : Self.jamfSession
         let remembered = defaults.string(forKey: Self.activeKey).flatMap(UUID.init(uuidString:))
         activeID = remembered.flatMap { saved.record(id: $0) != nil ? $0 : nil } ?? saved.records.first?.id
-        // the sample devices mid-update, on the demo Platform API only
-        DemoSoftwareUpdate.install(on: demo.jamfPlatformServer)
+        // the sample devices mid-update and the content caches, on the demo Platform API only
+        DemoSoftwareUpdate.install(on: demo.jamfPlatformServer, now: demoStarted)
     }
 
     /// The model for this launch: the saved connections and Keychain; as the
