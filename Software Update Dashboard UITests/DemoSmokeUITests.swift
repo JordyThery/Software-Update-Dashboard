@@ -201,7 +201,7 @@ final class DemoSmokeUITests: JTKitUITestCase {
     }
 
     /// Content Caches: the sample caches with their health, the caching
-    /// Blueprint, a cache's detail with its trend, the Unplanned filter, and
+    /// Blueprint, a cache's detail with its trend, the No Caching Blueprint filter, and
     /// the caches by site on the Mac Blueprint's dashboard.
     func test16ContentCaches() {
         openSidebar("Content Caches")
@@ -212,8 +212,9 @@ final class DemoSmokeUITests: JTKitUITestCase {
         tap(deviceRow("Studio Mac 05"))
         XCTAssertTrue(any("Cache pressure 72 % in the last hour").waitForExistence(timeout: 10), "The detail doesn't say why")
         XCTAssertTrue(any("Trend").exists, "The detail has no trend")
-        tap(app.radioButtons["Unplanned"].firstMatch, timeout: 10)
-        XCTAssertTrue(deviceRow("Studio Mac 07").waitForExistence(timeout: 10), "The unplanned cache isn't listed")
+        tap(app.radioButtons["No Caching Blueprint"].firstMatch, timeout: 10)
+        XCTAssertTrue(deviceRow("Studio Mac 07").waitForExistence(timeout: 10), "The cache without a caching Blueprint isn't listed")
+        XCTAssertTrue(any("No caching Blueprint").exists, "The row doesn't say it has no caching Blueprint")
         XCTAssertTrue(waitForGone(deviceRow("Studio Mac 05")), "The filter didn't hide the planned caches")
 
         openBlueprint(macBlueprint)

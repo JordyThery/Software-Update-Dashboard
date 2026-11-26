@@ -18,8 +18,9 @@ final class ScreenshotUITests: JTKitUITestCase {
         try super.setUpWithError()
     }
 
+    /// Light appearance whatever the Mac is set to, so every screenshot matches.
     override func launchApp() {
-        launchInDemo(arguments: ["-AppleLanguages", "(en-US)", "-AppleLocale", "en_US"])
+        launchInDemo(arguments: ["-AppleLanguages", "(en-US)", "-AppleLocale", "en_US", "-NSRequiresAquaSystemAppearance", "YES"])
     }
 
     override func didLaunch() {

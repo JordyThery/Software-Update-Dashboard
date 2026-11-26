@@ -438,7 +438,7 @@ struct LiveCacheSweepTests {
             let withItems = result.caches.filter { $0.status != nil }.count
             record(run, step("content caches found"), passed: true,
                    note: "\(result.caches.count) caches (\(levels.joined(separator: ", "))), \(withItems) with content-cache status items, "
-                       + "\(result.unplanned.count) unplanned")
+                       + "\(result.unplanned.count) with no caching Blueprint")
             let configured = result.cachingBlueprints.map(\.configured.count).reduce(0, +)
             record(run, step("caching Blueprints found (blueprints:read, declarations:read)"), passed: true,
                    note: "\(result.cachingBlueprints.count) caching Blueprints, \(configured) Macs configured, "

@@ -185,7 +185,9 @@ final class CachesModel {
 enum CacheFilter: String, CaseIterable, Identifiable {
     case all = "All"
     case attention = "Needs Attention"
-    case unplanned = "Unplanned"
+    /// Activated, and no caching Blueprint reaches it (`isUnplanned`): also a
+    /// cache set up with a configuration profile or by hand.
+    case unplanned = "No Caching Blueprint"
     var id: String { rawValue }
 
     /// The View menu’s name.
@@ -193,7 +195,7 @@ enum CacheFilter: String, CaseIterable, Identifiable {
         switch self {
         case .all: "All Caches"
         case .attention: "Caches Needing Attention"
-        case .unplanned: "Unplanned Caches"
+        case .unplanned: "Caches Without a Caching Blueprint"
         }
     }
 }

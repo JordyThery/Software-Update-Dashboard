@@ -190,7 +190,7 @@ struct CachesView: View {
     }
 }
 
-/// How many caches are in each health, and the unplanned ones.
+/// How many caches are in each health, and how many no caching Blueprint reaches.
 struct CachesSummary: View {
     let record: CacheSweepRecord
 
@@ -212,7 +212,7 @@ struct CachesSummary: View {
             }
             let unplanned = record.unplanned.count
             if unplanned > 0 {
-                Label("\(Plural.count(unplanned, "cache")) \(unplanned == 1 ? "isn’t" : "aren’t") set up by any caching Blueprint.",
+                Label("\(Plural.count(unplanned, "cache")) \(unplanned == 1 ? "has" : "have") no caching Blueprint.",
                       systemImage: "questionmark.circle")
                     .foregroundStyle(.secondary)
             }
@@ -298,7 +298,7 @@ struct CachesTable: View {
             TableColumn("Mac", value: \.name) { row in
                 VStack(alignment: .leading, spacing: 1) {
                     Text(row.name)
-                    if row.isUnplanned { Text("Unplanned").font(.caption).foregroundStyle(.secondary) }
+                    if row.isUnplanned { Text("No caching Blueprint").font(.caption).foregroundStyle(.secondary) }
                 }
             }
             .width(min: 120, ideal: 160)
@@ -449,7 +449,8 @@ struct CacheDetailView: View {
     private var blueprints: some View {
         DetailSection("Caching Blueprint") {
             if row.isUnplanned {
-                Text("No caching Blueprint sets up this cache.").foregroundStyle(.secondary)
+                Text("No caching Blueprint reaches this cache. It may be set up with a Jamf Pro configuration profile or by hand.")
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             ForEach(row.declarations, id: \.blueprintID) { declaration in
                 let blueprint = caches.latest?.blueprints.first { $0.id == declaration.blueprintID }
