@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 — unreleased
+## 0.4.0 — 2026-11-26
 
 - **Content Caches:** a new page in the sidebar lists every Mac whose content cache is activated, with its health (OK, Warning or Fault, and why), last contact, cache used against its limit, pressure, bytes served, savings and main content. Show all caches, those that need attention or those without a caching Blueprint, and sort on any column.
 - **A cache’s detail:** what its caching Blueprint sets against what the Mac reports, its parents, its peers on macOS 27, its alerts, and its trend of savings, with a mark where its counters started again. Status Items… shows the Mac’s whole status report.
