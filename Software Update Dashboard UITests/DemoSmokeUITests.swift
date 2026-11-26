@@ -200,6 +200,27 @@ final class DemoSmokeUITests: JTKitUITestCase {
                       "The dashboard still warns after Use UTC")
     }
 
+    /// Content Caches: the sample caches with their health, the caching
+    /// Blueprint, a cache's detail with its trend, the Unplanned filter, and
+    /// the caches by site on the Mac Blueprint's dashboard.
+    func test16ContentCaches() {
+        openSidebar("Content Caches")
+        XCTAssertTrue(window(titled: "Content Caches").waitForExistence(timeout: 20), "Content Caches didn't open")
+        XCTAssertTrue(any("Contoso – Content Caches").waitForExistence(timeout: 30), "The caching Blueprint isn't shown")
+        XCTAssertTrue(deviceRow("Studio Mac 05").waitForExistence(timeout: 20), "The caches aren't listed")
+        XCTAssertTrue(deviceRow("Loaner Mac 01").exists, "The faulty cache isn't listed")
+        tap(deviceRow("Studio Mac 05"))
+        XCTAssertTrue(any("Cache pressure 72 % in the last hour").waitForExistence(timeout: 10), "The detail doesn't say why")
+        XCTAssertTrue(any("Trend").exists, "The detail has no trend")
+        tap(app.radioButtons["Unplanned"].firstMatch, timeout: 10)
+        XCTAssertTrue(deviceRow("Studio Mac 07").waitForExistence(timeout: 10), "The unplanned cache isn't listed")
+        XCTAssertTrue(waitForGone(deviceRow("Studio Mac 05")), "The filter didn't hide the planned caches")
+
+        openBlueprint(macBlueprint)
+        XCTAssertTrue(any("Content Caches by Site").waitForExistence(timeout: 30), "The dashboard has no caches by site")
+        XCTAssertTrue(any("Rotterdam Studio").exists, "A site without a cache isn't listed")
+    }
+
     // MARK: Helpers
 
     /// Selects a tracked Blueprint in the sidebar; its window title follows.

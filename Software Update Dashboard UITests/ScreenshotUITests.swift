@@ -8,7 +8,8 @@ import XCTest
 ///   -only-testing:"Software Update Dashboard UITests/ScreenshotUITests"
 /// and export the attachments (xcrun xcresulttool export attachments),
 /// scaled to 1800 pixels wide, to docs/screenshot.png (the dashboard) and
-/// docs/screenshot-overview.png and docs/screenshot-devices.png.
+/// docs/screenshot-overview.png and docs/screenshot-devices.png; testCachesScreenshot
+/// gives docs/screenshot-caches.png.
 final class ScreenshotUITests: JTKitUITestCase {
     override var appName: String { "Software Update Dashboard" }
 
@@ -47,6 +48,26 @@ final class ScreenshotUITests: JTKitUITestCase {
         XCTAssertTrue(any("Likely cause").waitForExistence(timeout: 30), "Inspect found no likely cause")
         sleep(1)
         keep(main.screenshot(), named: "screenshot-devices")
+    }
+
+    /// Content Caches with a cache's detail: docs/screenshot-caches.png.
+    func testCachesScreenshot() {
+        let main = app.windows.firstMatch
+        openSidebar("Content Caches")
+        let row = deviceRow("Studio Mac 05")
+        XCTAssertTrue(row.waitForExistence(timeout: 30), "The caches aren't listed")
+        tap(row)
+        XCTAssertTrue(any("Trend").waitForExistence(timeout: 10), "The detail didn't open")
+        sleep(2)
+        keep(main.screenshot(), named: "screenshot-caches")
+
+        // the Mac Blueprint's dashboard with its caches by site (for the design review, not the README)
+        openSidebar("Contoso – Mac Update")
+        let bySite = any("Content Caches by Site")
+        XCTAssertTrue(bySite.waitForExistence(timeout: 30), "The dashboard has no caches by site")
+        scrollIntoView(bySite)
+        sleep(1)
+        keep(main.screenshot(), named: "screenshot-by-site")
     }
 
     /// A device's name in the device table (SwiftUI exposes a text as its value).

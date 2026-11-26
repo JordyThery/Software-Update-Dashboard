@@ -23,7 +23,7 @@ struct HelpTests {
         for category in StatusCategory.allCases {
             #expect(categories.contains("\(category.title):"), "\(category.title)")
         }
-        #expect(HelpContent.topics.map(\.id) == ["categories", "targets", "earlier-step", "readiness", "inspect"])
+        #expect(HelpContent.topics.map(\.id) == ["categories", "targets", "earlier-step", "readiness", "inspect", "content-caches"])
         #expect(HelpContent.readiness.paragraphs.joined().contains("User Enrollment"))
     }
 

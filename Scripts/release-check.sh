@@ -28,7 +28,8 @@ SIGNIN_TEST="Software Update Dashboard Tests/LiveSignInTests"
 # Apple's release data first (public hosts only), then the production reads.
 LIVE_TESTS=("Software Update Dashboard Tests/LiveReadTests/appleReleaseData()"
             "Software Update Dashboard Tests/LiveReadTests/mobileGroupEndToEnd()"
-            "Software Update Dashboard Tests/LiveMostReachedTests/mostReachedBlueprint()")
+            "Software Update Dashboard Tests/LiveMostReachedTests/mostReachedBlueprint()"
+            "Software Update Dashboard Tests/LiveCacheSweepTests/sweep()")
 CLEANUP_TEST="Software Update Dashboard Tests/LiveCleanupTests"
 ROLES=(jamfpro-production)
 READ_ONLY_ROLES=(jamfpro-production)
@@ -43,6 +44,7 @@ for key in connections activeConnectionID demoMode trackedBlueprints trackedGrou
     FINGERPRINT_DEFAULTS+=("$CONTAINER/Library/Preferences/$DOMAIN $key")
 done
 FINGERPRINT_PATHS=("$CONTAINER/Library/Application Support/History"
+                   "$CONTAINER/Library/Application Support/ContentCaches"
                    "$CONTAINER/Library/Application Support/Unreadable Copies"
                    "$CONTAINER/Library/Logs/Software Update Dashboard")
 KEYCHAIN_PREFIXES=("be.jordythery.softwareupdatedashboard.jamf")

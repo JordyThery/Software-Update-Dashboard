@@ -391,6 +391,73 @@ struct LiveMostReachedTests {
     }
 }
 
+@Suite("Live: content caches", .enabled(if: live), .serialized)
+@MainActor
+struct LiveCacheSweepTests {
+    /// One content cache sweep as the app reads it (JTKit's sweep on the
+    /// app's read-only client): every Mac's inventory with its content
+    /// caching section, the caches' status reports, the caching Blueprints
+    /// and their declarations. Counts only in the report: pages read, caches
+    /// found, caching Blueprints found, problems; never a name, serial or address.
+    @Test func sweep() async throws {
+        let run = try LiveCheckRun.current()
+        defer { checkUnderTest(run, when: "after the content cache sweep") }
+        guard run.roles.contains(role) else { return }
+        let client = try liveClient(run)
+        func step(_ name: String) -> String { "\(role): \(name)" }
+        do {
+            let result = try await ContentCacheRules.Sweep(client: client).read()
+            // whatever a note says, none of these may appear in the report
+            var hidden: [String] = Array(result.notCaching.keys)
+            for cache in result.caches {
+                let ids: [String?] = [cache.id, cache.name, cache.serialNumber, cache.managementID, cache.siteName,
+                                      cache.caching.publicAddress, cache.caching.serverGuid,
+                                      cache.status?.status?.serverGuid, cache.status?.status?.publicAddress]
+                hidden += ids.compactMap { $0 }
+                hidden += cache.status?.status?.privateAddresses ?? []
+                hidden += cache.caching.parents.compactMap(\.address)
+                hidden += (cache.status?.parents ?? []).compactMap(\.address)
+                hidden += (cache.status?.peers ?? []).compactMap(\.address)
+            }
+            for blueprint in result.cachingBlueprints {
+                hidden += [blueprint.id, blueprint.name] + blueprint.identifiers
+                for mac in blueprint.configured {
+                    let ids: [String?] = [mac.id, mac.name, mac.serialNumber, mac.siteName]
+                    hidden += ids.compactMap { $0 }
+                }
+                for settings in blueprint.settings { hidden += settings.parents ?? [] }
+            }
+            // whatever a note says, none of these may appear in the report
+            run.neverReport(hidden)
+            let appRecord = CacheSweepRecord(result, serverTimeZone: .gmt)
+            record(run, step("content caches: inventory read (devices:read)"), passed: result.inventoryPages > 0,
+                   note: "\(result.inventoryPages) pages, \(result.computersRead) Macs")
+            let levels = ContentCacheRules.CacheHealth.Level.allCases.map { level in
+                "\(level.title) \(result.caches.filter { $0.health.level == level }.count)"
+            }
+            let withItems = result.caches.filter { $0.status != nil }.count
+            record(run, step("content caches found"), passed: true,
+                   note: "\(result.caches.count) caches (\(levels.joined(separator: ", "))), \(withItems) with content-cache status items, "
+                       + "\(result.unplanned.count) unplanned")
+            let configured = result.cachingBlueprints.map(\.configured.count).reduce(0, +)
+            record(run, step("caching Blueprints found (blueprints:read, declarations:read)"), passed: true,
+                   note: "\(result.cachingBlueprints.count) caching Blueprints, \(configured) Macs configured, "
+                       + "\(result.cachingBlueprints.map(\.appliedCount).reduce(0, +)) with the declaration applied")
+            record(run, step("content caches: problems"), passed: result.problems.isEmpty,
+                   note: result.problems.isEmpty ? "none" : "\(result.problems.count) problems")
+            record(run, step("content caches: the app's record of the sweep"), passed: appRecord.caches.count == result.caches.count,
+                   note: "\(appRecord.caches.count) rows, \(appRecord.blueprints.count) Blueprint cards")
+        } catch {
+            record(run, step("content cache sweep"), passed: false, note: failure(error))
+            throw error
+        }
+        let refusals = run.network.refusals
+        record(run, step("content caches: nothing sent but reads and the sign-in"), passed: refusals.isEmpty,
+               note: refusals.isEmpty ? nil : "\(refusals.count) refused")
+        #expect(refusals.isEmpty)
+    }
+}
+
 @Suite("Live: cleanup", .enabled(if: live), .serialized)
 @MainActor
 struct LiveCleanupTests {

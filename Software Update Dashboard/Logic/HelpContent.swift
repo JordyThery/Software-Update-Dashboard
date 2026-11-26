@@ -68,7 +68,18 @@ nonisolated enum HelpContent {
         "Inspect only reads: it never changes anything in Jamf.",
     ])
 
-    static let topics = [categories, targets, earlierStep, readiness, inspect]
+    static let caches = HelpTopic(id: "content-caches", title: "Content Caches", paragraphs: [
+        "Content Caches lists every Mac whose content cache is activated, as its inventory in Jamf Pro says. They are read together with Refresh All and the automatic refresh, or with Refresh on the Content Caches page. Every Mac’s inventory is read, because Jamf’s list can’t be limited to caches; nothing changes in Jamf.",
+        "Caching Blueprints are the Blueprints that send Apple’s content caching declaration. For each one the page shows how many Macs its scope reaches, how many of them have an activated cache and on how many the declaration is applied. A cache that no caching Blueprint sets up is listed as unplanned.",
+        "Saved is what a cache served to devices, to its peers and to the caches below it, minus what it had to fetch from Apple, since its counters started. Bytes held as personal (iCloud) content are shown, never counted as a saving on their own. When a cache’s counters start again, for example after it was turned off and on, the trend marks it and counts on from there.",
+        "Fault: the cache is activated but not running, its status or startup status isn’t OK, its registration with Apple failed, every parent cache is unhealthy, or Jamf Pro has no inventory report of the Mac for more than 7 days.",
+        "Warning: its registration is pending, its cache pressure reached 50 % or more in the last hour, a parent cache is unhealthy, it posted an alert in the last 24 hours, it is moving its data or a move failed, Jamf Pro has no inventory report for more than 48 hours, or its caching Blueprint’s declaration isn’t applied.",
+        "How full a cache is never decides its health: a content cache fills up to its limit and then removes the content used least. Pressure shows when it is too small.",
+        "The figures come from the Mac’s inventory and are as new as its last inventory report. Macs on macOS 27 also send their status to Jamf Pro when it changes, and their live figures only when the caching Blueprint’s declaration asks for them at an interval.",
+        "On a Blueprint’s dashboard, Content Caches by Site shows, for every site of the Blueprint’s devices, the worst health of the caches in that site, or that it has none.",
+    ])
+
+    static let topics = [categories, targets, earlierStep, readiness, inspect, caches]
 
     private static func url(_ text: String) -> URL {
         guard let url = URL(string: text) else { preconditionFailure("Help link: \(text)") }

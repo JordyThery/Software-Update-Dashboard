@@ -28,14 +28,17 @@ A read-only Mac app that shows, for the devices a Blueprint is scoped to, whethe
 - **Find a Device** (⇧⌘F): a device by serial number or name in every tracked Blueprint, opened in its Blueprint’s device list.
 - **Open in Jamf Pro:** a device (from its detail, the device list or Device › Open in Jamf Pro, ⌥⌘O) or the Blueprint, in your browser, read-only. It uses the Jamf Pro web address you add to the connection in Settings › Connections.
 - **Device details:** Rapid Security Response, beta program, why the pending update started, failures, FileVault and battery health; all of a device’s status items on request, with a filter and Copy (not saved).
+- **Content Caches:** every Mac whose content cache is activated, with its health (OK, Warning or Fault, and why), last contact, cache used against its limit, pressure, bytes served, savings and its main content. The detail shows what the cache’s Blueprint sets against what the Mac reports, its parents, its peers (macOS 27), its alerts and its trend. The Blueprints that set up caches show how many of their Macs are configured, activated and applied; caches no Blueprint sets up are marked unplanned. A Blueprint’s dashboard shows the content caches in each site of its devices. Read with Refresh All and the automatic refresh, or on the page itself.
 - **History** of every refresh, per tracked Blueprint.
 - **Unsupported hardware** with a replacement list: the model, how many devices, and the last version it can run.
 - **Deadlines per time zone:** the deadline is each device’s local time, and unusual time zones are pointed out. Jamf Pro has no time zone for Macs, so a Mac’s computed deadline is measured in this Mac’s time zone. A downloaded update counts as stuck 4 hours after its deadline, and an install as long after 4 hours; status times are read in the connection’s Jamf Pro server time zone (Jamf Cloud normally uses UTC); when a refresh finds that setting looks wrong, the Blueprint’s dashboard and Settings › Connections say so.
 - **Exports:** the device list as CSV, a summary, and a report as PDF of the Blueprint on screen or all tracked Blueprints: what the dashboard shows and the devices to check, from the last refresh.
-- **Automatic refresh** (Settings › Automation): every 1, 4 or 8 hours, every tracked Blueprint one after another, each refresh kept in the history. It can keep the Mac awake while it’s on power, and after a sleep it catches up once.
+- **Automatic refresh** (Settings › Automation): every 1, 4 or 8 hours, every tracked Blueprint one after another, each refresh kept in the history, then the content caches. It can keep the Mac awake while it’s on power, and after a sleep it catches up once.
 - **Notifications** per tracked Blueprint (Blueprint › Notifications…): when the share on target reaches or drops below a level you choose, and when devices are newly failed or stuck. Notifications give counts only, never device names; when they’re turned off in System Settings, the Notifications sheet says so.
 - **Menu bar and login** (Settings › General): a menu bar item with each tracked Blueprint’s share on target, Refresh All and Open Window, and Open at Login.
-- **Demo Mode:** sample iPads and Macs in the middle of an update, without a Jamf tenant. Blueprint › Demo Situation shows what happens when Apple’s release data can’t be read, the saved list of tracked Blueprints can’t be read, the Jamf Pro server time zone is set wrong, or notifications are turned off in System Settings. In Demo Mode, Open in Jamf Pro shows the page instead of opening it, and notifications are written to the activity log instead of being sent.
+- **Demo Mode:** sample iPads and Macs in the middle of an update, and content caches in every state with ten days of history, without a Jamf tenant. Blueprint › Demo Situation shows what happens when Apple’s release data can’t be read, the saved list of tracked Blueprints can’t be read, the Jamf Pro server time zone is set wrong, or notifications are turned off in System Settings. In Demo Mode, Open in Jamf Pro shows the page instead of opening it, and notifications are written to the activity log instead of being sent.
+
+![Content Caches in Demo Mode: the caches with their health, the caching Blueprint, and one cache’s detail with its trend](docs/screenshot-caches.png)
 
 ## Requirements
 
@@ -61,6 +64,7 @@ Software Update Dashboard never changes anything in Jamf. It sends only GET requ
 
 - Connections in the app’s settings; client secrets in the Keychain. Automatic refresh, the menu bar item and the notification choices are in the app’s settings too.
 - The history of each tracked Blueprint in the app’s container, with the deadlines its devices reported: counts for 180 days, full refreshes for 7 days and then the newest of each day. When Apple’s release data can’t be read, a refresh stops and the previous one is kept.
+- The content caches of each connection in the app’s container, kept the same way: the trend for 180 days, full readings for 7 days and then the newest of each day.
 - The activity log (Window › Activity Log) in memory only.
 
 ## Building from source

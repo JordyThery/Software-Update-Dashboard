@@ -210,7 +210,20 @@ Order: A, B with C and M, L, D, G, I, J, K (as planned for 0.2 before the renumb
 - Low findings fixed: Readiness doesn’t say all is well when Jamf Pro doesn’t report enrollment or supervision; two Help sentences said more than Apple’s pages; a Stop isn’t an error; the Overview line stays while a run goes on after automatic refresh was turned off; the connection change with only the menu bar item open. The Stop test can fail now.
 - Low findings left: the Mac earlier step matched by its deadline’s minutes (a label only; needs a design); the bootstrap finding on target (harmless); KeepAwake’s `deinit` (it lives as long as the app; its test no longer takes a real hold); notification names in Notification Center and a refused permission noticed only on saving (behavior to decide); a Blueprint a manual refresh reads is left to that refresh by automatic refresh; Find a Device opening a device that has left the scope.
 
+### Step 4: 0.4, content caches (decided by Jordy on 2026-11-26)
+
+Part 2 of `_release-gate/content-caching-plan.md` (outside the repo), on branch `0.4`, with JTKit 1.11.0 (branch `release-1.11.0`). Read only; no new permission (the computer inventory’s `CONTENT_CACHING` section needs `devices:read`, Jamf’s Platform API reference).
+
+- **Content Caches** in the sidebar, always (with an empty state when nothing was found): a health summary, the caching Blueprints (configured, activated, declaration applied, and the Macs not caching or not applied), and a table of every activated cache (health, Mac, site, last contact, used against its limit, pressure, served, saved, top content) with All, Needs Attention and Unplanned, sortable on every column. Read on first open, with Refresh (⌘R) or Stop Refresh (⌘.), Refresh All and the automatic refresh (after the tracked Blueprints). The filter is in the View menu too.
+- **The detail** in an inspector: the health and its reasons, the figures (from the inventory, or the live figures a macOS 27 Mac sends when its declaration asks for them), its content, savings (since its counters started, and the last 7 and 30 days from the trend), the caching Blueprint’s settings against what the Mac reports, parents, peers (macOS 27), alerts, the trend with a mark where the counters restarted, and Status Items….
+- **Health** is JTKit’s, with its defaults: Fault when activated but not running, a cache or startup status other than OK, registration failed, every parent unhealthy, or no inventory for 7 days; Warning for registration pending, pressure of 50 % or more, a parent unhealthy, an alert in the last 24 hours, data moving or a failed move, no inventory for 48 hours, or the declaration not applied. How full a cache is is never a rule: it fills to its limit by design.
+- **Unplanned:** an activated cache that no caching Blueprint’s scope reaches and that holds none of their declarations.
+- **By site:** on a Blueprint’s dashboard and in its PDF, the worst health of the caches in each site of its devices (from `DeviceStatus.siteName`, kept in the history), or “No cache”; shown only when the last sweep found a cache. Show Caches opens Content Caches on that site.
+- **Stored** in `ContentCaches/<connection ID>/`: one file per sweep, `trend.index`, `known-blueprints.plist`; kept as the history. Demo Mode in memory, seeded with JTKit’s ten days of sample sweeps.
+- **Live check:** one sweep on the production role, counts only.
+
 ### Later
 
+- Notifications when a content cache turns Fault (a rule per connection, not per tracked Blueprint).
 - Computer groups end to end (the readers are in JTKit 1.5.0).
 - Other MDMs.

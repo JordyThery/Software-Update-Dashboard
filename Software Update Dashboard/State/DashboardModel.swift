@@ -26,6 +26,7 @@ enum DemoSituation: String, CaseIterable, Identifiable {
 final class DashboardModel {
     enum Selection: Hashable {
         case overview
+        case caches
         case blueprint(UUID)
     }
 
@@ -40,6 +41,8 @@ final class DashboardModel {
     }
 
     let connections: ConnectionsModel
+    /// The content caches of the connection in use (Content Caches in the sidebar).
+    let caches: CachesModel
     /// Notifications per tracked Blueprint, after each refresh.
     let notifier: Notifier
     var selection: Selection? = .overview
@@ -85,8 +88,9 @@ final class DashboardModel {
     private var generation = 0
 
     init(connections: ConnectionsModel, history: StatusHistory? = nil,
-         releases: (@Sendable () async throws -> AppleReleases.Catalog)? = nil) {
+         releases: (@Sendable () async throws -> AppleReleases.Catalog)? = nil, cacheArchive: CacheArchive? = nil) {
         self.connections = connections
+        caches = CachesModel(connections: connections, archive: cacheArchive)
         notifier = Notifier(defaults: connections.defaults, activityLog: connections.activityLog)
         historyOverride = history
         releasesOverride = releases
@@ -100,6 +104,7 @@ final class DashboardModel {
     private func followConnection() async {
         var key = connections.inUseKey
         await loadHistory()
+        await caches.load()
         while !Task.isCancelled {
             await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
                 withObservationTracking { _ = connections.inUseKey } onChange: { done.resume() }
@@ -110,6 +115,7 @@ final class DashboardModel {
             key = connections.inUseKey
             connectionChanged()
             await loadHistory()
+            await caches.load()
         }
     }
 
@@ -324,8 +330,13 @@ final class DashboardModel {
 
     // MARK: Refresh
 
+    /// Every tracked Blueprint one after another, then the content caches.
     func refreshAll() async {
-        for tracked in trackedBlueprints { await refresh(tracked.id) }
+        for tracked in trackedBlueprints {
+            if Task.isCancelled { return }
+            await refresh(tracked.id)
+        }
+        if !Task.isCancelled { await caches.sweep() }
     }
 
     /// Refreshes a tracked Blueprint; `stopRefresh` can end it.
@@ -489,11 +500,16 @@ final class DashboardModel {
     /// Every status item of one device, read now (not kept: neither here
     /// nor in the history). Empty when Jamf Pro has no report for it.
     func statusItems(of device: DeviceStatus, in id: UUID) async throws -> [JamfPro.StatusItem] {
-        guard let managementID = device.managementID, !managementID.isEmpty else {
+        try await statusItems(managementID: device.managementID, isComputer: device.isComputer)
+    }
+
+    /// Every status item of a device by its management ID, read now.
+    func statusItems(managementID: String?, isComputer: Bool) async throws -> [JamfPro.StatusItem] {
+        guard let managementID, !managementID.isEmpty else {
             throw RefreshError("The device has no management ID in Jamf Pro, so its status report can’t be read.")
         }
         guard let client = try connections.client() else { throw RefreshError("No connection in use.") }
-        let items = try await client.statusItems(managementID: managementID, kind: device.isComputer ? .computer : .mobileDevice) ?? []
+        let items = try await client.statusItems(managementID: managementID, kind: isComputer ? .computer : .mobileDevice) ?? []
         return items.sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
     }
 
@@ -503,7 +519,11 @@ final class DashboardModel {
     /// last refresh in this session and their history; nothing is read from Jamf.
     func reportPDF(_ ids: [UUID]? = nil, created: Date = Date()) -> Data {
         let chosen = ids.map { wanted in trackedBlueprints.filter { wanted.contains($0.id) } } ?? trackedBlueprints
-        let parts = chosen.map { ReportPDF.Part(tracked: $0, result: results[$0.id], saved: newestSaved($0.id), snapshots: snapshots($0.id)) }
+        let parts = chosen.map { tracked in
+            var part = ReportPDF.Part(tracked: tracked, result: results[tracked.id], saved: newestSaved(tracked.id), snapshots: snapshots(tracked.id))
+            part.sites = caches.sites(of: part.result?.devices ?? [])
+            return part
+        }
         return ReportPDF.make(parts, demo: isDemo, created: created)
     }
 
@@ -631,6 +651,7 @@ final class DashboardModel {
 
     /// When the connection in use changes, nothing of the previous one stays.
     func connectionChanged() {
+        caches.connectionChanged()
         results = [:]
         historyEntries = [:]
         newestSnapshots = [:]
