@@ -59,6 +59,13 @@ final class DashboardModel {
     /// The first reads of the connection in use (`readFirstTime`): not tied
     /// to a view, so leaving the Overview never stops them.
     @ObservationIgnored private var firstReads: (key: String, token: UUID, task: Task<Void, Never>)?
+    /// Refresh All started from the window or a menu (`startRefreshAll`), so Stop can end it.
+    @ObservationIgnored private var refreshAllRun: (token: UUID, task: Task<Void, Never>)?
+    /// The first reads or Refresh All are running: the Overview offers Stop Refresh.
+    private(set) var isReadingAll = false
+    /// The Overview asked for the first reads once: after a switch of
+    /// connection the model starts them again itself, once the old results are gone.
+    @ObservationIgnored private var firstReadsWanted = false
     private(set) var errors: [UUID: String] = [:]
     private(set) var inspections: [DeviceKey: InspectResult] = [:]
     private(set) var inspecting: Set<DeviceKey> = []
@@ -129,6 +136,8 @@ final class DashboardModel {
             }
             key = connections.inUseKey
             connectionChanged()
+            // the new connection’s first reads, now that nothing of the old one is left
+            if firstReadsWanted { readFirstTime() }
             await loadHistory()
             await caches.load()
         }
@@ -383,6 +392,7 @@ final class DashboardModel {
     /// Not tied to the view that asks: only Stop, or a switch of connection,
     /// ends it. A Blueprint whose last read was stopped isn’t read again.
     func readFirstTime() {
+        firstReadsWanted = true
         let key = connections.inUseKey
         if let firstReads, firstReads.key == key { return }
         firstReads?.task.cancel()
@@ -393,9 +403,39 @@ final class DashboardModel {
                 guard let self, !Task.isCancelled, self.connections.inUseKey == key else { break }
                 if self.results[id] == nil && self.errors[id] != Self.stopped { await self.refresh(id) }
             }
-            if self?.firstReads?.token == token { self?.firstReads = nil }
+            if self?.firstReads?.token == token {
+                self?.firstReads = nil
+                self?.updateReadingAll()
+            }
         }
         firstReads = (key, token, task)
+        updateReadingAll()
+    }
+
+    /// Refresh All, run by the model so Stop (`stopReadingAll`) can end it.
+    func startRefreshAll() {
+        guard refreshAllRun == nil else { return }
+        let token = UUID()
+        let task = Task { [weak self] in
+            await self?.refreshAll()
+            if self?.refreshAllRun?.token == token {
+                self?.refreshAllRun = nil
+                self?.updateReadingAll()
+            }
+        }
+        refreshAllRun = (token, task)
+        updateReadingAll()
+    }
+
+    /// Stop Refresh on the Overview: ends the first reads and Refresh All,
+    /// with the read each of them is doing; what was read so far stays.
+    func stopReadingAll() {
+        firstReads?.task.cancel()
+        refreshAllRun?.task.cancel()
+    }
+
+    private func updateReadingAll() {
+        isReadingAll = firstReads != nil || refreshAllRun != nil
     }
 
     /// A tracked Blueprint’s page opened: reads it when it has never been
@@ -800,7 +840,10 @@ final class DashboardModel {
         let key = connections.inUseKey
         for run in running.values where run.key != key { run.task.cancel() }
         for run in inspectRuns.values where run.key != key { run.task.cancel() }
-        if let firstReads, firstReads.key != key { firstReads.task.cancel() }
+        // also a run started for the new key before the old results were gone: the switch starts its own
+        firstReads?.task.cancel()
+        firstReads = nil
+        updateReadingAll()
         readAgain = []
         inspectErrors = [:]
         results = [:]

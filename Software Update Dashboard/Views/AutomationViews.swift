@@ -166,7 +166,7 @@ struct MenuBarContent: View {
             }
             Divider()
             HStack {
-                Button("Refresh All") { Task { await model.refreshAll() } }
+                Button("Refresh All") { model.startRefreshAll() }
                     .disabled(model.trackedBlueprints.isEmpty || !model.refreshing.isEmpty)
                 Spacer()
                 Button("Open Window") { open() }

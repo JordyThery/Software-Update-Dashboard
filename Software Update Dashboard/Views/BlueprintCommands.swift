@@ -64,6 +64,10 @@ struct BlueprintCommands: Commands {
             if let id = selectedID, focus?.model.refreshing.contains(id) == true {
                 Button("Stop Refresh") { focus?.model.stopRefresh(id) }
                     .keyboardShortcut(".")
+            } else if selectedID == nil, !showsCaches, focus?.model.isReadingAll == true {
+                // the Overview: its first reads or Refresh All
+                Button("Stop Refresh") { focus?.model.stopReadingAll() }
+                    .keyboardShortcut(".")
             } else if showsCaches, focus?.model.caches.isSweeping == true {
                 // Content Caches: its sweep
                 Button("Stop Refresh") { focus?.model.caches.stop() }
@@ -77,7 +81,7 @@ struct BlueprintCommands: Commands {
                 .disabled(selectedID == nil && !showsCaches)
             }
             Button("Refresh All") {
-                if let model = focus?.model { Task { await model.refreshAll() } }
+                focus?.model.startRefreshAll()
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
             .disabled(focus?.model.trackedBlueprints.isEmpty ?? true)

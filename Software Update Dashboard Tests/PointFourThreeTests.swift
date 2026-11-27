@@ -70,6 +70,46 @@ struct RefreshLifetimeTests {
         #expect(model.errors[stopped.id] == DashboardModel.stopped)
     }
 
+    @Test("Stop Refresh on the Overview ends the first reads, not only the Blueprint being read")
+    func stopFirstReads() async throws {
+        let model = demoModel("stop-first-reads")
+        model.readFirstTime()
+        #expect(model.isReadingAll)
+        await yield { !model.refreshing.isEmpty }
+        model.stopReadingAll()
+        await wait { !model.isReadingAll && model.refreshing.isEmpty }
+        #expect(!model.isReadingAll)
+        // the one being read ends as stopped, and the loop doesn't go on to the next
+        #expect(model.trackedBlueprints.contains { model.errors[$0.id] == DashboardModel.stopped })
+        #expect(model.trackedBlueprints.contains { model.results[$0.id] == nil })
+    }
+
+    @Test("Stop Refresh also ends Refresh All")
+    func stopRefreshAll() async throws {
+        let model = demoModel("stop-refresh-all")
+        model.startRefreshAll()
+        #expect(model.isReadingAll)
+        await yield { !model.refreshing.isEmpty }
+        model.stopReadingAll()
+        await wait { !model.isReadingAll && model.refreshing.isEmpty }
+        #expect(model.trackedBlueprints.contains { model.results[$0.id] == nil })
+    }
+
+    @Test("After a switch of connection the model starts the first reads itself, once the old results are gone")
+    func firstReadsAfterSwitch() async throws {
+        let model = demoModel("switch-first-reads")
+        model.readFirstTime()
+        await wait { model.trackedBlueprints.allSatisfy { model.results[$0.id] != nil } }
+        // away and back: the same Blueprints, their results cleared by the switch
+        model.connections.demo.isOn = false
+        await wait { model.trackedBlueprints.isEmpty }
+        model.connections.demo.isOn = true
+        await wait { !model.trackedBlueprints.isEmpty && model.trackedBlueprints.allSatisfy { model.results[$0.id] != nil } }
+        for tracked in model.trackedBlueprints {
+            #expect(model.results[tracked.id] != nil, "\(tracked.blueprintName)")
+        }
+    }
+
     @Test("A second refresh in the same turn does nothing, and Stop still ends the first")
     func secondCallInTheSameTurn() async throws {
         let model = demoModel("same-turn")
@@ -174,14 +214,43 @@ struct InspectRunTests {
 
 @Suite("0.4.3: wording")
 struct WordingTests {
-    @Test("A share has up to one decimal everywhere, and is never “100%” unless every device is on target")
+    /// `onTarget` of `total` devices, the rest failed (all updatable).
+    private func devices(onTarget: Int, of total: Int) -> [DeviceStatus] {
+        (0..<total).map { number in
+            DeviceStatus(jamfID: "\(number)", isComputer: true, name: "Mac \(number)", serial: "ZZTEST\(number)", model: "", modelIdentifier: "",
+                         error: "", category: number < onTarget ? .onTarget : .failed, diagnosis: "")
+        }
+    }
+
+    @Test("A share has up to one decimal, rounded down: “100%” only when every device is on target")
+    @MainActor
     func shares() {
-        let en = Locale(identifier: "en_US")
-        #expect(CategoryCounts.shareText(99.6, locale: en) == "99.6%")
-        #expect(CategoryCounts.shareText(99.96, locale: en) == "99.9%")
-        #expect(CategoryCounts.shareText(100, locale: en) == "100%")
-        #expect(CategoryCounts.shareText(72, locale: en) == "72%")
-        #expect(CategoryCounts.shareText(0, locale: en) == "0%")
+        #expect(CategoryCounts(devices(onTarget: 1_999, of: 2_000)).percentText.replacingOccurrences(of: ",", with: ".") == "99.9%")
+        #expect(CategoryCounts(devices(onTarget: 249, of: 250)).percentText.replacingOccurrences(of: ",", with: ".") == "99.6%")
+        #expect(CategoryCounts(devices(onTarget: 2_000, of: 2_000)).percentText.replacingOccurrences(of: ",", with: ".") == "100%")
+        #expect(CategoryCounts(devices(onTarget: 18, of: 25)).percentText.replacingOccurrences(of: ",", with: ".") == "72%")
+        #expect(CategoryCounts(devices(onTarget: 0, of: 3)).percentText.replacingOccurrences(of: ",", with: ".") == "0%")
+        #expect(CategoryCounts(devices(onTarget: 1_999, of: 2_000)).percentOnTarget == 99.9)
+        // the decimal separator is the Mac’s own; the tests compare with a period
+        // the summary writes the same share
+        let summary = StatusSummary.text(group: "B", devices: devices(onTarget: 1_999, of: 2_000), measuredAgainst: "Rule",
+                                         previous: nil, staleDays: 30, date: Date(), notes: [])
+        let plain = summary.replacingOccurrences(of: ",", with: ".")
+        #expect(plain.contains("(99.9%)") && !plain.contains("(100%)"))
+    }
+
+    @Test("Just under a notification level reads below it, and a 100% level waits for every device")
+    func shareNotices() {
+        let level95 = NotificationRule(shareLevel: 95)
+        // 94.96% after 96%: dropped below, and said as 94.9%, never “95%”
+        let down = RefreshNotices.between(previous: devices(onTarget: 96, of: 100), current: devices(onTarget: 1_899, of: 2_000),
+                                          rule: level95, name: "B")
+        #expect(down.map { $0.body.replacingOccurrences(of: ",", with: ".") } == ["94.9% of the devices are on target: the share dropped below 95%."])
+        let level100 = NotificationRule(shareLevel: 100)
+        #expect(RefreshNotices.between(previous: devices(onTarget: 1_990, of: 2_000), current: devices(onTarget: 1_999, of: 2_000),
+                                       rule: level100, name: "B").isEmpty)
+        #expect(RefreshNotices.between(previous: devices(onTarget: 1_999, of: 2_000), current: devices(onTarget: 2_000, of: 2_000),
+                                       rule: level100, name: "B").map(\.body) == ["100% of the devices are on target: the share reached 100%."])
     }
 
     @Test("Zero bytes read “0 KB”, never spelled out")
