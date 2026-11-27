@@ -28,9 +28,12 @@ nonisolated struct CategoryCounts: Sendable, Hashable, Codable {
     var isWorthSaving: Bool { total > 0 || targetUnknown == 0 }
     /// Every device but the unsupported, offline and no-report ones.
     var updatable: Int { total - StatusCategory.allCases.filter(\.isExcludedFromUpdatable).map { self[$0] }.reduce(0, +) }
-    /// The share of updatable devices on target, rounded to 0.1; nil without any.
+    /// The share of updatable devices on target, rounded down to 0.1 (whole
+    /// numbers, so no rounding error): 100 only when every one is on target,
+    /// and a share just under a notification level never reads as that level.
+    /// Nil without any.
     var percentOnTarget: Double? {
-        updatable > 0 ? (Double(self[.onTarget]) * 1000 / Double(updatable)).rounded() / 10 : nil
+        updatable > 0 ? Double(self[.onTarget] * 1000 / updatable) / 10 : nil
     }
 
     // Saved by the categories' raw values, so the history reads on as categories are added.
