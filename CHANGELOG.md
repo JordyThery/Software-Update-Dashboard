@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 (unreleased)
+
+- **Content Caches:** a cache that a caching Blueprint reaches no longer shows its declaration as not applied, with a Warning, when the declaration is applied. A cache’s serial number, model and macOS version, which were missing, are now shown.
+
 ## 0.4.0 — 2026-11-26
 
 - **Content Caches:** a new page in the sidebar lists every Mac whose content cache is activated, with its health (OK, Warning or Fault, and why), last contact, cache used against its limit, pressure, bytes served, savings and main content. Show all caches, those that need attention or those without a caching Blueprint, and sort on any column.
