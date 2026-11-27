@@ -18,7 +18,7 @@ final class MenuBarSetting {
     }
 }
 
-/// Settings › General: Open at Login and the menu bar item.
+/// Settings › General: Open at login and the menu bar item.
 struct GeneralSettingsSections: View {
     let loginItem: LoginItem
     @Bindable var menuBar: MenuBarSetting
@@ -233,7 +233,7 @@ struct NotificationSheet: View {
         .frame(width: 440)
         // turned off in System Settings: said as soon as the sheet opens
         .task { await model.notifier.checkPermission(demo: isDemo) }
-        // back from System Settings: checked again, as Open at Login is
+        // back from System Settings: checked again, as Open at login is
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await model.notifier.checkPermission(demo: isDemo) }
         }

@@ -56,7 +56,7 @@ struct SoftwareUpdateDashboardApp: App {
             HelpCommands()
         }
 
-        // JTKit’s Settings window: General (Open at Login, the menu bar item), Connections,
+        // JTKit’s Settings window: General (Open at login, the menu bar item), Connections,
         // Automation and Updates.
         SettingsWindow(updates: updates, opensTabsByName: true) {
             GeneralSettingsSections(loginItem: loginItem, menuBar: menuBar)

@@ -3,7 +3,7 @@ import JTKit
 import Observation
 import ServiceManagement
 
-/// Open at Login, through the system’s login item service: what it shows is
+/// Open at login, through the system’s login item service: what it shows is
 /// what the system says, also after a change in System Settings › General ›
 /// Login Items. A test or sandbox run never changes it.
 @MainActor

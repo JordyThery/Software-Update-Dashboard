@@ -17,7 +17,14 @@ DerivedData/
 .swiftpm/
 .build/
 
+# Release builds and archives (made outside the repo, never committed)
+*.zip
+*.xcarchive
+
 # Signing / secrets (never commit)
+*.p8
+*credentials*
+*Credentials*
 *.p12
 *.cer
 *.mobileprovision
