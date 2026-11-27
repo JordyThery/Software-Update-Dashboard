@@ -263,6 +263,7 @@ struct LiveSnapshot {
         _ = anonymizer.token(platformID, kind: "ID")
         _ = anonymizer.token(member.building, kind: "Place")
         _ = anonymizer.token(member.department, kind: "Place")
+        _ = anonymizer.site(member.siteName)
     }
 
     static func deviceToken(_ member: JamfPro.GroupMember, _ anonymizer: SnapshotAnonymizer) -> String {
@@ -291,6 +292,7 @@ struct LiveSnapshot {
             "bootstrapTokenEscrowedStatus": member.bootstrapTokenEscrowedStatus, "bootstrapTokenAllowed": member.bootstrapTokenAllowed,
             "fileVault": member.diskEncryption?.bootPartitionFileVault2State,
             "building": anonymizer.token(member.building, kind: "Place"), "department": anonymizer.token(member.department, kind: "Place"),
+            "siteName": anonymizer.site(member.siteName),
         ]
         for (key, value) in kept { if let value { out[key] = value } }
         return out
@@ -326,6 +328,7 @@ struct LiveSnapshot {
             "notCoveredBy": row.notCoveredBy, "notFetched": row.notFetched, "notFetchedSince": iso(row.notFetchedSince),
             "error": anonymizer.scrub(row.error), "errorTime": row.errorTime, "errorSinceUpdate": row.errorSinceUpdate,
             "statusProblem": anonymizer.scrub(row.statusProblem), "statusUpdated": iso(row.statusUpdated),
+            "siteName": anonymizer.site(row.siteName),
             "readiness": ReadinessCheck.allCases.filter { $0.applies(to: row) }.map(\.rawValue),
         ]
         return values.compactMapValues { $0 }

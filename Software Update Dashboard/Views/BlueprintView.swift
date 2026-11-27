@@ -278,6 +278,13 @@ struct DashboardView: View {
                 }
                 CategoryGrid(counts: result.counts)
                 ReadinessSection(devices: result.devices, showDevices: showDevices)
+                let sites = model.caches.sites(of: result.devices)
+                if !sites.isEmpty {
+                    SiteCachesSection(sites: sites) { site in
+                        model.caches.siteFilter = SiteFilter(site: site.site)
+                        model.selection = .caches
+                    }
+                }
                 MajorsSection(result: result)
                 BlueprintHealthSection(result: result)
                 HistoryChart(snapshots: model.snapshots(result.tracked.id))

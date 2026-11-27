@@ -46,6 +46,13 @@ final class SnapshotAnonymizer {
         token(value, kind: kind, remember: true)
     }
 
+    /// A Jamf Pro site's name (JTKit 1.11.0), which can be the organisation's
+    /// own: a token like any other name, also in later free text. The same
+    /// site gets the same token; no site (nil or empty) stays empty.
+    func site(_ name: String?) -> String? {
+        token(name, kind: "Site")
+    }
+
     /// `remember`: also replace it in later free text (an identifier the
     /// caller registers); a value the patterns below find needn't be.
     func token(_ value: String?, kind: String, remember: Bool) -> String? {

@@ -16,6 +16,8 @@ enum ReportPDF {
         var snapshots: [HistoryEntry]
         /// The result comes from the history: Blueprint health isn’t kept there.
         var fromHistory = false
+        /// The content caches in each site of its devices; empty: none found.
+        var sites: [SiteCaches] = []
 
         /// This session’s refresh, else the newest saved one, else none.
         init(tracked: TrackedBlueprint, result: RefreshResult?, saved: HistorySnapshot?, snapshots: [HistoryEntry]) {
@@ -71,6 +73,7 @@ enum ReportPDF {
         views.append(AnyView(ProgressSection(counts: result.counts, pastDeadline: result.pastDeadline)))
         views.append(AnyView(CategoryGrid(counts: result.counts)))
         views.append(AnyView(ReadinessSection(devices: result.devices, showDevices: { _ in }, interactive: false)))
+        if !part.sites.isEmpty { views.append(AnyView(SiteCachesSection(sites: part.sites))) }
         views.append(AnyView(MajorsSection(result: result)))
         if !part.fromHistory { views.append(AnyView(BlueprintHealthSection(result: result, versionsOnly: true))) }
         views.append(AnyView(HistoryChart(snapshots: part.snapshots)))

@@ -103,6 +103,42 @@ struct SnapshotAnonymizerTests {
         #expect(!scrubbed.localizedCaseInsensitiveContains(".local") && !scrubbed.contains(pushToken))
     }
 
+    @Test("Site names become one token per site; a device without a site has none; no site name survives")
+    func siteNames() throws {
+        let anonymizer = SnapshotAnonymizer(key: Self.key)
+        let site = "Example North Campus"
+        var first = Sample.iPad("1"), second = Sample.mac("7"), none = Sample.iPad("2")
+        first.siteName = site
+        second.siteName = site
+        none.siteName = nil
+        let members = [first, second, none]
+        for member in members { LiveSnapshot.register(member, platformID: nil, anonymizer) }
+        let rows = members.map { member in
+            DeviceStatus(jamfID: member.id, isComputer: member.kind == .computer, name: member.name ?? "", serial: member.serialNumber ?? "",
+                         model: member.model ?? "", modelIdentifier: member.modelIdentifier ?? "", inventoryOS: member.osVersion ?? "",
+                         reportedOS: nil, installState: nil, pendingVersion: nil, failureCount: nil,
+                         error: member.siteName.map { "Not allowed in site \($0)" } ?? "", errorTime: nil, errorSinceUpdate: nil,
+                         passcodePresent: nil, lastContact: nil, statusUpdated: nil, timeZone: nil, managementID: nil,
+                         category: .onTarget, diagnosis: "On target", siteName: member.siteName)
+        }
+        let devices = zip(members, rows).map { member, row in
+            ["inventory": LiveSnapshot.inventory(member, anonymizer), "sud": LiveSnapshot.sud(row, anonymizer)]
+        }
+        let tokens = devices.map { ($0["inventory"]?["siteName"] as? String, $0["sud"]?["siteName"] as? String) }
+        // the same site, the same token, in Jamf's inventory and in SUD's result
+        let token = try #require(tokens[0].0)
+        #expect(token.hasPrefix("Site-") && tokens[0].1 == token && tokens[1].0 == token && tokens[1].1 == token)
+        // no site stays empty: no field at all
+        #expect(tokens[2].0 == nil && tokens[2].1 == nil)
+        #expect(anonymizer.site(nil) == nil && anonymizer.site("") == nil && anonymizer.site(" ") == nil)
+        // nowhere in the records, also not in free text
+        let data = try JSONSerialization.data(withJSONObject: devices, options: [.sortedKeys])
+        let text = String(decoding: data, as: UTF8.self)
+        #expect(!text.localizedCaseInsensitiveContains(site) && !text.localizedCaseInsensitiveContains("North Campus"))
+        #expect(text.contains("Not allowed in site \(token)"))
+        #expect(anonymizer.originals.contains(site) && anonymizer.leaks(in: text).isEmpty)
+    }
+
     @Test("Snapshot labels and key: A to Z then AA; the key must be hex of at least 16 bytes")
     func helpers() {
         #expect(LiveSnapshot.letters(0) == "A" && LiveSnapshot.letters(25) == "Z" && LiveSnapshot.letters(26) == "AA")

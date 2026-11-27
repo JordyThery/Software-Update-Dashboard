@@ -36,6 +36,8 @@ struct BlueprintCommands: Commands {
     }
 
     private var result: RefreshResult? { selectedID.flatMap { focus?.model.results[$0] } }
+    /// Content Caches is on screen.
+    private var showsCaches: Bool { focus?.model.selection == .caches }
     private var isDemo: Bool { focus?.model.connections.demoChoice.isActive == true }
 
     var body: some Commands {
@@ -47,6 +49,13 @@ struct BlueprintCommands: Commands {
                 .keyboardShortcut("2")
                 .disabled(focus?.page == nil)
             Divider()
+            // Content Caches’ filter, as its toolbar has it
+            ForEach(CacheFilter.allCases) { filter in
+                Toggle(filter.menuTitle, isOn: Binding(get: { showsCaches && focus?.model.caches.filter == filter },
+                                                       set: { if $0 { focus?.model.caches.filter = filter } }))
+                    .disabled(!showsCaches || focus?.model.caches.hasCaches != true)
+            }
+            Divider()
         }
         CommandMenu("Blueprint") {
             Button("Track a Blueprint…") { focus?.sheet.wrappedValue = .track }
@@ -55,12 +64,17 @@ struct BlueprintCommands: Commands {
             if let id = selectedID, focus?.model.refreshing.contains(id) == true {
                 Button("Stop Refresh") { focus?.model.stopRefresh(id) }
                     .keyboardShortcut(".")
+            } else if showsCaches, focus?.model.caches.isSweeping == true {
+                // Content Caches: its sweep
+                Button("Stop Refresh") { focus?.model.caches.stop() }
+                    .keyboardShortcut(".")
             } else {
                 Button("Refresh") {
                     if let id = selectedID, let model = focus?.model { Task { await model.refresh(id) } }
+                    else if showsCaches, let caches = focus?.model.caches { Task { await caches.sweep() } }
                 }
                 .keyboardShortcut("r")
-                .disabled(selectedID == nil)
+                .disabled(selectedID == nil && !showsCaches)
             }
             Button("Refresh All") {
                 if let model = focus?.model { Task { await model.refreshAll() } }
