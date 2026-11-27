@@ -58,7 +58,7 @@ struct ConnectionTests {
 
     @Test("Without a connection there is no client; in demo mode the demo one")
     func clients() throws {
-        let model = ConnectionsModel.preview()
+        let model = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         #expect(model.connectionInUse == nil)
         #expect(try model.client() == nil)
         model.demo.isOn = true

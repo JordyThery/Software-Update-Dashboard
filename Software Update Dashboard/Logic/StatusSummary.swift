@@ -86,7 +86,7 @@ nonisolated enum StatusSummary {
             lines.append("  Changes since the previous refresh (\(previous.date.formatted(date: .abbreviated, time: .shortened))) in brackets.")
         }
         var progress = "  Progress:   \(counts[.onTarget]) of \(Plural.count(counts.updatable, "updatable device")) on target"
-        if let percent = counts.percentOnTarget { progress += " (\(percent.formatted(.number.precision(.fractionLength(0...1)).locale(locale)))%)" }
+        if let percent = counts.percentOnTarget { progress += " (\(CategoryCounts.shareText(percent, locale: locale)))" }
         progress += "; updatable excludes unsupported, offline and no report"
         lines.append(progress)
         let late = devices.filter { $0.pastDeadline == true }.count
@@ -98,7 +98,7 @@ nonisolated enum StatusSummary {
         lines.append("  Passcode:   \(passcodes) online \(passcodes == 1 ? "device" : "devices") not on target report a passcode")
         let unreadable = devices.filter { $0.statusProblem != nil }
         if !unreadable.isEmpty {
-            lines.append("  !! The update status couldn’t be read for \(unreadable.count) \(unreadable.count == 1 ? "device" : "devices"); they count as no report. Refresh again.")
+            lines.append("  Warning: the update status couldn’t be read for \(unreadable.count) \(unreadable.count == 1 ? "device" : "devices"); they count as no report. Refresh again.")
         }
         let diagnoses = diagnosisCounts(devices)
         if !diagnoses.isEmpty {

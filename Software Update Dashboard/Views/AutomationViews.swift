@@ -36,7 +36,7 @@ struct GeneralSettingsSections: View {
                     Button("Open System Settings") { loginItem.openSystemSettings() }
                 }
             case .unavailable:
-                Text("Can’t be changed in a test or sandbox run.").font(.callout).foregroundStyle(.secondary)
+                Text("Not available in a test run.").font(.callout).foregroundStyle(.secondary)
             default:
                 EmptyView()
             }
@@ -147,7 +147,7 @@ struct MenuBarContent: View {
                         Circle().fill(ShareLevel.color(percent)).frame(width: 9, height: 9).accessibilityHidden(true)
                         Text(tracked.blueprintName).lineLimit(1)
                         Spacer(minLength: 12)
-                        Text(percent.map { "\($0.formatted(.number.precision(.fractionLength(0...1))))%" } ?? "–")
+                        Text(percent.map { CategoryCounts.shareText($0) } ?? "–")
                             .monospacedDigit().foregroundStyle(.secondary)
                         if model.refreshing.contains(tracked.id) { ProgressView().controlSize(.mini) }
                     }

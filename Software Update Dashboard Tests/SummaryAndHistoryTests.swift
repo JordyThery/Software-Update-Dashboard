@@ -36,7 +36,7 @@ struct StatusSummaryTests {
         #expect(text.contains("  Progress:   2 of 3 updatable devices on target (66.7%); updatable excludes unsupported, offline and no report\n"))
         #expect(text.contains("  Passcode:   1 online device not on target report a passcode\n"))
         #expect(text.contains("  Devices to check: 1 device\n    Test iPad 3  iPad13,18  iPadOS 26.7.1  Downloaded, install blocked by the passcode\n"))
-        #expect(!text.contains("!!"))
+        #expect(!text.contains("Warning: the update status"))
     }
 
     @Test("A previous refresh for another target isn’t compared")
@@ -52,7 +52,7 @@ struct StatusSummaryTests {
         let text = StatusSummary.text(group: "G", devices: [row("1", .noReport, "Update status couldn’t be read", problem: "403")],
                                       measuredAgainst: "Version 27.0.1", previous: nil, staleDays: 30, notes: ["Scope: 1 group added (A)"])
         #expect(text.contains("  Scope: 1 group added (A)\n"))
-        #expect(text.contains("!! The update status couldn’t be read for 1 device; they count as no report."))
+        #expect(text.contains("Warning: the update status couldn’t be read for 1 device; they count as no report."))
     }
 
     @Test("Diagnoses by count, then by name; on-target devices left out")

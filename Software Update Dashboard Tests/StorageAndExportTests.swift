@@ -187,7 +187,7 @@ struct RefreshAndDemoTests {
     }
 
     private func demoModel(releases: Source? = nil, history: StatusHistory? = nil) -> DashboardModel {
-        let connections = ConnectionsModel.preview()
+        let connections = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         connections.demo.isOn = true
         let read: (@Sendable () async throws -> AppleReleases.Catalog)? = releases.map { source in
             { guard let catalog = source.catalog else { throw URLError(.notConnectedToInternet) }; return catalog }
@@ -265,7 +265,7 @@ struct RefreshAndDemoTests {
 
     @Test("A refresh that ends after Demo Mode was switched off is dropped: nothing in either history")
     func switchDuringRefresh() async throws {
-        let connections = ConnectionsModel.preview()
+        let connections = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         connections.demo.isOn = true
         let catalog = try await connections.appleReleases().catalog()
         let history = StatusHistory(folder: TestFiles.folder("switch"))
