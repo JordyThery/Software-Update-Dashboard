@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.2 — unreleased
+## 0.4.2 — 2026-11-27
 
 - **Content Caches:** when a cache’s inventory report is old, its reason now says whether the Mac is still in contact with Jamf Pro, for example “In contact today, but no inventory report for 11 days”, or “No contact for 60 days” when it isn’t. The Warning and Fault levels are the same as before.
 
