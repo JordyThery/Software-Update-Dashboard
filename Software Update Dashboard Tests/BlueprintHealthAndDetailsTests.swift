@@ -285,7 +285,7 @@ struct DemoFeatureTests {
 struct DeclarationReadTests {
     private func workflow(_ server: MockServer) throws -> RefreshWorkflow {
         let client = try JamfPlatform.Client(baseURL: URL(string: "https://eu.api.jamfcloud.com")!,
-                                             scope: .environment("0c6c4f86-1111-4a3c-9d7e-2f1b3c4d5e6f"), tokens: StaticToken(),
+                                             scope: .environment("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), tokens: StaticToken(),
                                              recorder: RequestRecorder(session: server.session, log: nil), sleep: { _ in })
         return RefreshWorkflow(client: client, catalog: AppleReleases.Catalog(), serverTimeZone: .gmt)
     }
