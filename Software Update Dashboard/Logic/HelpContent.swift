@@ -74,7 +74,7 @@ nonisolated enum HelpContent {
         "Caches set up with a Jamf Pro configuration profile (the Content Caching payload) or by hand on the Mac also show as No Caching Blueprint: the app can’t see which payloads a profile holds, so it can’t tell them from a cache nobody set up.",
         "Saved is what a cache served to devices, to its peers and to the caches below it, minus what it had to fetch from Apple, since its counters started. Bytes held as personal (iCloud) content are shown, never counted as a saving on their own. When a cache’s counters start again, for example after it was turned off and on, the trend marks it and counts on from there.",
         "Fault: the cache is activated but not running, its status or startup status isn’t OK, its registration with Apple failed, every parent cache is unhealthy, or Jamf Pro has no inventory report of the Mac for more than 7 days.",
-        "Warning: its registration is pending, its cache pressure reached 50 % or more in the last hour, a parent cache is unhealthy, it posted an alert in the last 24 hours, it is moving its data or a move failed, Jamf Pro has no inventory report for more than 48 hours, or its caching Blueprint’s declaration isn’t applied.",
+        "Warning: its registration is pending, its cache pressure reached 50% or more in the last hour, a parent cache is unhealthy, it posted an alert in the last 24 hours, it is moving its data or a move failed, Jamf Pro has no inventory report for more than 48 hours, or its caching Blueprint’s declaration isn’t applied.",
         "How full a cache is never decides its health: a content cache fills up to its limit and then removes the content used least. Pressure shows when it is too small.",
         "The figures come from the Mac’s inventory and are as new as its last inventory report. Macs on macOS 27 also send their status to Jamf Pro when it changes, and their live figures only when the caching Blueprint’s declaration asks for them at an interval.",
         "On a Blueprint’s dashboard, Content Caches by Site shows, for every site of the Blueprint’s devices, the worst health of the caches in that site, or that it has none.",
@@ -148,7 +148,7 @@ nonisolated enum HelpContent {
             else if detail.range(of: "Passcode|Keybag", options: .regularExpression) != nil { "passcode" }
             else if detail.range(of: "[Bb]attery", options: .regularExpression) != nil { "battery" }
             else if detail.range(of: "[Dd]isk ?[Ss]pace|free space|[Ss]torage", options: .regularExpression) != nil { "storage" }
-            // an update asset Apple no longer has isn't its servers being unreachable
+            // an update asset Apple no longer has isn’t its servers being unreachable
             else if detail.contains("AssetReloadNotFound") { nil }
             else if likely, cause == "Update error", detail.range(of: connectionFailure, options: .regularExpression) != nil { "network-hosts" }
             else { nil }

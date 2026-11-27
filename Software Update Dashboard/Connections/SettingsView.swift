@@ -53,7 +53,7 @@ struct SettingsView: View {
                 Text("Jamf Pro writes the times of devices’ status reports in its own time zone. Jamf Cloud servers normally use UTC.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                // a refresh found the status times one setting's offset away from the last contacts
+                // a refresh found the status times one setting’s offset away from the last contacts
                 if let warning = connections.serverTimeZoneWarning(forID: record.wrappedValue.id) {
                     WarningLabel(warning)
                     Button("Use UTC") { record.wrappedValue.serverTimeZone = AppConnection.defaultServerTimeZone }

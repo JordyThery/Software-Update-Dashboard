@@ -15,7 +15,7 @@ struct SoftwareUpdateDashboardApp: App {
         let logger = Logger(subsystem: "be.jordythery.softwareupdatedashboard", category: "Updates")
         return UpdateChecker(
             configuration: .softwareUpdateDashboard,
-            // A failed check can hold GitHub's answer: private in the system log.
+            // A failed check can hold GitHub’s answer: private in the system log.
             activity: { logger.info("\($0, privacy: .private)") }
         )
     }()
@@ -47,7 +47,7 @@ struct SoftwareUpdateDashboardApp: App {
         }
         .commands {
             AppInfoCommands(appName: "Software Update Dashboard") { updates.checkManually() }
-            // The toolbar picker's items, as JTKit's Connection menu.
+            // The toolbar picker’s items, as JTKit’s Connection menu.
             ConnectionCommands(store: connections.saved, roles: [connections.role()]) {
                 DemoModeToggle(demo: connections.demo)
             }
@@ -56,7 +56,7 @@ struct SoftwareUpdateDashboardApp: App {
             HelpCommands()
         }
 
-        // JTKit's Settings window: General (Open at Login, the menu bar item), Connections,
+        // JTKit’s Settings window: General (Open at Login, the menu bar item), Connections,
         // Automation and Updates.
         SettingsWindow(updates: updates, opensTabsByName: true) {
             GeneralSettingsSections(loginItem: loginItem, menuBar: menuBar)
@@ -85,7 +85,7 @@ struct SoftwareUpdateDashboardApp: App {
         }
         .defaultSize(width: 720, height: 760)
 
-        // JTKit's shared activity log (Window › Activity Log, ⇧⌘L).
+        // JTKit’s shared activity log (Window › Activity Log, ⇧⌘L).
         ActivityLogWindow(
             log: connections.activityLog,
             emptyDescription: "Sign-ins, reads from Jamf, Apple’s release data, connection tests and retries appear here as they happen."
@@ -94,6 +94,6 @@ struct SoftwareUpdateDashboardApp: App {
 }
 
 extension ActivityLog {
-    /// The app's one activity log (Window › Activity Log).
+    /// The app’s one activity log (Window › Activity Log).
     static let app = ActivityLog()
 }

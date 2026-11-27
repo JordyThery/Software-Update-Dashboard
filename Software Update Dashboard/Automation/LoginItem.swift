@@ -3,7 +3,7 @@ import JTKit
 import Observation
 import ServiceManagement
 
-/// Open at Login, through the system's login item service: what it shows is
+/// Open at Login, through the system’s login item service: what it shows is
 /// what the system says, also after a change in System Settings › General ›
 /// Login Items. A test or sandbox run never changes it.
 @MainActor
@@ -18,10 +18,10 @@ final class LoginItem {
     }
 
     private(set) var state: State = .off
-    /// Why the last change didn't work.
+    /// Why the last change didn’t work.
     private(set) var problem: String?
 
-    /// The system's status; tests replace it and `change`.
+    /// The system’s status; tests replace it and `change`.
     @ObservationIgnored var status: () -> SMAppService.Status = { SMAppService.mainApp.status }
     @ObservationIgnored var change: (Bool) throws -> Void = { on in
         if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
@@ -33,7 +33,7 @@ final class LoginItem {
         refresh()
     }
 
-    /// Reads the system's status again (on appear, when the app becomes active).
+    /// Reads the system’s status again (on appear, when the app becomes active).
     func refresh() {
         guard canChange else {
             state = .unavailable
