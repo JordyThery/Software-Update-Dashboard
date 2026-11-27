@@ -123,7 +123,8 @@ enum ReportPDF {
             used = 0
         }
         for block in blocks {
-            await Task.yield()
+            // a moment between blocks, so the window takes events and redraws
+            try? await Task.sleep(for: .milliseconds(1))
             // its height at the page’s width: text that wraps makes it taller
             let renderer = ImageRenderer(content: block.view
                 .frame(width: contentWidth, alignment: .leading)

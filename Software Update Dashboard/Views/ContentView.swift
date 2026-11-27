@@ -129,11 +129,13 @@ struct ContentView: View {
     private func exportPDF(all: Bool) {
         guard !isMakingPDF else { return }
         let id = all ? nil : selectedID
+        // named now, for the Blueprint chosen, whatever happens while it is drawn
+        let name = model.reportName(id)
         isMakingPDF = true
         Task {
             let data = await model.reportPDF(id.map { [$0] })
             isMakingPDF = false
-            pdfName = model.reportName(id)
+            pdfName = name
             pdfReport = PDFReportDocument(data: data)
         }
     }
