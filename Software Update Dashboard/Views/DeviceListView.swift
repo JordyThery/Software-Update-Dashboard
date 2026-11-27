@@ -1,7 +1,7 @@
 import JTKit
 import SwiftUI
 
-/// Every device of the group with its category and diagnosis, and the
+/// Every device of the tracked Blueprint with its category and diagnosis, and the
 /// selected one’s detail beside it.
 struct DeviceListView: View {
     let model: DashboardModel
@@ -66,7 +66,7 @@ struct DeviceListView: View {
             Button("Open in Jamf Pro") { model.open(pages(ids)) }
                 .disabled(pages(ids).isEmpty)
             Button("Inspect") { inspect(ids) }
-                .disabled(ids.isEmpty)
+                .disabled(ids.isEmpty || model.isInspectRunning(in: result.tracked.id))
         }
         .focusedSceneValue(\.deviceSelection, DeviceSelection(model: model, trackedID: result.tracked.id,
                                                               devices: result.devices.filter { selected.contains($0.id) }))
@@ -92,11 +92,23 @@ struct DeviceListView: View {
                         .accessibilityLabel("Remove filter: \(readiness.title)")
                     }
                     Spacer()
-                    Button("Inspect Devices to Check") {
-                        inspect(Set(InspectWorkflow.select(result.devices).map(\.id)))
+                    if let step = model.inspectProgress[result.tracked.id] {
+                        ProgressView(value: Double(step.done), total: Double(max(1, step.total)))
+                            .progressViewStyle(.linear)
+                            .frame(width: 100)
+                            .accessibilityHidden(true)
+                        Text("Inspecting \(step.done) of \(Plural.count(step.total, "device"))")
+                            .font(.callout)
+                            .monospacedDigit()
+                        Button("Stop") { model.stopInspect(result.tracked.id) }
+                            .help("Stop inspecting; what was found so far stays")
+                    } else {
+                        Button("Inspect Devices to Check") {
+                            inspect(Set(InspectWorkflow.select(result.devices).map(\.id)))
+                        }
+                        .disabled(InspectWorkflow.select(result.devices).isEmpty)
+                        .help("Look for the likely cause on every device to check: those whose diagnosis needs someone to look at it")
                     }
-                    .disabled(InspectWorkflow.select(result.devices).isEmpty || model.isInspecting(in: result.tracked.id))
-                    .help("Look for the likely cause on every device to check: those whose diagnosis needs someone to look at it")
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -242,7 +254,7 @@ struct DeviceDetailView: View {
                 // one line: where the target comes from, or why there is none
                 if let line = device.targetSource ?? device.targetReason { Text(line).foregroundStyle(.secondary) }
                 if device.limitedByHardware == true { WarningLabel(DeviceDetailText.hardwareLimit(device)) }
-                // this Blueprint's earlier step, still pending: shown, not counted
+                // this Blueprint’s earlier step, still pending: shown, not counted
                 if let step = device.earlierStepVersion {
                     let late = device.earlierStepLapsed == true
                     LabeledContent("Installs first", value: step)
@@ -257,7 +269,7 @@ struct DeviceDetailView: View {
                         }
                     }
                 }
-                // the target pending with this Blueprint's earlier step's deadline: shown, not counted
+                // the target pending with this Blueprint’s earlier step’s deadline: shown, not counted
                 if let step = device.carriedStepVersion,
                    let text = DeadlineZones.text(local: device.carriedDeadlineLocal, reported: device.carriedDeadline) {
                     LabeledContent("Device reports", value: text)
@@ -356,17 +368,24 @@ struct DeviceDetailView: View {
                         }
                     }
                 }
-                if let error = model.inspectError { WarningLabel(error) }
+                if let error = model.inspectError(in: result.tracked.id) {
+                    if error == DashboardModel.stopped {
+                        Text("Inspect was stopped.").foregroundStyle(.secondary)
+                    } else {
+                        WarningLabel(error)
+                    }
+                }
                 Button(model.inspection(of: device, in: result.tracked.id) == nil ? "Inspect" : "Inspect Again") {
                     Task { await model.inspect([device], in: result.tracked.id) }
                 }
-                .disabled(model.isInspecting(device, in: result.tracked.id))
+                // one Inspect per Blueprint at a time
+                .disabled(model.isInspectRunning(in: result.tracked.id))
                 .help("Reads the device’s status and declaration reports to find the likely cause")
             }
         }
         .formStyle(.grouped)
         .sheet(isPresented: $showsStatusItems) {
-            StatusItemsView(model: model, trackedID: result.tracked.id, device: device)
+            StatusItemsView(model: model, device: device)
         }
     }
 

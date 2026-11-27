@@ -46,7 +46,10 @@ enum ReportPDF {
     static var contentWidth: CGFloat { pageSize.width - 2 * margin }
     /// Devices needing attention per block, so a long list breaks between rows.
     static let rowsPerBlock = 18
-    /// Grey text dark enough for paper (about 7.5:1 on white); the report is always light.
+    /// Devices needing attention listed per Blueprint (ten blocks); the rest
+    /// are counted, and every device is in the CSV export.
+    static let maxAttentionRows = 180
+    /// Gray text dark enough for paper (about 7.5:1 on white); the report is always light.
     static let secondaryInk = Color(white: 0.35)
 
     /// “Software Update Dashboard Report” (“ — Demo” in Demo Mode).
@@ -54,8 +57,10 @@ enum ReportPDF {
         "Software Update Dashboard Report" + (demo ? " — Demo" : "")
     }
 
-    /// The PDF: a title, then each Blueprint from a new page.
-    static func make(_ parts: [Part], demo: Bool, created: Date = Date()) -> Data {
+    /// The PDF: a title, then each Blueprint from a new page. Drawn block by
+    /// block on the main thread (the renderer needs it), giving way between
+    /// blocks so the window stays responsive.
+    static func make(_ parts: [Part], demo: Bool, created: Date = Date()) async -> Data {
         var blocks: [(view: AnyView, newPage: Bool)] = []
         blocks.append((AnyView(ReportTitle(title: title(demo: demo), created: created, count: parts.count)), false))
         for (index, part) in parts.enumerated() {
@@ -63,7 +68,7 @@ enum ReportPDF {
                 blocks.append((view, number == 0 && index > 0))
             }
         }
-        return render(blocks, title: title(demo: demo))
+        return await render(blocks, title: title(demo: demo))
     }
 
     /// One Blueprint’s blocks, in the dashboard’s order.
@@ -81,12 +86,14 @@ enum ReportPDF {
         if !result.replacements.isEmpty { views.append(AnyView(ReplacementSection(result: result))) }
         let attention = attentionDevices(result)
         if attention.isEmpty {
-            views.append(AnyView(ReportAttentionRows(title: "Devices to Check", devices: [], total: 0)))
+            views.append(AnyView(ReportAttentionRows(title: "Devices to Check", devices: [])))
         } else {
-            for start in stride(from: 0, to: attention.count, by: rowsPerBlock) {
-                let rows = Array(attention[start..<min(start + rowsPerBlock, attention.count)])
+            let listed = min(attention.count, maxAttentionRows)
+            for start in stride(from: 0, to: listed, by: rowsPerBlock) {
+                let end = min(start + rowsPerBlock, listed)
+                let rows = Array(attention[start..<end])
                 views.append(AnyView(ReportAttentionRows(title: start == 0 ? "Devices to Check" : "Devices to Check (continued)",
-                                                         devices: rows, total: attention.count)))
+                                                         devices: rows, more: end == listed ? attention.count - listed : 0)))
             }
         }
         return views
@@ -100,7 +107,7 @@ enum ReportPDF {
 
     /// Draws the blocks on pages: a block that doesn’t fit starts a new page;
     /// one taller than a page is scaled down to fit.
-    static func render(_ blocks: [(view: AnyView, newPage: Bool)], title: String) -> Data {
+    static func render(_ blocks: [(view: AnyView, newPage: Bool)], title: String) async -> Data {
         let data = NSMutableData()
         var box = CGRect(origin: .zero, size: pageSize)
         let info = [kCGPDFContextTitle: title, kCGPDFContextCreator: "Software Update Dashboard"] as CFDictionary
@@ -116,7 +123,8 @@ enum ReportPDF {
             used = 0
         }
         for block in blocks {
-            // its height at the page's width: text that wraps makes it taller
+            await Task.yield()
+            // its height at the page’s width: text that wraps makes it taller
             let renderer = ImageRenderer(content: block.view
                 .frame(width: contentWidth, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
@@ -186,7 +194,8 @@ struct ReportBlueprintHeader: View {
 struct ReportAttentionRows: View {
     let title: String
     let devices: [DeviceStatus]
-    let total: Int
+    /// Devices needing attention past the report’s limit (`maxAttentionRows`), after the last rows.
+    var more = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -209,6 +218,10 @@ struct ReportAttentionRows: View {
                         }
                         .font(.subheadline)
                     }
+                }
+                if more > 0 {
+                    Text("And \(Plural.count(more, "more device")) to check; every device is in the device list CSV (Export › Device List as CSV).")
+                        .font(.callout).foregroundStyle(ReportPDF.secondaryInk)
                 }
             }
         }

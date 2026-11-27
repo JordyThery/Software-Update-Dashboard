@@ -72,15 +72,16 @@ final class ConnectionsModel {
             storage: UserDefaultsConnectionStorage(key: connectionsKey, defaults: defaults),
             secrets: [.main: SecretLocation(store: secrets)],
             log: { activityLog.recordAction($0, isWarning: true) },
-            // under the live-check switch: the run's connections, in memory
+            // under the live-check switch: the run’s connections, in memory
             liveRecord: { AppConnection(connection: $0) })
         return ConnectionsModel(saved: list, defaults: defaults, activityLog: activityLog,
                                 demo: DemoMode(key: demoModeKey, defaults: defaults),
                                 holdsSavedConnections: !(isTestHost || isSandbox || LiveLaunch.isSwitched))
     }
 
-    /// A model for previews and tests: nothing saved, no Keychain. A test
-    /// that reads its own settings passes its own throwaway `defaults`.
+    /// A model for previews and tests: nothing saved, no Keychain. The
+    /// shared domain is for Xcode previews only: every test passes its own
+    /// throwaway `defaults` (`TestFiles.defaults`), as tests run in parallel.
     static func preview(activityLog: ActivityLog? = nil, defaults given: UserDefaults? = nil) -> ConnectionsModel {
         let activityLog = activityLog ?? ActivityLog()
         let defaults = given ?? UnderTest.emptiedDefaults(domain: "be.jordythery.softwareupdatedashboard.preview")
@@ -170,10 +171,14 @@ final class ConnectionsModel {
         return address.isEmpty ? nil : address
     }
 
-    /// Changes whenever the connection in use does, so views read again.
+    /// Changes whenever the connection in use does, so views read again:
+    /// what says which tenant it reads (the region, environment, host and
+    /// API client), never its name, so a rename keeps every result.
     var inUseKey: String {
         guard let connection = connectionInUse else { return "none" }
-        return "\(connection.id) \(connection.name) \(demoChoice.isActive)"
+        let tenant = [connection.region.rawValue, connection.environmentID, connection.hostOverride, connection.clientID]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        return ([connection.id.uuidString] + tenant + ["\(demoChoice.isActive)"]).joined(separator: " ")
     }
 
     // MARK: Clients

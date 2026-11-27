@@ -117,7 +117,7 @@ struct ReportPDFTests {
     @Test("All tracked Blueprints: each from a new page, with what the dashboard shows and the devices needing attention")
     func all() async throws {
         let model = await refreshedDemo("pdf-all")
-        let data = model.reportPDF()
+        let data = await model.reportPDF()
         #expect(data.starts(with: Data("%PDF".utf8)))
         let (text, pages, title) = try text(data)
         #expect(title == "Software Update Dashboard Report — Demo")
@@ -142,7 +142,7 @@ struct ReportPDFTests {
     func one() async throws {
         let model = await refreshedDemo("pdf-one")
         let iPads = try #require(model.trackedBlueprints.first { $0.blueprintName.contains("iPad") })
-        let (text, _, _) = try text(model.reportPDF([iPads.id]))
+        let (text, _, _) = try text(await model.reportPDF([iPads.id]))
         #expect(text.contains(iPads.blueprintName))
         #expect(!model.trackedBlueprints.filter { $0.id != iPads.id }.contains { text.contains($0.blueprintName) })
         #expect(text.contains("Hardware to Replace") || text.contains("Hardware"))
@@ -150,9 +150,9 @@ struct ReportPDFTests {
     }
 
     @Test("A long list of devices needing attention breaks between rows, never inside a section")
-    func pages() {
+    func pages() async {
         #expect(ReportPDF.rowsPerBlock > 0)
-        let empty = ReportPDF.make([], demo: false)
+        let empty = await ReportPDF.make([], demo: false)
         #expect(empty.starts(with: Data("%PDF".utf8)))
         #expect(PDFDocument(data: empty)?.pageCount == 1)
         #expect(ReportPDF.title(demo: false) == "Software Update Dashboard Report")

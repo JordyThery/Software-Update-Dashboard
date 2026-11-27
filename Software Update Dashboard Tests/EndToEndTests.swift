@@ -9,7 +9,7 @@ import JTKit
 @MainActor
 struct EndToEndTests {
     private func demoModel(history: StatusHistory? = nil) -> DashboardModel {
-        let connections = ConnectionsModel.preview()
+        let connections = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         connections.demo.isOn = true
         let folder = TestFiles.folder("e2e")
         return DashboardModel(connections: connections, history: history ?? StatusHistory(folder: folder))
@@ -219,7 +219,7 @@ struct EndToEndTests {
         let (model, result) = try await refreshed(Self.iPads)
         let idle = try #require(result.devices.first { $0.name == "Field iPad 11" })
         await model.inspect([idle], in: result.tracked.id)
-        #expect(model.inspectError == nil)
+        #expect(model.inspectError(in: result.tracked.id) == nil)
         let inspection = try #require(model.inspection(of: idle, in: result.tracked.id))
         #expect(inspection.cause == "Update declarations not applied yet")
         let onTarget = try #require(result.devices.first { $0.name == "Field iPad 01" })

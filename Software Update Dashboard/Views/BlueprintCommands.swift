@@ -97,7 +97,7 @@ struct BlueprintCommands: Commands {
                 guard let id = selectedID, let model = focus?.model, let result else { return }
                 Task { await model.inspect(InspectWorkflow.select(result.devices), in: id) }
             }
-            .disabled(result == nil)
+            .disabled(result == nil || selectedID.map { focus?.model.isInspectRunning(in: $0) == true } == true)
             Button("Export Device List as CSV…") { focus?.export?(true) }
                 .disabled(focus?.export == nil || result == nil)
             Button("Export Summary…") { focus?.export?(false) }
@@ -146,7 +146,7 @@ struct DeviceCommands: Commands {
                 guard let selection else { return }
                 Task { await selection.model.inspect(selection.devices, in: selection.trackedID) }
             }
-            .disabled(selection?.devices.isEmpty ?? true)
+            .disabled(selection.map { $0.devices.isEmpty || $0.model.isInspectRunning(in: $0.trackedID) } ?? true)
         }
     }
 }

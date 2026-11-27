@@ -178,7 +178,7 @@ struct DeviceDetailsTests {
 @MainActor
 struct DemoFeatureTests {
     private func refreshed(_ name: String) async throws -> (DashboardModel, RefreshResult) {
-        let connections = ConnectionsModel.preview()
+        let connections = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         connections.demo.isOn = true
         let model = DashboardModel(connections: connections, history: StatusHistory(folder: TestFiles.folder("v02")))
         let tracked = try #require(model.trackedBlueprints.first { $0.blueprintName == name })
@@ -247,7 +247,7 @@ struct DemoFeatureTests {
     func statusItems() async throws {
         let (model, result) = try await refreshed("Contoso – Mac Update")
         let mac = try #require(result.devices.first { $0.name == "Studio Mac 01" })
-        let items = try await model.statusItems(of: mac, in: result.tracked.id)
+        let items = try await model.statusItems(managementID: mac.managementID, isComputer: mac.isComputer)
         #expect(items.contains { $0.key == "device.operating-system.supplemental.extra-version" && $0.value == "(a)" && $0.valueKind == .string })
         #expect(items.contains { $0.key == "passcode.is-present" && $0.value == "false" && $0.valueKind == .boolean })
         #expect(items.contains { $0.key == "management.declarations" })
@@ -262,12 +262,12 @@ struct DemoFeatureTests {
         }
         let noID = DeviceStatus(jamfID: "0", isComputer: true, name: "", serial: "", model: "", modelIdentifier: "",
                                 error: "", category: .noReport, diagnosis: "")
-        await #expect(throws: RefreshError.self) { try await model.statusItems(of: noID, in: result.tracked.id) }
+        await #expect(throws: RefreshError.self) { try await model.statusItems(managementID: noID.managementID, isComputer: noID.isComputer) }
     }
 
     @Test("A refresh stopped while the declarations are read ends as “Stopped.” and saves nothing")
     func stopped() async throws {
-        let connections = ConnectionsModel.preview()
+        let connections = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         connections.demo.isOn = true
         let history = StatusHistory(folder: TestFiles.folder("stop"))
         let model = DashboardModel(connections: connections, history: history)
