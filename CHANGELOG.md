@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.3 — 2026-11-27
+
+- **A first read keeps going** when you leave the Overview or a Blueprint’s page while it runs; only Stop ends it. A Blueprint whose read you stopped now says “Refresh Stopped” instead of reporting an error, and isn’t read again until you ask.
+- **Stop Tracking during a refresh** stops that refresh first, so the Blueprint’s history is really deleted.
+- **Changes made during a refresh** (Set Update Start, Compare with a Group) are read again as soon as that refresh ends, so the dashboard shows them.
+- **Renaming a connection** keeps its results on screen; pointing it at another environment reads that environment.
+- **Inspect Devices to Check** shows how far it has got (“Inspecting 8 of 120 devices”) and can be stopped; a problem with one Blueprint’s Inspect no longer shows under the devices of the others.
+- **Track a Blueprint:** clicking quickly from one Blueprint to the next no longer shows a warning, and the scope is shown correctly when the groups arrive later; a group list that can’t be read is now reported.
+- **When the history or the content cache trend can’t be saved** on this Mac, the dashboard, the Content Caches page and the activity log now say so.
+- **The PDF report** is made without freezing the window, and lists up to 180 devices to check per Blueprint, counting the rest (every device is in the CSV export).
+- **The share on target** has up to one decimal in the window too, as in the menu bar and notifications, and reads 100% only when every device is on target.
+- **Wording:** sizes are written as in Finder, with zero as “0 KB”; the beta program setting reads Allowed, Always on or Always off; pressure reads “12%”; live figures sent more often than once a minute are given in seconds; the summary’s unreadable-status line starts with “Warning:”.
+
 ## 0.4.2 — 2026-11-27
 
 - **Content Caches:** when a cache’s inventory report is old, its reason now says whether the Mac is still in contact with Jamf Pro, for example “In contact today, but no inventory report for 11 days”, or “No contact for 60 days” when it isn’t. The Warning and Fault levels are the same as before.
