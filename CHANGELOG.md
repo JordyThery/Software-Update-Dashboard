@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.1 (unreleased)
+## 0.4.1 — 2026-11-27
 
 - **Content Caches:** a cache that a caching Blueprint reaches no longer shows its declaration as not applied, with a Warning, when the declaration is applied. A cache’s serial number, model and macOS version, which were missing, are now shown.
 
