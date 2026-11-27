@@ -93,11 +93,16 @@ struct BlueprintCommands: Commands {
             Button("Notifications…") { if let id = selectedID { focus?.sheet.wrappedValue = .notifications(id) } }
                 .disabled(selectedID == nil)
             Divider()
-            Button("Inspect Devices to Check") {
-                guard let id = selectedID, let model = focus?.model, let result else { return }
-                Task { await model.inspect(InspectWorkflow.select(result.devices), in: id) }
+            // the same place either way: Inspect Devices to Check, or Stop Inspecting while it runs
+            if let id = selectedID, focus?.model.isInspectRunning(in: id) == true {
+                Button("Stop Inspecting") { focus?.model.stopInspect(id) }
+            } else {
+                Button("Inspect Devices to Check") {
+                    guard let id = selectedID, let model = focus?.model, let result else { return }
+                    Task { await model.inspect(InspectWorkflow.select(result.devices), in: id) }
+                }
+                .disabled(result == nil)
             }
-            .disabled(result == nil || selectedID.map { focus?.model.isInspectRunning(in: $0) == true } == true)
             Button("Export Device List as CSV…") { focus?.export?(true) }
                 .disabled(focus?.export == nil || result == nil)
             Button("Export Summary…") { focus?.export?(false) }

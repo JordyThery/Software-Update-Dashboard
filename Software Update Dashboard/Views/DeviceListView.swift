@@ -100,7 +100,7 @@ struct DeviceListView: View {
                         Text("Inspecting \(step.done) of \(Plural.count(step.total, "device"))")
                             .font(.callout)
                             .monospacedDigit()
-                        Button("Stop") { model.stopInspect(result.tracked.id) }
+                        Button("Stop Inspecting") { model.stopInspect(result.tracked.id) }
                             .help("Stop inspecting; what was found so far stays")
                     } else {
                         Button("Inspect Devices to Check") {
