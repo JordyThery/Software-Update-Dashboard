@@ -13,7 +13,7 @@
 
 A read-only Mac app that shows, for the devices a Blueprint is scoped to, whether they are on the OS version its software update asks for, and if not, why not.
 
-![Software Update Dashboard in Demo Mode: a Blueprint’s dashboard with its progress, categories and history](docs/screenshot.png)
+![Software Update Dashboard in Demo Mode: a Blueprint’s dashboard with its progress, categories, readiness and Blueprint health](docs/screenshot.png)
 
 ## Features
 
