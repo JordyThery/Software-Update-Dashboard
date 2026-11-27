@@ -15,7 +15,7 @@
       "kind": "remote",
       "repository": "https://github.com/JordyThery/JTKit.git",
       "version": {
-        "up-to-next-major-version": "1.12.1",
+        "up-to-next-major-version": "1.13.0",
       },
     },
   ],
