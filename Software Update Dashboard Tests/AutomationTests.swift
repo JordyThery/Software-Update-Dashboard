@@ -188,7 +188,7 @@ struct KeepAwakeTests {
 @Suite("0.3: open at login and the menu bar item")
 @MainActor
 struct LoginAndMenuBarTests {
-    @Test("Open at Login shows what the system says, also after a change in System Settings")
+    @Test("Open at login shows what the system says, also after a change in System Settings")
     func loginItem() {
         var status = SMAppService.Status.notRegistered
         var changes: [Bool] = []

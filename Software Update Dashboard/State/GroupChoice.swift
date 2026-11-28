@@ -1,7 +1,7 @@
 import Foundation
 import JTKit
 
-/// What the Track a Group sheet offers: the groups the chosen Blueprint is
+/// What the Compare with a Group sheet offers: the groups the chosen Blueprint is
 /// scoped to first, then every other group by kind, all filtered by the
 /// search. Groups are told apart by kind and number together.
 nonisolated struct GroupChoice: Sendable {

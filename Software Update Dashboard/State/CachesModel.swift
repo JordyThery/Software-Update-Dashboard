@@ -22,6 +22,8 @@ final class CachesModel {
     private(set) var progress: RefreshProgress?
     /// Why the last sweep stopped; nil when it didn’t.
     private(set) var error: String?
+    /// Why the last sweep couldn’t be saved on this Mac; nil when it was.
+    private(set) var saveProblem: String?
     /// Which caches the table shows (the toolbar and View menu).
     var filter: CacheFilter = .all
     /// The site the table shows, from a Blueprint’s “by site” line; nil: every site.
@@ -73,6 +75,7 @@ final class CachesModel {
         latest = nil
         trend = []
         error = nil
+        saveProblem = nil
         progress = nil
         siteFilter = nil
         filter = .all
@@ -82,13 +85,20 @@ final class CachesModel {
     // MARK: Sweeping
 
     /// One sweep of the connection in use; `stop` ends it, and so does
-    /// cancelling the caller (Stop in the automatic refresh).
+    /// canceling the caller (Stop in the automatic refresh).
     func sweep() async {
         guard !isSweeping, connections.connectionInUse != nil else { return }
+        // busy from here, before the read starts: a second call in the same turn does nothing
+        isSweeping = true
+        error = nil
         let task = Task { await read() }
         running = task
         await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        // only this call’s own sweep: a later one may have taken its place
+        guard running == task else { return }
         running = nil
+        isSweeping = false
+        progress = nil
     }
 
     func stop() {
@@ -96,12 +106,6 @@ final class CachesModel {
     }
 
     private func read() async {
-        isSweeping = true
-        error = nil
-        defer {
-            isSweeping = false
-            progress = nil
-        }
         // a switch of Demo Mode or the connection meanwhile drops the result
         let key = connections.inUseKey
         let isDemo = isDemo
@@ -128,23 +132,31 @@ final class CachesModel {
                 demoKnown = result.notCaching
             } else if let archive {
                 let notCaching = result.notCaching
-                let saved = await Task.detached(priority: .utility) { () -> [ContentCacheRules.CacheSnapshot]? in
-                    do {
+                let saved = await Task.detached(priority: .utility) { () -> Result<[ContentCacheRules.CacheSnapshot], Error> in
+                    Result {
                         try archive.save(record, snapshots: snapshots)
                         try archive.saveKnownBlueprints(notCaching)
                         return archive.trend()
-                    } catch {
-                        return nil
                     }
                 }.value
                 guard connections.inUseKey == key else { return }
-                trend = saved ?? trend + snapshots
+                switch saved {
+                case .success(let read):
+                    trend = read
+                    saveProblem = nil
+                case .failure(let failure):
+                    // kept in memory until the app quits; said on the page and in the activity log, never silent
+                    trend += snapshots
+                    saveProblem = failure.localizedDescription
+                    connections.activityLog.recordAction("The content cache sweep couldn’t be saved", note: failure.localizedDescription,
+                                                         isWarning: true)
+                }
             } else {
                 trend += snapshots
             }
             latest = record
         } catch is CancellationError {
-            if connections.inUseKey == key { error = "Stopped." }
+            if connections.inUseKey == key { error = DashboardModel.stopped }
         } catch {
             if connections.inUseKey == key { self.error = error.localizedDescription }
         }

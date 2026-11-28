@@ -42,8 +42,16 @@ extension ProgressGroup {
 }
 
 extension CategoryCounts {
-    /// “72%” or “–”.
+    /// “72%”, “99.6%” or “–” (`shareText`).
     var percentText: String {
-        percentOnTarget.map { "\(($0 / 100).formatted(.percent.precision(.fractionLength(0))))" } ?? "–"
+        percentOnTarget.map { Self.shareText($0) } ?? "–"
+    }
+
+    /// A share on target as the window, the menu bar item, notifications and
+    /// the summary all write it: up to one decimal, rounded down (“99.9%”
+    /// for 1,999 of 2,000), so “100%” only when every device is on target.
+    nonisolated static func shareText(_ percent: Double, locale: Locale = .autoupdatingCurrent) -> String {
+        let shown = (percent * 10 + 1e-9).rounded(.down) / 10
+        return "\(shown.formatted(.number.precision(.fractionLength(0...1)).locale(locale)))%"
     }
 }

@@ -36,9 +36,26 @@ struct CacheHealthLabel: View {
     }
 }
 
-/// Bytes as Finder writes them (“61 GB”).
+/// Bytes as Finder writes them (“61 GB”, “2 KB”), and zero as a number in
+/// its smallest unit (“0 KB”), never spelled out.
 func bytesText(_ bytes: Int64?) -> String {
-    bytes.map { $0.formatted(.byteCount(style: .file)) } ?? "–"
+    guard let bytes else { return "–" }
+    return (bytes == 0 ? ByteText.zero : ByteText.any).string(fromByteCount: bytes)
+}
+
+private enum ByteText {
+    static let any: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter
+    }()
+    static let zero: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = .useKB
+        formatter.allowsNonnumericFormatting = false
+        return formatter
+    }()
 }
 
 // MARK: - The page
@@ -84,6 +101,14 @@ struct CachesView: View {
             } else if caches.isSweeping {
                 ProgressView(caches.progress?.text ?? "Reading from Jamf…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if caches.error == DashboardModel.stopped {
+                ContentUnavailableView {
+                    Label("Reading Stopped", systemImage: "stop.circle")
+                } description: {
+                    Text("The content caches haven’t been read yet.")
+                } actions: {
+                    Button("Read Content Caches") { Task { await caches.sweep() } }
+                }
             } else if let error = caches.error {
                 ContentUnavailableView {
                     Label("Couldn’t Read the Content Caches", systemImage: "exclamationmark.triangle")
@@ -118,6 +143,11 @@ struct CachesView: View {
                 .accessibilityElement(children: .combine)
             } else if let latest = caches.latest, let error = caches.error {
                 RefreshStoppedBanner(error: error, shown: latest.date) { Task { await caches.sweep() } }
+            } else if let problem = caches.saveProblem {
+                WarningBanner(text: "The last sweep couldn’t be saved on this Mac, so the trend keeps it only until the app quits.",
+                              detail: problem) {
+                    EmptyView()
+                }
             }
         }
         .navigationTitle("Content Caches")
@@ -277,6 +307,8 @@ struct CachingBlueprintCard: View {
 
     static func liveFiguresText(_ interval: Int?) -> String {
         guard let interval, interval > 0 else { return "No live figures" }
+        // seconds below one minute, never “every 0 min”
+        if interval < 60 { return "Live figures every \(interval) s" }
         let minutes = interval / 60
         return minutes < 60 ? "Live figures every \(minutes) min" : "Live figures every \(Plural.count(minutes / 60, "hour"))"
     }
@@ -319,7 +351,7 @@ struct CachesTable: View {
             }
             .width(min: 110, ideal: 140)
             TableColumn("Pressure", value: \.pressureSort) { row in
-                Text(row.pressure.map { "\($0) %" } ?? "–").monospacedDigit()
+                Text(row.pressure.map { "\($0)%" } ?? "–").monospacedDigit()
             }
             .width(min: 60, ideal: 70)
             TableColumn("Served", value: \.servedSort) { Text(bytesText($0.savings.served)).monospacedDigit() }
@@ -408,7 +440,7 @@ struct CacheDetailView: View {
         DetailSection("Cache") {
             DetailRow("Used", row.limit.map { "\(bytesText(row.used)) of \(bytesText($0))" } ?? "\(bytesText(row.used)), no limit")
             DetailRow("Free", bytesText(row.free))
-            DetailRow("Pressure", row.pressure.map { "\($0) % in the last hour" } ?? "–")
+            DetailRow("Pressure", row.pressure.map { "\($0)% in the last hour" } ?? "–")
             if let personal = row.personalUsed, personal > 0 { DetailRow("Personal (iCloud)", bytesText(personal)) }
             DetailRow("Running", row.isActive.map { $0 ? "Yes" : "No" } ?? "–")
             if let registration = row.registration {

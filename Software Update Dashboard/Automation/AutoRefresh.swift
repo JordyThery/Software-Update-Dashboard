@@ -73,7 +73,7 @@ final class AutoRefresh {
                 do { try await self.sleep(.seconds(wait)) } catch { return }
                 guard !Task.isCancelled else { return }
                 await self.runOnce()
-                // missed intervals (a sleep) don't add up: the next one counts from now
+                // missed intervals (a sleep) don’t add up: the next one counts from now
                 next = Self.next(after: next, interval: interval, now: self.now())
             }
         }

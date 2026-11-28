@@ -187,7 +187,7 @@ struct RefreshAndDemoTests {
     }
 
     private func demoModel(releases: Source? = nil, history: StatusHistory? = nil) -> DashboardModel {
-        let connections = ConnectionsModel.preview()
+        let connections = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         connections.demo.isOn = true
         let read: (@Sendable () async throws -> AppleReleases.Catalog)? = releases.map { source in
             { guard let catalog = source.catalog else { throw URLError(.notConnectedToInternet) }; return catalog }
@@ -265,7 +265,7 @@ struct RefreshAndDemoTests {
 
     @Test("A refresh that ends after Demo Mode was switched off is dropped: nothing in either history")
     func switchDuringRefresh() async throws {
-        let connections = ConnectionsModel.preview()
+        let connections = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         connections.demo.isOn = true
         let catalog = try await connections.appleReleases().catalog()
         let history = StatusHistory(folder: TestFiles.folder("switch"))
@@ -286,7 +286,7 @@ struct RefreshAndDemoTests {
             request.path.contains("MGMT-2") ? .json(403, "{}") : .json(200, #"{"statusItems":[]}"#)
         }
         let client = try JamfPlatform.Client(baseURL: URL(string: "https://eu.api.jamfcloud.com")!,
-                                             scope: .environment("0c6c4f86-1111-4a3c-9d7e-2f1b3c4d5e6f"), tokens: StaticToken(),
+                                             scope: .environment("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), tokens: StaticToken(),
                                              recorder: RequestRecorder(session: server.session, log: nil), sleep: { _ in })
         let workflow = RefreshWorkflow(client: client, catalog: AppleReleases.Catalog(), serverTimeZone: .gmt)
         let members = ["1", "2", "3"].map { Sample.iPad($0) }

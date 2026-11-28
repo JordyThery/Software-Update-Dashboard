@@ -18,7 +18,7 @@ final class MenuBarSetting {
     }
 }
 
-/// Settings › General: Open at Login and the menu bar item.
+/// Settings › General: Open at login and the menu bar item.
 struct GeneralSettingsSections: View {
     let loginItem: LoginItem
     @Bindable var menuBar: MenuBarSetting
@@ -36,7 +36,7 @@ struct GeneralSettingsSections: View {
                     Button("Open System Settings") { loginItem.openSystemSettings() }
                 }
             case .unavailable:
-                Text("Can’t be changed in a test or sandbox run.").font(.callout).foregroundStyle(.secondary)
+                Text("Not available in a test run.").font(.callout).foregroundStyle(.secondary)
             default:
                 EmptyView()
             }
@@ -147,7 +147,7 @@ struct MenuBarContent: View {
                         Circle().fill(ShareLevel.color(percent)).frame(width: 9, height: 9).accessibilityHidden(true)
                         Text(tracked.blueprintName).lineLimit(1)
                         Spacer(minLength: 12)
-                        Text(percent.map { "\($0.formatted(.number.precision(.fractionLength(0...1))))%" } ?? "–")
+                        Text(percent.map { CategoryCounts.shareText($0) } ?? "–")
                             .monospacedDigit().foregroundStyle(.secondary)
                         if model.refreshing.contains(tracked.id) { ProgressView().controlSize(.mini) }
                     }
@@ -166,7 +166,7 @@ struct MenuBarContent: View {
             }
             Divider()
             HStack {
-                Button("Refresh All") { Task { await model.refreshAll() } }
+                Button("Refresh All") { model.startRefreshAll() }
                     .disabled(model.trackedBlueprints.isEmpty || !model.refreshing.isEmpty)
                 Spacer()
                 Button("Open Window") { open() }
@@ -233,7 +233,7 @@ struct NotificationSheet: View {
         .frame(width: 440)
         // turned off in System Settings: said as soon as the sheet opens
         .task { await model.notifier.checkPermission(demo: isDemo) }
-        // back from System Settings: checked again, as Open at Login is
+        // back from System Settings: checked again, as Open at login is
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await model.notifier.checkPermission(demo: isDemo) }
         }

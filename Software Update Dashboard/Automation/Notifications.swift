@@ -34,11 +34,11 @@ nonisolated enum RefreshNotices {
         var notices: [RefreshNotice] = []
         if let level = rule.shareLevel, let before = CategoryCounts(previous).percentOnTarget,
            let now = CategoryCounts(current).percentOnTarget {
-            let shown = now.formatted(.number.precision(.fractionLength(0...1)))
+            let shown = CategoryCounts.shareText(now)
             if before < Double(level) && now >= Double(level) {
-                notices.append(RefreshNotice(title: name, body: "\(shown)% of the devices are on target: the share reached \(level)%."))
+                notices.append(RefreshNotice(title: name, body: "\(shown) of the devices are on target: the share reached \(level)%."))
             } else if before >= Double(level) && now < Double(level) {
-                notices.append(RefreshNotice(title: name, body: "\(shown)% of the devices are on target: the share dropped below \(level)%."))
+                notices.append(RefreshNotice(title: name, body: "\(shown) of the devices are on target: the share dropped below \(level)%."))
             }
         }
         if rule.failedOrStuck {
@@ -77,8 +77,10 @@ final class Notifier {
     /// Demo Mode: as if notifications were turned off in System Settings
     /// (the “Notifications Turned Off” Demo Situation). In memory only.
     var demoNotificationsOff = false
-    /// Everything posted, sent or not (Demo Mode): the newest last.
+    /// The latest notices posted, sent or not (Demo Mode), the newest last;
+    /// only the last `postedKept`, as the app may run for weeks.
     private(set) var posted: [RefreshNotice] = []
+    static let postedKept = 50
 
     /// Asks the system for permission; tests replace it and `deliver`
     /// (under tests the defaults ask nothing and send nothing).
@@ -175,6 +177,7 @@ final class Notifier {
     func post(_ notices: [RefreshNotice], demo: Bool) {
         for notice in notices {
             posted.append(notice)
+            if posted.count > Self.postedKept { posted.removeFirst(posted.count - Self.postedKept) }
             if demo {
                 activityLog.recordAction("Demo Mode, notification not sent: \(notice.title)", note: notice.body)
             } else {

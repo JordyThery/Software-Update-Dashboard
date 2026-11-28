@@ -100,7 +100,7 @@ struct ReleaseFixModelTests {
         await later.loadHistory()
         // saved to the millisecond
         #expect(abs((later.newestSaved(mac.id)?.date ?? .distantPast).timeIntervalSince(saved)) < 0.001)
-        let text = try #require(PDFDocument(data: later.reportPDF())?.string)
+        let text = try #require(PDFDocument(data: await later.reportPDF())?.string)
         #expect(text.contains("Refresh of \(saved.formatted(date: .long, time: .shortened)), the newest saved one"))
         #expect(text.contains("Devices to Check") && text.contains("Studio Mac 10"))
         // the iPad Blueprint has no refresh at all
@@ -112,7 +112,7 @@ struct ReleaseFixModelTests {
         let model = demo("pdf-names")
         let mac = try #require(model.trackedBlueprints.first { $0.blueprintName.contains("Mac") })
         await model.refresh(mac.id)
-        let text = try #require(PDFDocument(data: model.reportPDF([mac.id]))?.string)
+        let text = try #require(PDFDocument(data: await model.reportPDF([mac.id]))?.string)
         #expect(text.contains("macOS 27.0 to 27.0.1"))
         #expect(!text.contains("\(mac.blueprintName), macOS"))
     }

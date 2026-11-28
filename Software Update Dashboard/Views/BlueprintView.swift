@@ -36,6 +36,14 @@ struct BlueprintView: View {
                 }
             } else if model.refreshing.contains(tracked.id) {
                 ReadingProgress(model: model, id: tracked.id)
+            } else if let error = model.errors[tracked.id], error == DashboardModel.stopped {
+                ContentUnavailableView {
+                    Label("Refresh Stopped", systemImage: "stop.circle")
+                } description: {
+                    Text("The Blueprint hasn’t been read yet.")
+                } actions: {
+                    Button("Refresh") { Task { await model.refresh(tracked.id) } }
+                }
             } else if let error = model.errors[tracked.id] {
                 ContentUnavailableView {
                     Label(error == AppleDataUnavailable().localizedDescription ? "Couldn’t Read Apple’s Release Data" : "Couldn’t Read the Blueprint",
@@ -124,9 +132,12 @@ struct BlueprintView: View {
                 }
             }
         }
-        .onChange(of: tracked.id) { readiness = nil }
-        .task(id: tracked.id) {
-            if model.results[tracked.id] == nil && model.errors[tracked.id] == nil { await model.refresh(tracked.id) }
+        // a Blueprint never read is read when its page opens; the model runs
+        // the read, so leaving the page never stops it (Stop does)
+        .onAppear { model.readIfNeverRead(tracked.id) }
+        .onChange(of: tracked.id) {
+            readiness = nil
+            model.readIfNeverRead(tracked.id)
         }
         .onChange(of: exportRequest) {
             if let csv = exportRequest { prepareExport(csv: csv) }
@@ -188,7 +199,9 @@ struct RefreshStoppedBanner: View {
     let tryAgain: () -> Void
 
     var body: some View {
-        WarningBanner(text: "The refresh stopped: \(error) Showing the refresh of \(shown.formatted(date: .abbreviated, time: .shortened)).") {
+        let showing = "Showing the refresh of \(shown.formatted(date: .abbreviated, time: .shortened))."
+        // Stop is the user’s own choice: said as such, not as an error
+        WarningBanner(text: error == DashboardModel.stopped ? "You stopped the refresh. \(showing)" : "The refresh stopped: \(error) \(showing)") {
             Button("Try Again", action: tryAgain)
         }
     }
@@ -265,7 +278,7 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 24) {
                 RuleSection(model: model, result: result, sheet: $sheet)
                 ForEach(result.problems, id: \.self) { WarningLabel($0).font(.callout) }
-                // a refresh found the status times one setting's offset away from the last contacts
+                // a refresh found the status times one setting’s offset away from the last contacts
                 if model.connections.serverTimeZoneLooksWrong {
                     HStack(spacing: 12) {
                         WarningLabel(ConnectionsModel.serverTimeZoneLine).font(.callout)
@@ -361,8 +374,19 @@ struct RuleSection: View {
             .compactMap { name, days in days.map { "\(name) \(Plural.count($0, "day"))" } }
         if !deferrals.isEmpty { parts.append("Deferred: " + deferrals.joined(separator: ", ")) }
         if let cadence = settings.recommendedCadence { parts.append("Cadence: \(cadence)") }
-        if let beta = settings.betaProgramEnrollment { parts.append("Beta: \(String(describing: beta))") }
+        if let beta = settings.betaProgramEnrollment { parts.append("Beta: \(betaText(beta))") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// The Blueprint’s beta program setting in plain words; a value this app
+    /// doesn’t know as Jamf wrote it.
+    static func betaText(_ action: JamfPlatform.SoftwareUpdateSettings.Action) -> String {
+        switch action {
+        case .allowed: "Allowed"
+        case .alwaysOn: "Always on"
+        case .alwaysOff: "Always off"
+        case .other(let raw): raw
+        }
     }
 }
 
@@ -425,7 +449,7 @@ struct ReadinessSection: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Readiness").font(.headline)
             if ReadinessCheck.allCases.allSatisfy({ ReadinessCheck.count($0, in: devices) == 0 }) {
-                // all clear only for what the inventory says: an unknown enrollment or supervision isn't "fine"
+                // all clear only for what the inventory says: an unknown enrollment or supervision isn’t "fine"
                 let unknown = devices.filter { $0.isComputer ? $0.supervised == nil : $0.userEnrollment == nil }.count
                 Text(unknown == 0
                      ? "All devices are ready for the update."

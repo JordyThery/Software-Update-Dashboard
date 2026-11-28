@@ -27,7 +27,7 @@ struct ReadOnlyTests {
     func refusedWrite() async throws {
         let server = MockServer { _ in .json(200, "{}") }
         let client = try JamfPlatform.Client(baseURL: URL(string: "https://eu.api.jamfcloud.com")!,
-                                             scope: .environment("0c6c4f86-1111-4a3c-9d7e-2f1b3c4d5e6f"),
+                                             scope: .environment("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
                                              tokens: StaticToken(), recorder: RequestRecorder(session: server.session, log: nil),
                                              permits: ConnectionsModel.permits, sleep: { _ in })
         await #expect(throws: (any Error).self) {
@@ -58,7 +58,7 @@ struct ConnectionTests {
 
     @Test("Without a connection there is no client; in demo mode the demo one")
     func clients() throws {
-        let model = ConnectionsModel.preview()
+        let model = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         #expect(model.connectionInUse == nil)
         #expect(try model.client() == nil)
         model.demo.isOn = true

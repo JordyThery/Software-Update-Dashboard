@@ -67,7 +67,7 @@ struct GroupChoiceTests {
 
     @Test("In demo mode a mobile group and a computer group share a number, and each refreshes as its own kind")
     func demoSharedNumber() async throws {
-        let connections = ConnectionsModel.preview()
+        let connections = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         connections.demo.isOn = true
         let client = try #require(try connections.client())
         let groups = try await client.jamfProGroups()
