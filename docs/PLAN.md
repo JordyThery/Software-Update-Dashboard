@@ -81,7 +81,7 @@ Jamf Pro through the Jamf Platform API only, for iOS, iPadOS and macOS.
 
 ### Where the code comes from
 
-- Every request goes through JTKit (1.5.0 at the start, see JTKit’s ROADMAP, "1.5.0 (Software Update Dashboard)"; 1.13.1 since 0.4.3). SUD only interprets.
+- Every request goes through JTKit (1.5.0 at the start, see JTKit’s ROADMAP, "1.5.0 (Software Update Dashboard)"; 1.13.2 since 0.4.3). SUD only interprets.
 - The categories, classifier and diagnoses, summary, history and Inspect were SUD’s own, with typed models, built on what JTKit reads. Since JTKit 1.9.0 (SUD 0.3.3) the rules (targets, classifier, readiness, Inspect, Blueprint health and the reader of a refresh) are JTKit’s `SoftwareUpdateRules`, shared with the other apps; the summary, history, exports and views stay SUD’s.
 - No third-party code is copied: JAMFGetDDMInfo is GPL and may only inform. Code from Jordy’s own apps may be reused or adapted.
 
@@ -225,7 +225,7 @@ Part 2 of `_release-gate/content-caching-plan.md` (outside the repo), on branch 
 
 ### Releases from 0.3.1
 
-The CHANGELOG is the record of each release from 0.3.1 on (0.3.1 to 0.3.4, 0.4.0 to 0.4.3). 0.4.3 (JTKit 1.13.1): a first read keeps running when its page is left, Stop Tracking stops a running read before the history is deleted, a change made during a read is read again, Inspect counts and can be stopped, failed saves are shown, the PDF report lists at most 180 devices to check per Blueprint, and zero bytes read “0 KB”.
+The CHANGELOG is the record of each release from 0.3.1 on (0.3.1 to 0.3.4, 0.4.0 to 0.4.3). 0.4.3 (JTKit 1.13.2): a first read keeps running when its page is left, Stop Tracking stops a running read before the history is deleted, a change made during a read is read again, Inspect counts and can be stopped, failed saves are shown, the PDF report lists at most 180 devices to check per Blueprint, and zero bytes read “0 KB”.
 
 ### Later
 
