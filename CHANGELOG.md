@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.3 — 2026-11-27
+## 0.4.3 — 2026-11-28
 
 - **A first read keeps going** when you leave the Overview or a Blueprint’s page while it runs; Stop Refresh ends it, on the Blueprint’s page or, for all of them, on the Overview. A Blueprint whose read you stopped now says “Refresh Stopped” instead of reporting an error, and isn’t read again until you ask.
 - **Stop Tracking during a refresh** stops that refresh first, so the Blueprint’s history is really deleted.
