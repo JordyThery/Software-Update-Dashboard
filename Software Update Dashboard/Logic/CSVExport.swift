@@ -16,7 +16,7 @@ extension DeviceStatus {
         func flag(_ value: Bool?) -> String { value.map { $0 ? "yes" : "no" } ?? "" }
         return CSV.line([jamfID, isComputer ? "computer" : "mobile device", name, serial, model, modelIdentifier,
                          inventoryOS ?? "", reportedOS ?? "", targetVersion ?? "",
-                         // a reported deadline as a moment in UTC (with its Z), a computed one in the device's local time
+                         // a reported deadline as a moment in UTC (with its Z), a computed one in the device’s local time
                          deadlineDate.map(date) ?? deadlineLocal ?? "", deadlineSource ?? "", flag(pastDeadline),
                          installState ?? "",
                          pendingVersion ?? "", category.rawValue, diagnosis, error, errorTime ?? "", flag(errorSinceUpdate),

@@ -50,7 +50,7 @@ struct HelpView: View {
                             .padding(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(.background.secondary, in: .rect(cornerRadius: 8))
-                            // the entry a link opened: outlined, not by colour alone
+                            // the entry a link opened: outlined, not by color alone
                             .overlay {
                                 if navigator.target == problem.id {
                                     RoundedRectangle(cornerRadius: 8).strokeBorder(.tint, lineWidth: 2)

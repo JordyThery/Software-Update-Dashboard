@@ -38,19 +38,29 @@ struct OverviewView: View {
         .navigationTitle("Overview")
         .toolbar {
             ToolbarItem {
-                Button {
-                    Task { await model.refreshAll() }
-                } label: {
-                    Label("Refresh All", systemImage: "arrow.clockwise")
+                // the same place either way: Refresh All, or Stop Refresh while the first reads or Refresh All run
+                if model.isReadingAll {
+                    Button {
+                        model.stopReadingAll()
+                    } label: {
+                        Label("Stop Refresh", systemImage: "stop.fill")
+                    }
+                    .help("Stop reading the tracked Blueprints from Jamf; what was read so far stays")
+                } else {
+                    Button {
+                        model.startRefreshAll()
+                    } label: {
+                        Label("Refresh All", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(model.trackedBlueprints.isEmpty || !model.refreshing.isEmpty)
+                    .help("Read every tracked Blueprint from Jamf again")
                 }
-                .disabled(model.trackedBlueprints.isEmpty || !model.refreshing.isEmpty)
-                .help("Read every tracked Blueprint from Jamf again")
             }
         }
-        .task(id: model.connections.inUseKey) {
-            // the first look at a connection reads its Blueprints once
-            for tracked in model.trackedBlueprints where model.results[tracked.id] == nil { await model.refresh(tracked.id) }
-        }
+        // the first look at a connection reads its Blueprints once; the model
+        // runs it (and again after a switch of connection), so leaving the
+        // Overview never stops it (Stop Refresh does)
+        .onAppear { model.readFirstTime() }
     }
 }
 
@@ -99,7 +109,11 @@ struct BlueprintCard: View {
                         WarningLabel("The last refresh stopped; showing an earlier one").font(.callout)
                     }
                 } else if let error = model.errors[tracked.id] {
-                    WarningLabel(error).font(.callout).lineLimit(3)
+                    if error == DashboardModel.stopped {
+                        Text("Refresh stopped; not read yet").foregroundStyle(.secondary)
+                    } else {
+                        WarningLabel(error).font(.callout).lineLimit(3)
+                    }
                 } else {
                     Text("Not read yet").foregroundStyle(.secondary)
                 }

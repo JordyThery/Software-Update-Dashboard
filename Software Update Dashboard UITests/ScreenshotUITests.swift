@@ -7,14 +7,13 @@ import XCTest
 /// xcodebuild test -project "Software Update Dashboard.xcodeproj" -scheme "Software Update Dashboard Release Check"
 ///   -only-testing:"Software Update Dashboard UITests/ScreenshotUITests"
 /// and export the attachments (xcrun xcresulttool export attachments),
-/// scaled to 1800 pixels wide, to docs/screenshot.png (the dashboard) and
-/// docs/screenshot-overview.png and docs/screenshot-devices.png; testCachesScreenshot
-/// gives docs/screenshot-caches.png.
+/// scaled to 1800 pixels wide: testScreenshots gives docs/screenshot.png
+/// (the dashboard), testCachesScreenshot docs/screenshot-caches.png.
 final class ScreenshotUITests: JTKitUITestCase {
     override var appName: String { "Software Update Dashboard" }
 
     override func setUpWithError() throws {
-        try XCTSkipIf(Self.isReleaseCheck, "Screenshots aren't part of the release check")
+        try XCTSkipIf(Self.isReleaseCheck, "Screenshots aren’t part of the release check")
         try super.setUpWithError()
     }
 
@@ -33,22 +32,12 @@ final class ScreenshotUITests: JTKitUITestCase {
     func testScreenshots() {
         let main = app.windows.firstMatch
         XCTAssertTrue(anyContaining("updatable on target").waitForExistence(timeout: 30), "The overview shows no progress")
-        keep(main.screenshot(), named: "screenshot-overview")
 
         openSidebar("Contoso – iPad Update")
         XCTAssertTrue(anyContaining("updatable devices on their target").waitForExistence(timeout: 30), "The dashboard didn't load")
         sleep(2)
         // the README's, and the website's dashboard
         keep(main.screenshot(), named: "screenshot")
-
-        tap(app.radioButtons["Devices"].firstMatch, timeout: 10)
-        tap(deviceRow("Field iPad 06"), timeout: 20)
-        let inspect = app.buttons["Inspect"].firstMatch
-        scrollIntoView(inspect)
-        tap(inspect)
-        XCTAssertTrue(any("Likely cause").waitForExistence(timeout: 30), "Inspect found no likely cause")
-        sleep(1)
-        keep(main.screenshot(), named: "screenshot-devices")
     }
 
     /// Content Caches with a cache's detail: docs/screenshot-caches.png.

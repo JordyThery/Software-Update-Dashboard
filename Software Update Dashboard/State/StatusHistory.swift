@@ -34,7 +34,7 @@ nonisolated enum ProgressGroup: String, CaseIterable, Sendable, Identifiable {
     func count(in counts: CategoryCounts) -> Int { categories.map { counts[$0] }.reduce(0, +) }
 }
 
-/// One refresh of a tracked group, as kept in its history.
+/// One refresh of a tracked Blueprint, as kept in its history.
 nonisolated struct HistorySnapshot: Sendable, Hashable, Codable, Identifiable {
     var date: Date
     /// What the devices were measured against: the Blueprint’s rule (e.g.
@@ -108,7 +108,7 @@ nonisolated struct HistoryEntry: Sendable, Hashable, Codable, Identifiable {
     }
 }
 
-extension HistorySnapshot {
+nonisolated extension HistorySnapshot {
     /// This refresh as the index keeps it.
     var entry: HistoryEntry {
         var seen = Set<HistoryEntry.Target>()
@@ -232,8 +232,8 @@ nonisolated struct ScopeChange: Sendable, Hashable {
     }
 }
 
-/// The refreshes of every tracked group: one JSON file per refresh in a
-/// folder per group, and an index of every refresh’s counts (`counts.index`)
+/// The refreshes of every tracked Blueprint: one JSON file per refresh in a
+/// folder per tracked Blueprint, and an index of every refresh’s counts (`counts.index`)
 /// for the chart. Counts are kept for 180 days; full refreshes for 7 days,
 /// after that the newest of each day (UTC), up to the 180 days. Files that
 /// can’t be read are left alone and skipped. Reading is never meant for the
@@ -258,51 +258,51 @@ nonisolated struct StatusHistory: Sendable {
             .appending(path: "History", directoryHint: .isDirectory)
     }
 
-    private func groupFolder(_ groupID: UUID) -> URL {
-        folder.appending(path: groupID.uuidString, directoryHint: .isDirectory)
+    private func trackedFolder(_ trackedID: UUID) -> URL {
+        folder.appending(path: trackedID.uuidString, directoryHint: .isDirectory)
     }
 
     /// Saves a refresh and removes those older than 180 days, in every
     /// folder (also of Blueprints no longer tracked here, e.g. under another
     /// connection: their folders stay, their old refreshes go).
-    func save(_ snapshot: HistorySnapshot, for groupID: UUID) throws {
-        let groupFolder = groupFolder(groupID)
-        try FileManager.default.createDirectory(at: groupFolder, withIntermediateDirectories: true)
+    func save(_ snapshot: HistorySnapshot, for trackedID: UUID) throws {
+        let trackedFolder = trackedFolder(trackedID)
+        try FileManager.default.createDirectory(at: trackedFolder, withIntermediateDirectories: true)
         // the index first, from what is on disk now (built once from older history)
-        var index = entries(for: groupID).filter { abs($0.date.timeIntervalSince(snapshot.date)) >= 0.001 }
+        var index = entries(for: trackedID).filter { abs($0.date.timeIntervalSince(snapshot.date)) >= 0.001 }
         let data = try Self.encoder.encode(snapshot)
-        try data.write(to: groupFolder.appending(path: Self.fileName(for: snapshot.date)), options: .atomic)
+        try data.write(to: trackedFolder.appending(path: Self.fileName(for: snapshot.date)), options: .atomic)
         index.append(snapshot.entry)
         index.sort { $0.date < $1.date }
-        try writeIndex(index, folder: groupFolder)
+        try writeIndex(index, folder: trackedFolder)
         pruneAll(now: snapshot.date)
     }
 
     /// Every refresh’s counts, oldest first, from the index; built once from
     /// the saved refreshes when there is none yet (history from before it)
     /// or when a saved refresh is newer than the index’s newest.
-    func entries(for groupID: UUID) -> [HistoryEntry] {
-        let groupFolder = groupFolder(groupID)
-        let newestFile = files(groupFolder).last.flatMap { Self.date(fromFileName: $0.lastPathComponent) }   // one name parsed
-        if let data = try? Data(contentsOf: groupFolder.appending(path: Self.indexName)),
+    func entries(for trackedID: UUID) -> [HistoryEntry] {
+        let trackedFolder = trackedFolder(trackedID)
+        let newestFile = files(trackedFolder).last.flatMap { Self.date(fromFileName: $0.lastPathComponent) }   // one name parsed
+        if let data = try? Data(contentsOf: trackedFolder.appending(path: Self.indexName)),
            let index = try? Self.decoder.decode([HistoryEntry].self, from: data),
            newestFile.map({ newest in index.last.map { $0.date >= newest.addingTimeInterval(-0.001) } ?? false }) ?? true {
             return index
         }
         guard newestFile != nil else { return [] }
-        let built = snapshots(for: groupID).map(\.entry)
-        try? writeIndex(built, folder: groupFolder)
+        let built = snapshots(for: trackedID).map(\.entry)
+        try? writeIndex(built, folder: trackedFolder)
         return built
     }
 
-    private func writeIndex(_ index: [HistoryEntry], folder groupFolder: URL) throws {
-        try Self.encoder.encode(index).write(to: groupFolder.appending(path: Self.indexName), options: .atomic)
+    private func writeIndex(_ index: [HistoryEntry], folder trackedFolder: URL) throws {
+        try Self.encoder.encode(index).write(to: trackedFolder.appending(path: Self.indexName), options: .atomic)
     }
 
     /// The saved refreshes’ files, oldest first (by name, which sorts by time).
     /// Recognized by the shape of the name alone (`yyyyMMdd-HHmmss-SSS.json`): no date is parsed.
-    private func files(_ groupFolder: URL) -> [URL] {
-        ((try? FileManager.default.contentsOfDirectory(at: groupFolder, includingPropertiesForKeys: nil)) ?? [])
+    private func files(_ trackedFolder: URL) -> [URL] {
+        ((try? FileManager.default.contentsOfDirectory(at: trackedFolder, includingPropertiesForKeys: nil)) ?? [])
             .filter { Self.isRefreshFile($0.lastPathComponent) }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
@@ -319,9 +319,9 @@ nonisolated struct StatusHistory: Sendable {
         }
     }
 
-    /// Every refresh of a group, oldest first; since a date if given.
-    func snapshots(for groupID: UUID, since: Date? = nil) -> [HistorySnapshot] {
-        let files = (try? FileManager.default.contentsOfDirectory(at: groupFolder(groupID), includingPropertiesForKeys: nil)) ?? []
+    /// Every refresh of a tracked Blueprint, oldest first; since a date if given.
+    func snapshots(for trackedID: UUID, since: Date? = nil) -> [HistorySnapshot] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: trackedFolder(trackedID), includingPropertiesForKeys: nil)) ?? []
         return files.filter { $0.pathExtension == "json" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
             .compactMap { url in (try? Data(contentsOf: url)).flatMap { try? Self.decoder.decode(HistorySnapshot.self, from: $0) } }
@@ -332,10 +332,10 @@ nonisolated struct StatusHistory: Sendable {
     /// milliseconds, so the refresh at `date` itself never counts).
     /// Found by file name: only that one file is decoded (an unreadable one
     /// is skipped for the one before it).
-    func latest(for groupID: UUID, before date: Date? = nil) -> HistorySnapshot? {
+    func latest(for trackedID: UUID, before date: Date? = nil) -> HistorySnapshot? {
         // names sort by time: compared as text, nothing parsed
         let limit = date.map { Self.fileName(for: $0.addingTimeInterval(-0.001)) }
-        let candidates = files(groupFolder(groupID)).filter { file in limit.map { file.lastPathComponent < $0 } ?? true }
+        let candidates = files(trackedFolder(trackedID)).filter { file in limit.map { file.lastPathComponent < $0 } ?? true }
         for file in candidates.reversed() {
             if let data = try? Data(contentsOf: file), let snapshot = try? Self.decoder.decode(HistorySnapshot.self, from: data),
                date.map({ snapshot.date < $0.addingTimeInterval(-0.001) }) ?? true {
@@ -348,52 +348,52 @@ nonisolated struct StatusHistory: Sendable {
     /// What the Blueprint’s devices reported about Jamf’s deadlines
     /// (`ReportedDeadlines`), next to its refreshes; empty when there is
     /// none or it can’t be read.
-    func reportedDeadlines(for groupID: UUID) -> ReportedDeadlines {
-        guard let data = try? Data(contentsOf: groupFolder(groupID).appending(path: Self.reportedDeadlinesName)),
+    func reportedDeadlines(for trackedID: UUID) -> ReportedDeadlines {
+        guard let data = try? Data(contentsOf: trackedFolder(trackedID).appending(path: Self.reportedDeadlinesName)),
               let read = try? PropertyListDecoder().decode(ReportedDeadlines.self, from: data) else { return ReportedDeadlines() }
         return read
     }
 
     /// Saves them; an empty one removes the file.
-    func saveReportedDeadlines(_ deadlines: ReportedDeadlines, for groupID: UUID) throws {
-        let groupFolder = groupFolder(groupID)
-        let file = groupFolder.appending(path: Self.reportedDeadlinesName)
+    func saveReportedDeadlines(_ deadlines: ReportedDeadlines, for trackedID: UUID) throws {
+        let trackedFolder = trackedFolder(trackedID)
+        let file = trackedFolder.appending(path: Self.reportedDeadlinesName)
         guard !deadlines.isEmpty else {
             try? FileManager.default.removeItem(at: file)
             return
         }
-        try FileManager.default.createDirectory(at: groupFolder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: trackedFolder, withIntermediateDirectories: true)
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
         try encoder.encode(deadlines).write(to: file, options: .atomic)
     }
 
-    /// Removes a group’s whole history, when the group is no longer tracked.
-    func remove(_ groupID: UUID) {
-        try? FileManager.default.removeItem(at: groupFolder(groupID))
+    /// Removes a tracked Blueprint’s whole history, when it is no longer tracked.
+    func remove(_ trackedID: UUID) {
+        try? FileManager.default.removeItem(at: trackedFolder(trackedID))
     }
 
     /// Every folder’s refreshes older than 180 days.
     func pruneAll(now: Date) {
         let folders = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-        for groupFolder in folders where UUID(uuidString: groupFolder.lastPathComponent) != nil {
-            prune(folder: groupFolder, now: now)
+        for trackedFolder in folders where UUID(uuidString: trackedFolder.lastPathComponent) != nil {
+            prune(folder: trackedFolder, now: now)
         }
     }
 
-    func prune(_ groupID: UUID, now: Date) {
-        prune(folder: groupFolder(groupID), now: now)
+    func prune(_ trackedID: UUID, now: Date) {
+        prune(folder: trackedFolder(trackedID), now: now)
     }
 
     /// Removes refreshes older than 180 days (also from the index) and, older
     /// than 7 days, every full refresh but the newest of its day (UTC).
-    private func prune(folder groupFolder: URL, now: Date) {
+    private func prune(folder trackedFolder: URL, now: Date) {
         let cutoff = now.addingTimeInterval(-Double(Self.retentionDays) * 86_400)
         let thinFrom = now.addingTimeInterval(-Double(Self.fullDays) * 86_400)
         var newestOfDay: [String: URL] = [:]
         // names sort by time: compared as text, nothing parsed
         let cutoffName = Self.fileName(for: cutoff), thinName = Self.fileName(for: thinFrom)
-        for file in files(groupFolder) {
+        for file in files(trackedFolder) {
             let name = file.lastPathComponent
             if name < cutoffName {
                 try? FileManager.default.removeItem(at: file)
@@ -404,10 +404,10 @@ nonisolated struct StatusHistory: Sendable {
                 newestOfDay[day] = file
             }
         }
-        let indexFile = groupFolder.appending(path: Self.indexName)
+        let indexFile = trackedFolder.appending(path: Self.indexName)
         if let data = try? Data(contentsOf: indexFile), let index = try? Self.decoder.decode([HistoryEntry].self, from: data),
            index.contains(where: { $0.date < cutoff }) {
-            try? writeIndex(index.filter { $0.date >= cutoff }, folder: groupFolder)
+            try? writeIndex(index.filter { $0.date >= cutoff }, folder: trackedFolder)
         }
     }
 

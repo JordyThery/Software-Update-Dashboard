@@ -87,7 +87,7 @@ struct OpenAndReadinessTests {
 
     @Test("A saved connection’s address: one page opens, more than 10 ask first, nothing without an address")
     func openSaved() throws {
-        let connections = ConnectionsModel.preview()
+        let connections = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         var connection = Connection(name: "Role A", service: .jamfPlatform, region: .eu,
                                     environmentID: UUID().uuidString, clientID: UUID().uuidString)
         try connections.saved.save(AppConnection(connection: connection))
@@ -119,7 +119,7 @@ struct OpenAndReadinessTests {
 
     @Test("Demo Mode opens nothing: it shows the pages, on an address that names no real server")
     func openDemo() async throws {
-        let connections = ConnectionsModel.preview()
+        let connections = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         connections.demo.isOn = true
         let model = DashboardModel(connections: connections, history: StatusHistory(folder: TestFiles.folder("open-demo")))
         var opened: [URL] = []
@@ -134,7 +134,7 @@ struct OpenAndReadinessTests {
 
     @Test("Demo Mode’s sample devices give every readiness count something to open")
     func readinessInDemo() async throws {
-        let connections = ConnectionsModel.preview()
+        let connections = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         connections.demo.isOn = true
         let model = DashboardModel(connections: connections, history: StatusHistory(folder: TestFiles.folder("ready-demo")))
         var devices: [DeviceStatus] = []

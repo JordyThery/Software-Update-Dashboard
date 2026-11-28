@@ -15,6 +15,8 @@ struct ContentView: View {
     /// Export Report as PDF, ready for the Save panel, and its file name.
     @State private var pdfReport: PDFReportDocument?
     @State private var pdfName = ""
+    /// The PDF report is being drawn: said at the top of the window.
+    @State private var isMakingPDF = false
     /// The tracked Blueprint whose Stop Tracking waits for confirmation.
     @State private var stopTracking: UUID?
 
@@ -44,6 +46,16 @@ struct ContentView: View {
             .safeAreaInset(edge: .top) {
                 if let copy = model.shownUnreadableCopy {
                     UnreadableListBanner(model: model, copy: copy)
+                }
+                if isMakingPDF {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Making the PDF report…").font(.callout)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 20).padding(.vertical, 6)
+                    .background(.bar)
+                    .accessibilityElement(children: .combine)
                 }
             }
         }
@@ -93,7 +105,7 @@ struct ContentView: View {
         } message: {
             Text(Self.demoPagesText(model.demoPages ?? []))
         }
-        // Find a Device opens a device: its Blueprint's device list
+        // Find a Device opens a device: its Blueprint’s device list
         .onChange(of: model.deviceToShow) {
             if model.deviceToShow != nil { page = .devices }
         }
@@ -115,9 +127,17 @@ struct ContentView: View {
 
     /// Makes the report (all tracked Blueprints, or the one on screen) and opens the Save panel.
     private func exportPDF(all: Bool) {
+        guard !isMakingPDF else { return }
         let id = all ? nil : selectedID
-        pdfName = model.reportName(id)
-        pdfReport = PDFReportDocument(data: model.reportPDF(id.map { [$0] }))
+        // named now, for the Blueprint chosen, whatever happens while it is drawn
+        let name = model.reportName(id)
+        isMakingPDF = true
+        Task {
+            let data = await model.reportPDF(id.map { [$0] })
+            isMakingPDF = false
+            pdfName = name
+            pdfReport = PDFReportDocument(data: data)
+        }
     }
 
     private var stopTrackingTitle: String {

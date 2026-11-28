@@ -25,10 +25,10 @@ struct StatusItemsView: View {
     }
 
     /// A device of a tracked Blueprint.
-    init(model: DashboardModel, trackedID: UUID, device: DeviceStatus) {
+    init(model: DashboardModel, device: DeviceStatus) {
         self.model = model
         name = device.name.isEmpty ? device.serial : device.name
-        read = { try await model.statusItems(of: device, in: trackedID) }
+        read = { try await model.statusItems(managementID: device.managementID, isComputer: device.isComputer) }
     }
 
     /// A Mac by its management ID (a content cache).

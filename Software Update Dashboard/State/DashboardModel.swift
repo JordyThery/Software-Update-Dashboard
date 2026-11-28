@@ -50,12 +50,31 @@ final class DashboardModel {
     private(set) var refreshing: Set<UUID> = []
     /// “12 of 40 devices”, while a Blueprint refreshes.
     private(set) var progress: [UUID: RefreshProgress] = [:]
-    /// The refresh of each tracked Blueprint that is running, so Stop can end it.
-    @ObservationIgnored private var running: [UUID: Task<Void, Never>] = [:]
+    /// The refresh of each tracked Blueprint that is running, so Stop can
+    /// end it, and the connection it reads (`ConnectionsModel.inUseKey`).
+    @ObservationIgnored private var running: [UUID: Run] = [:]
+    /// Tracked Blueprints changed while they were read: read once more
+    /// when that read ends, so the change shows.
+    @ObservationIgnored private var readAgain: Set<UUID> = []
+    /// The first reads of the connection in use (`readFirstTime`): not tied
+    /// to a view, so leaving the Overview never stops them.
+    @ObservationIgnored private var firstReads: (key: String, token: UUID, task: Task<Void, Never>)?
+    /// Refresh All started from the window or a menu (`startRefreshAll`), so Stop can end it.
+    @ObservationIgnored private var refreshAllRun: (token: UUID, task: Task<Void, Never>)?
+    /// The first reads or Refresh All are running: the Overview offers Stop Refresh.
+    private(set) var isReadingAll = false
+    /// The Overview asked for the first reads once: after a switch of
+    /// connection the model starts them again itself, once the old results are gone.
+    @ObservationIgnored private var firstReadsWanted = false
     private(set) var errors: [UUID: String] = [:]
     private(set) var inspections: [DeviceKey: InspectResult] = [:]
     private(set) var inspecting: Set<DeviceKey> = []
-    private(set) var inspectError: String?
+    /// Why the last Inspect of a tracked Blueprint stopped, per tracked Blueprint.
+    private(set) var inspectErrors: [UUID: String] = [:]
+    /// “8 of 120”, while Inspect runs for a tracked Blueprint.
+    private(set) var inspectProgress: [UUID: (done: Int, total: Int)] = [:]
+    /// The Inspect of each tracked Blueprint that is running, so Stop can end it.
+    @ObservationIgnored private var inspectRuns: [UUID: Run] = [:]
     /// The saved tracked Blueprints couldn’t be read: where they were copied.
     /// Nothing is saved over them until the app is restarted with a readable list.
     private(set) var unreadableTrackedCopy: String?
@@ -106,14 +125,19 @@ final class DashboardModel {
         await loadHistory()
         await caches.load()
         while !Task.isCancelled {
-            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-                withObservationTracking { _ = connections.inUseKey } onChange: { done.resume() }
+            // a change made while loading counts too: wait only when there is none
+            if connections.inUseKey == key {
+                await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                    withObservationTracking { _ = connections.inUseKey } onChange: { done.resume() }
+                }
+                // the change is told before it is made: read it on the next turn
+                await Task.yield()
+                continue
             }
-            // the change is told before it is made: read it on the next turn
-            await Task.yield()
-            guard connections.inUseKey != key else { continue }
             key = connections.inUseKey
             connectionChanged()
+            // the new connection’s first reads, now that nothing of the old one is left
+            if firstReadsWanted { readFirstTime() }
             await loadHistory()
             await caches.load()
         }
@@ -152,6 +176,7 @@ final class DashboardModel {
     /// the demo’s list in memory and its history in the demo’s own folder.
     func remove(_ id: UUID) {
         guard canChangeTracked else { return }
+        let history = history
         if isDemo {
             demoTracked = trackedBlueprints.filter { $0.id != id }
             generation += 1
@@ -159,14 +184,27 @@ final class DashboardModel {
             saved.removeAll { $0.id == id }
             save()
         }
-        if let history { Task.detached(priority: .utility) { history.remove(id) } }
+        // a read still going would save its refresh again: stop it, and
+        // delete the history only once it has ended
+        let read = running[id]?.task
+        read?.cancel()
+        readAgain.remove(id)
+        stopInspect(id)
+        if let history {
+            Task {
+                await read?.value
+                await Task.detached(priority: .utility) { history.remove(id) }.value
+            }
+        }
         historyEntries[id] = nil
         newestSnapshots[id] = nil
         previousSnapshots[id] = nil
         if !isDemo { notifier.remove(id) }
         demoReportedDeadlines[id] = nil
         results[id] = nil
+        errors[id] = nil
         inspections = inspections.filter { $0.key.tracked != id }
+        inspectErrors[id] = nil
         if selection == .blueprint(id) { selection = .overview }
     }
 
@@ -193,7 +231,8 @@ final class DashboardModel {
             edit(&saved[index])
             save()
         }
-        Task { await refresh(id) }
+        // a read that is going took the Blueprint as it was: read once more after it
+        if refreshing.contains(id) { readAgain.insert(id) } else { Task { await refresh(id) } }
     }
 
     private func save() {
@@ -266,7 +305,7 @@ final class DashboardModel {
     func setDemoSituation(_ situation: DemoSituation) async {
         guard isDemo, situation != demoSituation else { return }
         demoSituation = situation
-        // the demo's own release feeds fail, as Apple's would
+        // the demo’s own release feeds fail, as Apple’s would
         connections.demo.appleReleaseServer.isUnreachable = situation == .appleDataUnreachable
         connections.demoServerTimeZone = situation == .serverTimeZoneWrong ? Self.demoWrongServerTimeZone : nil
         notifier.demoNotificationsOff = situation == .notificationsOff
@@ -339,38 +378,128 @@ final class DashboardModel {
         if !Task.isCancelled { await caches.sweep() }
     }
 
-    /// Refreshes a tracked Blueprint; `stopRefresh` can end it.
+    /// What a refresh or an Inspect that ended with Stop leaves in `errors`.
+    nonisolated static let stopped = "Stopped."
+
+    /// A refresh or an Inspect that is running, and the connection it reads.
+    private struct Run {
+        let task: Task<Void, Never>
+        let key: String
+    }
+
+    /// The first look at a connection reads each of its tracked Blueprints
+    /// that has no refresh yet, one after another (the Overview asks for it).
+    /// Not tied to the view that asks: only Stop, or a switch of connection,
+    /// ends it. A Blueprint whose last read was stopped isn’t read again.
+    func readFirstTime() {
+        firstReadsWanted = true
+        let key = connections.inUseKey
+        if let firstReads, firstReads.key == key { return }
+        firstReads?.task.cancel()
+        let token = UUID()
+        let ids = trackedBlueprints.map(\.id)
+        let task = Task { [weak self] in
+            for id in ids {
+                guard let self, !Task.isCancelled, self.connections.inUseKey == key else { break }
+                if self.results[id] == nil && self.errors[id] != Self.stopped { await self.refresh(id) }
+            }
+            if self?.firstReads?.token == token {
+                self?.firstReads = nil
+                self?.updateReadingAll()
+            }
+        }
+        firstReads = (key, token, task)
+        updateReadingAll()
+    }
+
+    /// Refresh All, run by the model so Stop (`stopReadingAll`) can end it.
+    func startRefreshAll() {
+        guard refreshAllRun == nil else { return }
+        let token = UUID()
+        let task = Task { [weak self] in
+            await self?.refreshAll()
+            if self?.refreshAllRun?.token == token {
+                self?.refreshAllRun = nil
+                self?.updateReadingAll()
+            }
+        }
+        refreshAllRun = (token, task)
+        updateReadingAll()
+    }
+
+    /// Stop Refresh on the Overview: ends the first reads and Refresh All,
+    /// with the read each of them is doing; what was read so far stays.
+    func stopReadingAll() {
+        firstReads?.task.cancel()
+        refreshAllRun?.task.cancel()
+    }
+
+    private func updateReadingAll() {
+        isReadingAll = firstReads != nil || refreshAllRun != nil
+    }
+
+    /// A tracked Blueprint’s page opened: reads it when it has never been
+    /// read and isn’t being read; not tied to the page, so leaving it never
+    /// stops the read.
+    func readIfNeverRead(_ id: UUID) {
+        guard results[id] == nil, errors[id] == nil, !refreshing.contains(id) else { return }
+        Task { await refresh(id) }
+    }
+
+    /// Refreshes a tracked Blueprint; `stopRefresh` can end it, and so does
+    /// canceling the caller (Stop in the automatic refresh).
     func refresh(_ id: UUID) async {
+        let key = connections.inUseKey
+        // a read of what the connection pointed at before (its environment changed): let it end first
+        if let old = running[id], old.key != key {
+            old.task.cancel()
+            await old.task.value
+            if running[id]?.task == old.task { endRun(id) }
+        }
         guard tracked(id) != nil, !refreshing.contains(id) else { return }
-        let task = Task { await read(id) }
-        running[id] = task
+        // busy from here, before the read starts: a second call in the same turn does nothing
+        refreshing.insert(id)
+        errors[id] = nil
+        let task = Task { await read(id, key: key) }
+        running[id] = Run(task: task, key: key)
         await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        // only this call’s own read: a later one may have taken its place
+        guard running[id]?.task == task else { return }
+        endRun(id)
+        // changed while it read: once more, so the change shows (not after a Stop)
+        if readAgain.remove(id) != nil, !task.isCancelled { await refresh(id) }
+    }
+
+    private func endRun(_ id: UUID) {
         running[id] = nil
+        refreshing.remove(id)
+        progress[id] = nil
     }
 
     /// Stops the refresh of a tracked Blueprint; the previous one stays.
     func stopRefresh(_ id: UUID) {
-        running[id]?.cancel()
+        readAgain.remove(id)
+        running[id]?.task.cancel()
     }
 
-    private func read(_ id: UUID) async {
-        guard let tracked = tracked(id), !refreshing.contains(id) else { return }
-        refreshing.insert(id)
-        errors[id] = nil
-        defer {
-            refreshing.remove(id)
-            progress[id] = nil
-        }
-        // what this refresh belongs to, taken before the first wait: a switch
-        // of Demo Mode or the connection meanwhile drops its result, so
-        // nothing lands in the other side’s history
-        let key = connections.inUseKey
+    /// The Blueprint is still tracked, and the connection in use is still the
+    /// one the read started with (`key`): only then does its result count.
+    private func isCurrent(_ id: UUID, key: String) -> Bool {
+        connections.inUseKey == key && tracked(id) != nil
+    }
+
+    /// Reads a tracked Blueprint (`key`: the connection in use, taken before
+    /// the first wait). A switch of Demo Mode or the connection meanwhile
+    /// drops its result, so nothing lands in the other side’s history, and
+    /// so does Stop Tracking, so nothing is saved after its history is deleted.
+    private func read(_ id: UUID, key: String) async {
+        guard let tracked = tracked(id) else { return }
         let history = history
         let isDemo = isDemo
         do {
             guard let client = try connections.client() else { throw RefreshError("No connection in use.") }
             let catalog = await appleReleases()
-            // stopped while Apple's data was read: a stop, not unreachable data
+            // stopped while Apple’s data was read: a stop, not unreachable data
             try Task.checkCancellation()
             // the refresh before, off the main thread (one file, by its name), unless it is in memory
             let previous: HistorySnapshot?
@@ -388,15 +517,20 @@ final class DashboardModel {
             var result = try await workflow.run(tracked, previousScope: previous?.scope) { step in
                 Task { @MainActor in if self.refreshing.contains(id) { self.progress[id] = step } }
             }
-            guard connections.inUseKey == key else { return }
+            guard isCurrent(id, key: key) else { return }
             connections.noteServerTimeZone(looksWrong: result.serverTimeZoneLooksWrong)
             // only after a refresh worth saving, as the history: one that measured nothing would forget them
             let remember = Self.reportedDeadlinesToKeep(updated: result.reportedDeadlines, previous: workflow.reportedDeadlines,
                                                         counts: result.counts)
+            var saveProblem: String?
             if isDemo {
                 demoReportedDeadlines[id] = remember
             } else if let history, remember != workflow.reportedDeadlines {
-                await Task.detached(priority: .utility) { try? history.saveReportedDeadlines(remember, for: id) }.value
+                saveProblem = await Task.detached(priority: .utility) { () -> String? in
+                    do { try history.saveReportedDeadlines(remember, for: id) } catch { return error.localizedDescription }
+                    return nil
+                }.value
+                guard isCurrent(id, key: key) else { return }
             }
             // nothing measured (the banner says so): a snapshot of zero devices would only drop the chart
             if result.counts.isWorthSaving, let history {
@@ -404,26 +538,37 @@ final class DashboardModel {
                 let snapshot = HistorySnapshot(date: result.date, target: result.rule, ruleKey: result.ruleKey, devices: result.devices,
                                                scope: result.scope)
                 // saved and read back off the main thread
-                let entries = await Task.detached(priority: .utility) {
-                    for seed in seeds { try? history.save(seed, for: id) }
-                    try? history.save(snapshot, for: id)
-                    return history.entries(for: id)
+                let (entries, problem) = await Task.detached(priority: .utility) { () -> ([HistoryEntry], String?) in
+                    do {
+                        for seed in seeds { try history.save(seed, for: id) }
+                        try history.save(snapshot, for: id)
+                    } catch {
+                        return (history.entries(for: id), error.localizedDescription)
+                    }
+                    return (history.entries(for: id), nil)
                 }.value
-                guard connections.inUseKey == key else { return }
+                guard isCurrent(id, key: key) else { return }
                 historyEntries[id] = entries
                 newestSnapshots[id] = snapshot
+                if let problem { saveProblem = saveProblem ?? problem }
+            }
+            // a history that can’t be written: said on the dashboard and in the activity log, never silent
+            if let saveProblem {
+                result.problems.append("This refresh couldn’t be saved in the history on this Mac: \(saveProblem)")
+                connections.activityLog.recordAction("The history of “\(tracked.blueprintName)” couldn’t be saved",
+                                                     note: saveProblem, isWarning: true)
             }
             previousSnapshots[id] = previous
-            // what changed since the refresh before (this session's, else the history's): never on the first
+            // what changed since the refresh before (this session’s, else the history’s): never on the first
             let before = results[id]?.devices ?? previous?.devices
             notifier.post(RefreshNotices.between(previous: before, current: result.devices, rule: notifier.rule(for: id, demo: isDemo),
                                                  name: tracked.blueprintName),
                           demo: isDemo)
             results[id] = result
         } catch is CancellationError {
-            if connections.inUseKey == key { errors[id] = "Stopped." }
+            if isCurrent(id, key: key) { errors[id] = Self.stopped }
         } catch {
-            if connections.inUseKey == key { errors[id] = error.localizedDescription }
+            if isCurrent(id, key: key) { errors[id] = error.localizedDescription }
         }
     }
 
@@ -457,13 +602,14 @@ final class DashboardModel {
         return demoFirstPostings
     }
 
+    /// The zone the “Server Time Zone Set Wrong” Demo Situation reads status times in.
+    static let demoWrongServerTimeZone = "Europe/Amsterdam"
+
     /// Five earlier days for demo mode, from JTKit’s samples
     /// (`DemoSoftwareUpdate.pastRefreshes`), so its chart has a history:
     /// each day back, fewer devices on target; four and five days back the
     /// software update was another one, and two and three days back a pilot
     /// group was in the scope too. The chart marks those refreshes.
-    /// The zone the “Server Time Zone Set Wrong” Demo Situation reads status times in.
-    static let demoWrongServerTimeZone = "Europe/Amsterdam"
 
     private func demoHistory(_ result: RefreshResult) -> [HistorySnapshot] {
         var seeds: [HistorySnapshot] = []
@@ -474,7 +620,7 @@ final class DashboardModel {
             for index in devices.indices where devices[index].category == .onTarget && !past.onTarget.contains(Int(devices[index].jamfID) ?? -1) {
                 devices[index].category = .inProgress
             }
-            // the pilot group's own devices, in the scope then only
+            // the pilot group’s own devices, in the scope then only
             devices += past.formerMembers.map { Self.demoRow($0, at: result.date.addingTimeInterval(-Double(past.daysAgo) * 86_400)) }
             let date = result.date.addingTimeInterval(-Double(past.daysAgo) * 86_400)
             seeds.append(HistorySnapshot(date: date, target: RefreshWorkflow.rule([block]), ruleKey: RefreshWorkflow.ruleKey([block]),
@@ -497,13 +643,9 @@ final class DashboardModel {
 
     // MARK: Status items
 
-    /// Every status item of one device, read now (not kept: neither here
-    /// nor in the history). Empty when Jamf Pro has no report for it.
-    func statusItems(of device: DeviceStatus, in id: UUID) async throws -> [JamfPro.StatusItem] {
-        try await statusItems(managementID: device.managementID, isComputer: device.isComputer)
-    }
-
-    /// Every status item of a device by its management ID, read now.
+    /// Every status item of a device by its management ID, read now (not
+    /// kept: neither here nor in the history). Empty when Jamf Pro has no
+    /// report for it.
     func statusItems(managementID: String?, isComputer: Bool) async throws -> [JamfPro.StatusItem] {
         guard let managementID, !managementID.isEmpty else {
             throw RefreshError("The device has no management ID in Jamf Pro, so its status report can’t be read.")
@@ -517,14 +659,14 @@ final class DashboardModel {
 
     /// The PDF report of these tracked Blueprints (all when nil), from their
     /// last refresh in this session and their history; nothing is read from Jamf.
-    func reportPDF(_ ids: [UUID]? = nil, created: Date = Date()) -> Data {
+    func reportPDF(_ ids: [UUID]? = nil, created: Date = Date()) async -> Data {
         let chosen = ids.map { wanted in trackedBlueprints.filter { wanted.contains($0.id) } } ?? trackedBlueprints
         let parts = chosen.map { tracked in
             var part = ReportPDF.Part(tracked: tracked, result: results[tracked.id], saved: newestSaved(tracked.id), snapshots: snapshots(tracked.id))
             part.sites = caches.sites(of: part.result?.devices ?? [])
             return part
         }
-        return ReportPDF.make(parts, demo: isDemo, created: created)
+        return await ReportPDF.make(parts, demo: isDemo, created: created)
     }
 
     /// The report’s file name: the Blueprint’s or “All Blueprints”, the day, and Demo in Demo Mode.
@@ -585,13 +727,35 @@ final class DashboardModel {
 
     // MARK: Inspect
 
+    /// Devices inspected at a time between two counts of “8 of 120”.
+    static let inspectBatch = 8
+
+    /// Inspects devices of a tracked Blueprint, a few at a time so the count
+    /// moves; one Inspect per tracked Blueprint at a time. `stopInspect` ends
+    /// it, and so does canceling the caller; what it found so far stays.
     func inspect(_ devices: [DeviceStatus], in id: UUID) async {
-        guard let result = results[id] else { return }
-        let ids = Set(devices.map(\.id))
-        let keys = Set(ids.map { DeviceKey(tracked: id, device: $0) })
+        guard results[id] != nil, inspectRuns[id] == nil, !devices.isEmpty else { return }
+        let key = connections.inUseKey
+        let keys = Set(devices.map { DeviceKey(tracked: id, device: $0.id) })
         inspecting.formUnion(keys)
-        inspectError = nil
-        defer { inspecting.subtract(keys) }
+        inspectErrors[id] = nil
+        inspectProgress[id] = (0, devices.count)
+        let task = Task { await runInspect(devices, in: id, key: key) }
+        inspectRuns[id] = Run(task: task, key: key)
+        await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        guard inspectRuns[id]?.task == task else { return }
+        inspectRuns[id] = nil
+        inspecting.subtract(keys)
+        inspectProgress[id] = nil
+    }
+
+    /// Stops the Inspect of a tracked Blueprint; what it found so far stays.
+    func stopInspect(_ id: UUID) {
+        inspectRuns[id]?.task.cancel()
+    }
+
+    private func runInspect(_ devices: [DeviceStatus], in id: UUID, key: String) async {
+        guard let result = results[id] else { return }
         do {
             guard let client = try connections.client() else { throw RefreshError("No connection in use.") }
             let catalog = await appleReleases()
@@ -599,13 +763,37 @@ final class DashboardModel {
                                          target: nil, since: result.blueprintChanged, blueprintChanged: result.blueprintChanged,
                                          now: Date(), serverTimeZone: connections.serverTimeZone, catalog: catalog,
                                          current: result.health?.current)
-            let members = result.members.filter { ids.contains(RefreshWorkflow.key($0)) }
-            for inspection in try await InspectWorkflow(client: client).run(members, rows: result.devices, context: context) {
-                inspections[DeviceKey(tracked: id, device: inspection.id)] = inspection
+            let workflow = InspectWorkflow(client: client)
+            var done = 0
+            for start in stride(from: 0, to: devices.count, by: Self.inspectBatch) {
+                try Task.checkCancellation()
+                let batch = devices[start..<min(start + Self.inspectBatch, devices.count)]
+                let ids = Set(batch.map(\.id))
+                let members = result.members.filter { ids.contains(RefreshWorkflow.key($0)) }
+                let found = try await workflow.run(members, rows: result.devices, context: context)
+                // a switch of connection or Stop Tracking meanwhile: nothing of it is kept
+                guard isCurrent(id, key: key) else { return }
+                for inspection in found {
+                    inspections[DeviceKey(tracked: id, device: inspection.id)] = inspection
+                }
+                done += batch.count
+                inspecting.subtract(ids.map { DeviceKey(tracked: id, device: $0) })
+                inspectProgress[id] = (done, devices.count)
             }
         } catch {
-            inspectError = error.localizedDescription
+            guard isCurrent(id, key: key) else { return }
+            inspectErrors[id] = Task.isCancelled || error is CancellationError ? Self.stopped : error.localizedDescription
         }
+    }
+
+    /// Why the last Inspect of a tracked Blueprint stopped; nil when it didn’t.
+    func inspectError(in id: UUID) -> String? {
+        inspectErrors[id]
+    }
+
+    /// The Inspect of a tracked Blueprint is running.
+    func isInspectRunning(in id: UUID) -> Bool {
+        inspectProgress[id] != nil
     }
 
     func inspection(of device: DeviceStatus, in id: UUID) -> InspectResult? {
@@ -614,10 +802,6 @@ final class DashboardModel {
 
     func isInspecting(_ device: DeviceStatus, in id: UUID) -> Bool {
         inspecting.contains(DeviceKey(tracked: id, device: device.id))
-    }
-
-    func isInspecting(in id: UUID) -> Bool {
-        inspecting.contains { $0.tracked == id }
     }
 
     // MARK: Exports
@@ -652,6 +836,16 @@ final class DashboardModel {
     /// When the connection in use changes, nothing of the previous one stays.
     func connectionChanged() {
         caches.connectionChanged()
+        // the reads and Inspects of the connection before end now; their results would be dropped anyway
+        let key = connections.inUseKey
+        for run in running.values where run.key != key { run.task.cancel() }
+        for run in inspectRuns.values where run.key != key { run.task.cancel() }
+        // also a run started for the new key before the old results were gone: the switch starts its own
+        firstReads?.task.cancel()
+        firstReads = nil
+        updateReadingAll()
+        readAgain = []
+        inspectErrors = [:]
         results = [:]
         historyEntries = [:]
         newestSnapshots = [:]

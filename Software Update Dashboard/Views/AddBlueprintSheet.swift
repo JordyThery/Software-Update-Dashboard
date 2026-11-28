@@ -10,14 +10,35 @@ struct AddBlueprintSheet: View {
     @State private var search = ""
     @State private var blueprintID: String?
     @State private var blocks: [JamfPlatform.SoftwareUpdateBlock]?
-    @State private var scope: [GroupReference] = []
+    /// The selected Blueprint’s scope as Platform group IDs; worked out as
+    /// Jamf Pro groups (`scope`) whenever the groups arrive.
+    @State private var scopeIDs: [String] = []
     @State private var platformGroups: [JamfPlatform.PlatformGroup] = []
     @State private var groups: [JamfPro.DeviceGroup] = []
     @State private var isLoading = true
+    /// The groups have been read (or couldn’t be: `groupProblem`).
+    @State private var groupsRead = false
     @State private var isLoadingBlueprint = false
+    /// The Blueprint list couldn’t be read.
     @State private var problem: String?
+    /// The groups couldn’t be read, so no scope can be shown.
+    @State private var groupProblem: String?
+    /// The selected Blueprint couldn’t be read.
+    @State private var blueprintProblem: String?
 
     private var blueprint: JamfPlatform.BlueprintOverview? { blueprints.first { $0.id == blueprintID } }
+
+    private var scope: [GroupReference] {
+        let keys = GroupChoice.scope(platformGroupIDs: scopeIDs, platformGroups: platformGroups)
+        return keys.compactMap { key in groups.first { $0.id == key }.map(GroupReference.init) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private var scopeText: String {
+        if !groupsRead { return "Reading the groups…" }
+        if groupProblem != nil { return "Unknown: the groups couldn’t be read" }
+        return scope.isEmpty ? "No Jamf Pro groups" : scope.map(\.name).joined(separator: ", ")
+    }
     private var shown: [JamfPlatform.BlueprintOverview] {
         let text = search.trimmingCharacters(in: .whitespaces)
         return text.isEmpty ? blueprints : blueprints.filter { $0.name.localizedCaseInsensitiveContains(text) }
@@ -50,7 +71,7 @@ struct AddBlueprintSheet: View {
                             }
                             GridRow {
                                 Text("Scope").foregroundStyle(.secondary)
-                                Text(scope.isEmpty ? "No Jamf Pro groups" : scope.map(\.name).joined(separator: ", "))
+                                Text(scopeText)
                             }
                         }
                     }
@@ -58,7 +79,9 @@ struct AddBlueprintSheet: View {
                 if let blueprintID, model.isTracked(blueprintID: blueprintID) {
                     WarningLabel("This Blueprint is already tracked.").font(.callout)
                 }
-                if let problem { WarningLabel(problem).font(.callout) }
+                ForEach([problem, groupProblem, blueprintProblem].compactMap { $0 }, id: \.self) { line in
+                    WarningLabel(line).font(.callout)
+                }
             }
             .padding(.horizontal, 20)
         } footer: {
@@ -73,34 +96,51 @@ struct AddBlueprintSheet: View {
         .task(id: blueprintID) { await loadBlueprint() }
     }
 
+    /// The Blueprint list first, then the groups; a Blueprint picked before
+    /// the groups are in gets its scope when they arrive.
     private func load() async {
         defer { isLoading = false }
+        let client: JamfPlatform.Client
         do {
-            guard let client = try model.connections.client() else { return }
+            guard let made = try model.connections.client() else { return }
+            client = made
             blueprints = try await JamfPlatform.Blueprints(client: client).list()
                 .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-            platformGroups = (try? await client.platformGroups()) ?? []
-            groups = (try? await client.jamfProGroups()) ?? []
         } catch {
-            problem = error.localizedDescription
+            if !Task.isCancelled { problem = error.localizedDescription }
+            return
         }
+        do {
+            platformGroups = try await client.platformGroups()
+            groups = try await client.jamfProGroups()
+        } catch {
+            if !Task.isCancelled { groupProblem = "The groups couldn’t be read, so the scope can’t be shown: \(error.localizedDescription)" }
+        }
+        groupsRead = true
     }
 
+    /// The selected Blueprint’s software update and scope. Picking another
+    /// one stops this read: that is no problem, and it says nothing.
     private func loadBlueprint() async {
         blocks = nil
-        scope = []
-        guard let blueprintID, let client = try? model.connections.client() else { return }
+        scopeIDs = []
+        blueprintProblem = nil
+        guard let blueprintID, let client = try? model.connections.client() else {
+            isLoadingBlueprint = false
+            return
+        }
         isLoadingBlueprint = true
-        defer { isLoadingBlueprint = false }
         do {
             let update = try await JamfPlatform.Blueprints(client: client).softwareUpdate(blueprintID: blueprintID)
+            guard !Task.isCancelled else { return }
             blocks = update.blocks
-            let keys = GroupChoice.scope(platformGroupIDs: update.blueprint.scopeDeviceGroups, platformGroups: platformGroups)
-            scope = keys.compactMap { key in groups.first { $0.id == key }.map(GroupReference.init) }
-                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            scopeIDs = update.blueprint.scopeDeviceGroups
         } catch {
-            problem = error.localizedDescription
+            // stopped by the next selection, which shows its own busy state
+            guard !Task.isCancelled, !(error is CancellationError) else { return }
+            blueprintProblem = error.localizedDescription
         }
+        isLoadingBlueprint = false
     }
 
     private func add() {

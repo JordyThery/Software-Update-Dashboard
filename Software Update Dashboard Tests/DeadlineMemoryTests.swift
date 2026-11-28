@@ -60,7 +60,7 @@ struct DeadlineMemoryTests {
     static func workflow(remembered: ReportedDeadlines = ReportedDeadlines()) throws -> RefreshWorkflow {
         let server = MockServer { _ in .json(200, "{}") }
         let client = try JamfPlatform.Client(baseURL: URL(string: "https://eu.api.jamfcloud.com")!,
-                                             scope: .environment("0c6c4f86-1111-4a3c-9d7e-2f1b3c4d5e6f"), tokens: StaticToken(),
+                                             scope: .environment("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), tokens: StaticToken(),
                                              recorder: RequestRecorder(session: server.session, log: nil), sleep: { _ in })
         var workflow = RefreshWorkflow(client: client, catalog: catalog, serverTimeZone: Sample.utc)
         workflow.reportedDeadlines = remembered

@@ -53,7 +53,7 @@ The days are the time until the deadline, not a wait before a release becomes th
 - **Where a deadline comes from** (decided by Jordy on 2026-11-09, as Jamf does it): a deadline the device reports wins when the report is newer than the Blueprint’s last change and Apple’s public posting of the version; an older one is shown as “reported before the Blueprint’s last change”, the rule’s deadline counts for past the deadline, late and stuck, and Inspect says “Declaration not refreshed since the Blueprint changed”. Otherwise Apple’s public posting date of the release meant for the device (GDMF `PublicAssetSets`; Apple can post a version in several builds, each for its own devices) plus the delay, at the Blueprint’s time of day, for every platform. Without a posting date, the first release date, and the detail says so. The detail shows the source: “reported by the device”, “set in the Blueprint”, “from Apple’s posting date”, “from the release date, no posting date found”. “Reports count from” stays at the first release date. A release is a target only once Apple offers it publicly (a public posting for the device; a release GDMF doesn’t list; or one listed only outside the public catalog with a newer public release of its major), from the day it is offered; a release GDMF lists only outside the public catalog and newer than every public one isn’t offered yet. Example: macOS 27.2 was released on 26 Oct and posted to the public catalog on 5 Nov, so with 14 days the deadline is 19 Nov.
 - The separate software update settings component (deferrals, cadence, automatic actions, beta) is shown, not used for the target.
 
-It never changes anything in Jamf. Its allow-list permits GET and sign-in requests only, and it asks only for read permissions.
+It never changes anything in Jamf. Its allow-list permits GET and HEAD requests plus the sign-in, and it asks only for read permissions.
 
 ## Milestone 1
 
@@ -72,6 +72,7 @@ Jamf Pro through the Jamf Platform API only, for iOS, iPadOS and macOS.
 | Computer groups | `pro/v1/computer-groups` | `device-groups:read` |
 | Smart computer group members | `pro/v3/computer-groups/smart-group-membership/{id}` | `device-groups:read` |
 | Static computer group members | `proclassic/computergroups/id/{id}` | `device-groups:read` (confirmed live) |
+| Mobile device details (a mobile group’s members: the membership answer is nearly empty over the Platform API) | `pro/v2/mobile-devices/detail` | `devices:read` |
 | Computer inventory (with `SECURITY` for the bootstrap token) | `pro/v4/computers-inventory` | `devices:read` |
 | DDM status items | `pro/v1/ddm/{clientManagementId}/status-items` | `devices:read` |
 | Declaration reports | `ddm/report/v1/devices/{deviceId}/declarations`, `…/declarations/{id}/devices` | `declarations:read` |
@@ -80,9 +81,9 @@ Jamf Pro through the Jamf Platform API only, for iOS, iPadOS and macOS.
 
 ### Where the code comes from
 
-- Every request goes through JTKit 1.5.0 (see JTKit’s ROADMAP, "1.5.0 (Software Update Dashboard)"). SUD only interprets.
-- The categories, classifier and diagnoses, summary, history and Inspect are SUD’s own, with typed models, built on what JTKit reads.
-- No code is copied from any other project.
+- Every request goes through JTKit (1.5.0 at the start, see JTKit’s ROADMAP, "1.5.0 (Software Update Dashboard)"; 1.13.2 since 0.4.3). SUD only interprets.
+- The categories, classifier and diagnoses, summary, history and Inspect were SUD’s own, with typed models, built on what JTKit reads. Since JTKit 1.9.0 (SUD 0.3.3) the rules (targets, classifier, readiness, Inspect, Blueprint health and the reader of a refresh) are JTKit’s `SoftwareUpdateRules`, shared with the other apps; the summary, history, exports and views stay SUD’s.
+- No third-party code is copied: JAMFGetDDMInfo is GPL and may only inform. Code from Jordy’s own apps may be reused or adapted.
 
 ### Order
 
@@ -132,7 +133,7 @@ Only what talks to vendors:
 
 Keep awake, the automatic refresh scheduler, notifications, the help window, the menu bar item and open at login stay in SUD; they move to JTKit only when a second app needs them.
 
-Done on branch `release-1.6.0` (JTKit) on 2026-11-10, not tagged; see JTKit’s CHANGELOG. Added by Jordy on 2026-11-10: the identifiers of a device’s declarations from its `management.declarations` status item (`SoftwareUpdateStatus.declarationIdentifiers`), and a UI test check that a Save panel shows the test’s own folder before it saves.
+Done in JTKit 1.6.0 (branch `release-1.6.0`, 2026-11-10, tagged since); see JTKit’s CHANGELOG. Added by Jordy on 2026-11-10: the identifiers of a device’s declarations from its `management.declarations` status item (`SoftwareUpdateStatus.declarationIdentifiers`), and a UI test check that a Save panel shows the test’s own folder before it saves.
 
 ### Step 2: release 0.2
 
@@ -208,7 +209,7 @@ Order: A, B with C and M, L, D, G, I, J, K (as planned for 0.2 before the renumb
 - PDF: a Blueprint not refreshed in the session uses its newest saved refresh, with its date (without Blueprint health, which the history doesn’t keep); one never refreshed gets one line. Blueprint health names declarations by their versions only.
 - From the snapshot: Readiness “OS too old for update declarations” (iOS and iPadOS 16 or earlier, macOS 13 or earlier) and that diagnosis when Apple has a newer version for the model; “Download declined over a cellular connection”; a passcode that has to be entered to install, also while downloading.
 - Low findings fixed: Readiness doesn’t say all is well when Jamf Pro doesn’t report enrollment or supervision; two Help sentences said more than Apple’s pages; a Stop isn’t an error; the Overview line stays while a run goes on after automatic refresh was turned off; the connection change with only the menu bar item open. The Stop test can fail now.
-- Low findings left: the Mac earlier step matched by its deadline’s minutes (a label only; needs a design); the bootstrap finding on target (harmless); KeepAwake’s `deinit` (it lives as long as the app; its test no longer takes a real hold); notification names in Notification Center and a refused permission noticed only on saving (behavior to decide); a Blueprint a manual refresh reads is left to that refresh by automatic refresh; Find a Device opening a device that has left the scope.
+- Low findings left after 0.3: the bootstrap finding on target (harmless); a Blueprint a manual refresh reads is left to that refresh by automatic refresh. Done since: the Mac earlier step matched to the minute by design, notifications with counts only, a refused notification permission shown at once, and Find a Device saying when a device has left the scope (all 0.3.2); KeepAwake’s `deinit` (0.4.3).
 
 ### Step 4: 0.4, content caches (decided by Jordy on 2026-11-26)
 
@@ -216,14 +217,18 @@ Part 2 of `_release-gate/content-caching-plan.md` (outside the repo), on branch 
 
 - **Content Caches** in the sidebar, always (with an empty state when nothing was found): a health summary, the caching Blueprints (configured, activated, declaration applied, and the Macs not caching or not applied), and a table of every activated cache (health, Mac, site, last contact, used against its limit, pressure, served, saved, top content) with All, Needs Attention and No Caching Blueprint, sortable on every column. Read on first open, with Refresh (⌘R) or Stop Refresh (⌘.), Refresh All and the automatic refresh (after the tracked Blueprints). The filter is in the View menu too.
 - **The detail** in an inspector: the health and its reasons, the figures (from the inventory, or the live figures a macOS 27 Mac sends when its declaration asks for them), its content, savings (since its counters started, and the last 7 and 30 days from the trend), the caching Blueprint’s settings against what the Mac reports, parents, peers (macOS 27), alerts, the trend with a mark where the counters restarted, and Status Items….
-- **Health** is JTKit’s, with its defaults: Fault when activated but not running, a cache or startup status other than OK, registration failed, every parent unhealthy, or no inventory for 7 days; Warning for registration pending, pressure of 50 % or more, a parent unhealthy, an alert in the last 24 hours, data moving or a failed move, no inventory for 48 hours, or the declaration not applied. How full a cache is is never a rule: it fills to its limit by design.
+- **Health** is JTKit’s, with its defaults: Fault when activated but not running, a cache or startup status other than OK, registration failed, every parent unhealthy, or no inventory for 7 days; Warning for registration pending, pressure of 50% or more, a parent unhealthy, an alert in the last 24 hours, data moving or a failed move, no inventory for 48 hours, or the declaration not applied. How full a cache is is never a rule: it fills to its limit by design.
 - **No caching Blueprint** (in code `isUnplanned`; renamed from “Unplanned” after the review, 2026-11-26): an activated cache that no caching Blueprint’s scope reaches and that holds none of their declarations. Caches set up with a Jamf Pro configuration profile or by hand show here too: the inventory doesn’t say which payloads a Mac’s profiles hold.
 - **By site:** on a Blueprint’s dashboard and in its PDF, the worst health of the caches in each site of its devices (from `DeviceStatus.siteName`, kept in the history), or “No cache”; shown only when the last sweep found a cache. Show Caches opens Content Caches on that site.
 - **Stored** in `ContentCaches/<connection ID>/`: one file per sweep, `trend.index`, `known-blueprints.plist`; kept as the history. Demo Mode in memory, seeded with JTKit’s ten days of sample sweeps.
 - **Live check:** one sweep on the production role, counts only.
 
+### Releases from 0.3.1
+
+The CHANGELOG is the record of each release from 0.3.1 on (0.3.1 to 0.3.4, 0.4.0 to 0.4.3). 0.4.3 (JTKit 1.13.2): a first read keeps running when its page is left, Stop Tracking stops a running read before the history is deleted, a change made during a read is read again, Inspect counts and can be stopped, failed saves are shown, the PDF report lists at most 180 devices to check per Blueprint, and zero bytes read “0 KB”.
+
 ### Later
 
 - Notifications when a content cache turns Fault (a rule per connection, not per tracked Blueprint).
-- Computer groups end to end (the readers are in JTKit 1.5.0).
-- Other MDMs.
+- Several tenants at once, for organizations that manage more than one Jamf Pro (planned).
+- Other MDMs: Jamf School; Intune is blocked until Microsoft Graph can read Apple’s declarative software update status (assessment of 2026-11-11).

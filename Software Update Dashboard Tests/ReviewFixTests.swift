@@ -51,7 +51,7 @@ struct ReviewFixTests {
 
     @Test("The server time zone warning stays until UTC is saved, on the dashboard as in Settings › Connections")
     func timeZoneWarningUntilSaved() throws {
-        let connections = ConnectionsModel.preview()
+        let connections = ConnectionsModel.preview(defaults: TestFiles.defaults("preview"))
         let connection = Connection(name: "Role A", service: .jamfPlatform, region: .eu,
                                     environmentID: UUID().uuidString, clientID: UUID().uuidString)
         try connections.saved.save(AppConnection(connection: connection, serverTimeZone: "Europe/Amsterdam"))

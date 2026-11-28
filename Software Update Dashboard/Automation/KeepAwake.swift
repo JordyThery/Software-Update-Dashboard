@@ -9,7 +9,7 @@ import IOKit.pwr_mgt
 final class KeepAwake {
     /// Whether the Mac runs on power (not on its battery); tests replace it.
     var isOnPower: () -> Bool = { KeepAwake.onPowerNow() }
-    /// Takes and releases the system's hold; tests replace them.
+    /// Takes and releases the system’s hold; tests replace them.
     var hold: () -> IOPMAssertionID? = { KeepAwake.takeHold() }
     var release: (IOPMAssertionID) -> Void = { IOPMAssertionRelease($0) }
     /// Called when the power source changes, so the owner can update.
@@ -17,7 +17,14 @@ final class KeepAwake {
 
     private(set) var assertion: IOPMAssertionID?
     private var wanted = false
-    private var source: CFRunLoopSource?
+    /// The power-source watch; it holds an unretained pointer to this
+    /// object, so `deinit` takes it off the run loop.
+    nonisolated(unsafe) private var source: CFRunLoopSource?
+
+    deinit {
+        // the run loop must never call back into a freed object (tests make several)
+        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .defaultMode) }
+    }
 
     var isHolding: Bool { assertion != nil }
 
